@@ -42,7 +42,12 @@ DEFAULT_SETTINGS = {
             "servo_select": "", "alarm_reset_select": "", "origin_select": "",
             "servo_shift": "", "alarm_reset_shift": "", "origin_shift": "",
             "test_run": "", "test_stop": "", "move_origin": "",
+            # Test flow handshake per cable: the app pulses start_<cable> to
+            # begin that cable's test and waits for done_<cable> to turn ON.
+            "start_select": "", "done_select": "",
+            "start_shift": "", "done_shift": "",
         },
+        "model_type": "",          # MT or AT of the loaded model (set by Model Change)
         # Counters on the right-hand panel; day counts reset when the date changes.
         "counters": {
             "date": "", "ok_day": 0, "ng_day": 0, "ok_total": 0, "ng_total": 0,

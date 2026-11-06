@@ -57,6 +57,7 @@ class CablePanel(tk.Frame):
     def __init__(self, master, title, cfg):
         super().__init__(master, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
         self.cfg = cfg
+        self.last_ok = None              # OK/NG of the last measured test, None if not measured
 
         # Title row with Screen Save
         top = tk.Frame(self, bg=theme.PANEL)
@@ -228,9 +229,11 @@ class CablePanel(tk.Frame):
         self.res["push_mean"].config(text=f"{r['push_mean']:.2f}")
         self.res["max"].config(text=f"{r['max']:.2f}")
         self.judge.config(text="OK" if r["ok"] else "NG", fg=theme.PASS if r["ok"] else theme.FAIL)
+        self.last_ok = r["ok"]
         return r
 
     def reset_results(self):
+        self.last_ok = None              # no judgement for the current test yet
         for lbl in self.res.values():
             lbl.config(text="0.00")
         self.judge.config(text="– – –", fg="#4f8cff")
@@ -274,6 +277,10 @@ class TestConsolePage(tk.Frame):
 
         self.counters = settings["test"]["counters"]
         self._roll_day()
+        # Test flow state (see start_flow / on_scan)
+        self._flow = "idle"
+        self._pending = set()            # cables whose test is still running
+        self._stop_event = threading.Event()
 
         self._build_status_bar()
         body = tk.Frame(self, bg=theme.BG)
@@ -295,6 +302,7 @@ class TestConsolePage(tk.Frame):
         self._build_bottom(left)
 
         self._build_side_panel(body).grid(row=0, column=1, sticky="ns", padx=(8, 0))
+        self._show_current_model()
 
         self.bind("<Destroy>", self._on_destroy)
         self.after(200, self._poll)
@@ -510,7 +518,13 @@ class TestConsolePage(tk.Frame):
             self.lbl_saved.insert(0, lbl)          # keep order: [SELECT, SHIFT]
 
         # ---- Scan results (barcode scanner input, one per cable) ---------
-        body = self._side_card(side, "Scan Result")
+        # The title strip shows the test flow's current step.
+        def step_label(head):
+            self.flow_lbl = tk.Label(head, text="Press RUN", bg=self.CARD_HEAD, fg=theme.MUTED,
+                                     font=_font(8, True))
+            return self.flow_lbl
+
+        body = self._side_card(side, "Scan Result", right=step_label)
         body.columnconfigure(1, weight=1)
         self.scan_entries = {}
         for r, (key, label) in enumerate((("select", "SELECT"), ("shift", "SHIFT"))):
@@ -520,6 +534,8 @@ class TestConsolePage(tk.Frame):
                          relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36",
                          highlightcolor=theme.UPDATE)
             e.grid(row=r, column=1, sticky="ew", pady=2, ipady=2)
+            # A barcode scanner types the label and ends with Enter.
+            e.bind("<Return>", lambda _e, k=key: self.on_scan(k))
             self.scan_entries[key] = e
 
         # ---- Test control ------------------------------------------------
@@ -529,8 +545,8 @@ class TestConsolePage(tk.Frame):
         for col, weight in enumerate((4, 4, 3)):
             ctl.columnconfigure(col, weight=weight, uniform="ctl")
         for col, (text, cmd, bg, abg) in enumerate((
-                ("▶ RUN", lambda: self.plc_pulse("test_run", "Test run"), theme.PASS, "#43a047"),
-                ("■ STOP", lambda: self.plc_pulse("test_stop", "Test stop"), theme.FAIL, "#e53935"),
+                ("▶ RUN", self.start_flow, theme.PASS, "#43a047"),
+                ("■ STOP", self.stop_flow, theme.FAIL, "#e53935"),
                 ("↺ ORIGIN", lambda: self.plc_pulse("move_origin", "Move origin"), "#2a313d", "#353d4b"))):
             tk.Button(ctl, text=text, command=cmd, bg=bg, fg="white", activebackground=abg, activeforeground="white",
                       bd=0, pady=5, font=_font(10 if col < 2 else 9, True), cursor="hand2").grid(
@@ -681,6 +697,9 @@ class TestConsolePage(tk.Frame):
 
     def model_change(self):
         """Load the selected model: its SELECT CABLE and SHIFT CABLE conditions."""
+        if self._flow != "idle":
+            self._set_status("Model Change: press STOP first — a test is in progress", theme.BUSY)
+            return
         sel = self.model_list.curselection()
         if not sel or sel[0] >= len(self._models):
             self._set_status("Model Change: select a model in the list first", theme.BUSY)
@@ -697,9 +716,188 @@ class TestConsolePage(tk.Frame):
                     "load_min": g("LOAD_MIN"), "load_max": g("LOAD_MAX")}
             panel.load_conditions(row["MM_MODEL"], cond)
             panel.reset_results()
-        self.current_model.config(text=row["MM_MODEL"])
+        model_type = (row.get("MM_TYPE") or "").strip().upper()
+        self.settings["test"]["model_type"] = model_type
+        self._show_current_model()
         save_settings(self.settings)
-        self._set_status(f"Model changed to {row['MM_MODEL']}", theme.PASS)
+        self._set_status(f"Model changed to {row['MM_MODEL']}" + (f" ({model_type})" if model_type else ""),
+                         theme.PASS)
+
+    def _show_current_model(self):
+        t = self.settings["test"]
+        model, mtype = t["select"].get("model"), t.get("model_type", "")
+        self.current_model.config(text=(f"{model}  ·  {mtype}" if mtype else model) if model else "No model loaded")
+
+    # ------------------------------------------------------- test flow
+    # AT: scan SELECT label -> SELECT test -> scan SHIFT label -> SHIFT test.
+    # MT: scan one label -> SELECT and SHIFT tests run at the same time.
+    # After a part completes the flow waits for the next part's first scan;
+    # STOP returns it to idle.
+    FLOW_TEXT = {
+        "idle": ("Press RUN", theme.MUTED),
+        "at_scan_select": ("AT · Scan SELECT label", theme.TITLE_FG),
+        "at_run_select": ("AT · SELECT testing", theme.UPDATE),
+        "at_scan_shift": ("AT · Scan SHIFT label", theme.TITLE_FG),
+        "at_run_shift": ("AT · SHIFT testing", theme.UPDATE),
+        "mt_scan": ("MT · Scan label", theme.TITLE_FG),
+        "mt_run": ("MT · Both testing", theme.UPDATE),
+    }
+
+    def _set_flow(self, state):
+        self._flow = state
+        text, color = self.FLOW_TEXT[state]
+        self.flow_lbl.config(text=text, fg=color)
+        # Outline the box the operator should scan into next
+        expect = {"at_scan_select": "select", "at_scan_shift": "shift", "mt_scan": "select"}.get(state)
+        for key, e in self.scan_entries.items():
+            e.config(highlightbackground=theme.TITLE_FG if key == expect else "#232a36",
+                     highlightthickness=2 if key == expect else 1)
+        if expect:
+            self.scan_entries[expect].focus_set()
+
+    def _first_scan_state(self):
+        return "mt_scan" if self.settings["test"].get("model_type") == "MT" else "at_scan_select"
+
+    def start_flow(self):
+        """RUN: arm the flow for the loaded model's type."""
+        if self._flow != "idle":
+            self._set_status("A test is already in progress — press STOP to cancel it", theme.BUSY)
+            return
+        t = self.settings["test"]
+        model, mtype = t["select"].get("model"), t.get("model_type", "")
+        if not model:
+            self._set_status("RUN: load a model first (Model Change)", theme.FAIL)
+            return
+        if mtype not in ("MT", "AT"):
+            self._set_status(f"RUN: model {model} has no Type — set MT or AT in Model Settings, "
+                             "then Model Change again", theme.FAIL)
+            return
+        self._stop_event.clear()
+        for e in self.scan_entries.values():
+            e.delete(0, "end")
+        self._set_flow(self._first_scan_state())
+        self._set_status(f"{model} ({mtype}): scan the {'label' if mtype == 'MT' else 'SELECT label'}",
+                         theme.PASS)
+
+    def stop_flow(self):
+        """STOP: cancel the flow and tell the machine to stop (if configured)."""
+        if self._flow == "idle":
+            self.plc_pulse("test_stop", "Test stop")
+            return
+        self._stop_event.set()
+        self._pending.clear()
+        for p in self.panels:
+            if p.judge.cget("text") == "TEST":
+                p.judge.config(text="– – –", fg="#4f8cff")
+        self._set_flow("idle")
+        self._set_status("Test stopped", theme.BUSY)
+        if self.settings["test"]["commands"].get("test_stop", "").strip() and self.plc.is_open:
+            self.plc_pulse("test_stop", "Test stop")
+
+    def on_scan(self, key):
+        """A label was scanned (or typed + Enter) into the SELECT or SHIFT box."""
+        label = self.scan_entries[key].get().strip()
+        if not label:
+            return
+        state = self._flow
+        if state == "at_scan_select" and key == "select":
+            self._set_flow("at_run_select")
+            self._start_cable_tests([0])
+        elif state == "at_scan_shift" and key == "shift":
+            self._set_flow("at_run_shift")
+            self._start_cable_tests([1])
+        elif state == "mt_scan":
+            # MT: one label for the part; it is recorded against both cables.
+            for e in self.scan_entries.values():
+                if e.get().strip() != label:
+                    e.delete(0, "end")
+                    e.insert(0, label)
+            self._set_flow("mt_run")
+            self._start_cable_tests([0, 1])
+        elif state == "idle":
+            self._set_status("Press RUN before scanning", theme.BUSY)
+        else:
+            expected = {"at_scan_select": "SELECT", "at_scan_shift": "SHIFT"}.get(state)
+            self._set_status(f"Scan the {expected} label" if expected else "Test running — wait for it to finish",
+                             theme.BUSY)
+
+    def _start_cable_tests(self, cables):
+        self._pending = set(cables)
+        names = " + ".join(self.SIDES[n][1] for n in cables)
+        self._set_status(f"{names} test running…", theme.UPDATE)
+        for n in cables:
+            if self._flow == "idle":          # an earlier start failed and aborted the flow
+                return
+            panel = self.panels[n]
+            panel.reset_results()
+            panel.judge.config(text="TEST", fg=theme.BUSY)
+            self._run_cable_test(n)
+
+    def _run_cable_test(self, n):
+        """Start one cable's test on the machine and wait for it to finish.
+
+        PLC handshake (settings.json → test.commands): pulse start_<cable>,
+        then wait for done_<cable> to turn ON.
+        """
+        key, name = self.SIDES[n][0], self.SIDES[n][1]
+        cmds = self.settings["test"]["commands"]
+        start, done = cmds.get(f"start_{key}", "").strip(), cmds.get(f"done_{key}", "").strip()
+        if not start or not done:
+            self._abort_flow(f"{name}: PLC start/done bits are not set "
+                             f"(settings.json → test.commands.start_{key} / done_{key})")
+            return
+        if not self.plc.is_open:
+            self._abort_flow(f"{name}: PLC not connected")
+            return
+        stop = self._stop_event
+
+        def run():
+            try:
+                self.plc.write_bit(start, True)
+                time.sleep(0.3)
+                self.plc.write_bit(start, False)
+                deadline = time.monotonic() + 300
+                while not stop.is_set():
+                    if self.plc.read_bits([done])[0][1] is True:
+                        self.after(0, lambda: self._cable_test_finished(n))
+                        return
+                    if time.monotonic() > deadline:
+                        self.after(0, lambda: self._abort_flow(f"{name}: no 'done' signal within 5 minutes"))
+                        return
+                    time.sleep(0.1)
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._abort_flow(f"{name}: {e}"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _cable_test_finished(self, n):
+        if not self._alive or n not in self._pending or self._stop_event.is_set():
+            return
+        self._pending.discard(n)
+        panel = self.panels[n]
+        if panel.last_ok is not None:          # a result was measured for this cable
+            self.record_result(n, panel.last_ok)
+        elif panel.judge.cget("text") == "TEST":
+            panel.judge.config(text="DONE", fg=theme.MUTED)
+        if self._flow == "at_run_select":
+            self._set_flow("at_scan_shift")
+            self._set_status("SELECT CABLE done — scan the SHIFT label", theme.PASS)
+        elif self._pending:
+            return                              # MT: waiting for the other cable
+        else:
+            for e in self.scan_entries.values():
+                e.delete(0, "end")
+            self._set_flow(self._first_scan_state())
+            self._set_status("Part complete — scan the next label", theme.PASS)
+
+    def _abort_flow(self, message):
+        self._stop_event.set()
+        self._pending.clear()
+        for p in self.panels:
+            if p.judge.cget("text") == "TEST":
+                p.judge.config(text="– – –", fg="#4f8cff")
+        self._set_flow("idle")
+        self._set_status(message, theme.FAIL, hold=15)
 
     # -------------------------------------------------------- counters
     def _roll_day(self):
@@ -764,10 +962,10 @@ class TestConsolePage(tk.Frame):
         if event.widget is self:
             self._alive = False
 
-    def _set_status(self, text, color="white"):
-        """Show an action's message; polling won't overwrite it for 3 s."""
+    def _set_status(self, text, color="white", hold=3):
+        """Show an action's message; polling won't overwrite it for `hold` seconds."""
         self.status.config(text=text, fg=color)
-        self._hold_until = time.monotonic() + 3
+        self._hold_until = time.monotonic() + hold
 
     def _poll(self):
         """Every POLL_MS, read the connected devices on a worker thread."""

@@ -39,6 +39,24 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
 - **EXIT** closes the app (with confirmation).
 - The status box lists any device that isn't connected.
 
+### Test flow (by model Type)
+
+Load a model with **Model Change** (its Type, MT or AT, comes from Model Settings), then press
+**RUN**. The Scan Result strip shows the current step and the box to scan into is outlined.
+
+- **AT** — scan the **SELECT** label → SELECT CABLE test → scan the **SHIFT** label → SHIFT CABLE
+  test → part complete.
+- **MT** — scan **one** label → SELECT and SHIFT CABLE tests run **at the same time** → part
+  complete when both finish (the label is recorded in both boxes).
+
+After a part completes the flow waits for the next part's first scan. Scans in the wrong box or
+while a test is running are refused with a message. **STOP** cancels the flow (and pulses
+`test_stop` if set). Model Change is blocked while a flow is active.
+
+Each cable test uses a PLC handshake set in `settings.json` → `test.commands`: the app pulses
+`start_select` / `start_shift` and waits (up to 5 min) for `done_select` / `done_shift` to turn ON.
+Until these addresses are set, the flow stops at the first test with a message saying so.
+
 The machine buttons (Servo, Alarm Reset, Move Origin, Test Run, Test Stop) write PLC bits set in
 `settings.json` → `test.commands` (e.g. `"test_run": "M0100"`). They are empty by default; until
 an address is set, the button only reports that in the status box.
