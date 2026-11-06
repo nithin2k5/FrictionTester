@@ -13,11 +13,7 @@ NAV_ACTIVE = ("#d4d4d4", "black", "#f0f0f0")
 class App:
     # (icon, caption, page key, header title)
     PAGES = [
-        ("🏠", "Test Console", "test_console", "Friction Tester"),
-        ("⚙", "Settings", "model_settings", "Model Settings"),
-        ("📋", "Report", "report", "Report"),
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
-        ("❓", "Help", "help", "Help"),
     ]
 
     def __init__(self, root, settings, plc, daq, loadcells):
@@ -73,9 +69,9 @@ class App:
 
         self.nav_tiles = {}
         for icon, text, page, _title in self.PAGES:
-            f = tk.Frame(sidebar, bg="#111", bd=1, relief="solid",
+            f = tk.Frame(sidebar, bg="#111", bd=1, relief="solid", height=110,
                          highlightbackground="#444", highlightthickness=1, cursor="hand2")
-            f.pack(fill="both", expand=True, padx=4, pady=3)
+            f.pack(fill="x", padx=4, pady=3)
             inner = tk.Frame(f, bg="#111", cursor="hand2")
             inner.place(relx=0.5, rely=0.5, anchor="center")
             lbl_icon = tk.Label(inner, text=icon, bg="#111", fg="white", font=(theme.FONT, 18), cursor="hand2")
@@ -107,11 +103,3 @@ class App:
         if page_name == "comport_settings":
             ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
                 fill="both", expand=True, padx=20, pady=20)
-        else:
-            self._placeholder(title)
-
-    def _placeholder(self, title):
-        panel = tk.Frame(self.content, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
-        panel.pack(fill="both", expand=True, padx=20, pady=20)
-        tk.Label(panel, text=f"{title} — coming soon", bg=theme.PANEL, fg=theme.MUTED,
-                 font=(theme.FONT, 14)).place(relx=0.5, rely=0.5, anchor="center")

@@ -40,5 +40,3 @@ aggregate) and samples per channel. TEST acquires one block and logs the mean vo
 
 **Update** rescans COM ports and NI devices. **Save** writes `settings.json` next to `main.py`
 (git-ignored, machine-specific).
-
-Other sidebar pages (Test Console, Settings, Report, Help) are placeholders for now.
