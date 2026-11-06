@@ -730,14 +730,17 @@ class TestConsolePage(tk.Frame):
         row.columnconfigure((0, 1), weight=1, uniform="prod")
         tgt = tk.Frame(row, bg=self.TILE, highlightbackground="#232a36", highlightthickness=1)
         tgt.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
-        self.target = tk.Spinbox(tgt, from_=0, to=999999, width=6, justify="center", font=_font(16, True),
-                                 bg=self.TILE, fg="white", buttonbackground="#232a36", relief="flat", bd=0,
-                                 insertbackground="white", command=self._save_counters)
-        self.target.delete(0, "end")
-        self.target.insert(0, str(c["target"]))
+        # Plain text box, whole numbers only; empty = target not set (RUN refuses to start)
+        self.target = tk.Entry(tgt, width=7, justify="center", font=_font(16, True), bg=self.TILE, fg="white",
+                               relief="flat", bd=0, insertbackground="white", highlightthickness=1,
+                               highlightbackground=self.TILE, highlightcolor=theme.UPDATE)
+        digits_only = self.target.register(lambda p: p == "" or (p.isdigit() and len(p) <= 6))
+        self.target.configure(validate="key", validatecommand=(digits_only, "%P"))
+        if c.get("target"):
+            self.target.insert(0, str(c["target"]))
         self.target.bind("<FocusOut>", lambda _e: self._save_counters())
         self.target.bind("<Return>", lambda _e: self._save_counters())
-        self.target.pack(pady=(2, 0))
+        self.target.pack(pady=(2, 0), padx=6, fill="x")
         tk.Label(tgt, text="TARGET", bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 3))
         t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], "#4fa3ff", size=16)
         t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
@@ -1032,8 +1035,22 @@ class TestConsolePage(tk.Frame):
     def _first_scan_state(self):
         return "mt_scan" if self.settings["test"].get("model_type") == "MT" else "at_scan_select"
 
+    def _target_is_set(self):
+        """RUN needs a production target. Warn with a pop-up when it is missing."""
+        self._save_counters()
+        if self.counters.get("target", 0) > 0:
+            return True
+        messagebox.showwarning("Target not set",
+                               "The production target is not set.\n\n"
+                               "Please set the target before starting the test.", parent=self)
+        self.target.focus_set()
+        self._set_status("RUN: set the production target first", theme.FAIL, hold=6)
+        return False
+
     def start_flow(self):
         """RUN: arm the flow for the loaded model's type."""
+        if self._flow == "idle" and not self._target_is_set():
+            return
         if self.shared:
             t = self.settings["test"]
             if self.flow.run(t["select"].get("model"), t.get("model_type", "")):
