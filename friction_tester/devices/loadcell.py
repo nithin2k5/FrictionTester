@@ -1,33 +1,79 @@
-"""Loadcell indicator on RS232, using the same protocol as the EOL tester.
+"""KOMEIN AM-50LW digital indicator (loadcell) on RS232, standard protocol.
 
-8N1 serial. Polling with "ID<nn>P" (nn = two-digit loadcell number, e.g.
-ID01P) returns one comma-separated line; the reading is the second field.
+Port: 8 data bits, no parity, 1 stop bit; 2400-57600 baud (indicator F-41).
+The indicator's ID Number (F-40) picks the mode:
+
+* ID 000 - stream mode. The indicator sends continuously:
+      ST,NT,+01234.5<CR><LF>     (NT = normal, ER = error)
+* ID 01-99 - command mode. The PC sends ID<nn><cmd> with no terminator:
+      P = send current value   Z = zero   H = hold   R = release hold
+  and the indicator answers a P with:
+      ID,01,+01234.5<CR><LF>
+
+The data field is 8 characters including the sign; the decimal point is
+wherever the indicator's F-00 setting puts it, so the number is used as sent.
 """
 
 import threading
+import time
 
 try:
     import serial
 except ImportError:  # pragma: no cover - reported in the UI
     serial = None
 
-BAUD_RATES = [9600, 19200, 38400, 57600, 115200]
+MODEL = "KOMEIN AM-50LW"
+BAUD_RATES = [2400, 4800, 9600, 19200, 38400, 57600]
+STREAM_ID = 0
+
+CMD_READ, CMD_ZERO, CMD_HOLD, CMD_RELEASE = "P", "Z", "H", "R"
+
+
+class IndicatorError(Exception):
+    pass
+
+
+def parse_frame(line, expected_id=None):
+    """Parse one AM-50LW line. Returns the reading as a float.
+
+    Raises IndicatorError for an error frame, a reply from another ID, or a
+    line that isn't a recognisable frame.
+    """
+    fields = [f.strip() for f in line.strip().split(",")]
+    if len(fields) < 3:
+        raise IndicatorError(f"Unrecognised frame: {line!r}")
+    head, mid, data = fields[0].upper(), fields[1].upper(), fields[2]
+    if head == "ST":
+        if mid == "ER":
+            raise IndicatorError("Indicator reports an error (ER) — check overload / sensor")
+    elif head == "ID":
+        if expected_id is not None and mid.isdigit() and int(mid) != expected_id:
+            raise IndicatorError(f"Reply from ID {mid}, expected {expected_id:02d}")
+    else:
+        raise IndicatorError(f"Unrecognised frame: {line!r}")
+    try:
+        return float(data)
+    except ValueError:
+        raise IndicatorError(f"Bad data field {data!r} in {line!r}")
 
 
 class Loadcell:
+    """One AM-50LW indicator."""
+
     def __init__(self, number):
-        self.number = number
+        self.number = number          # position on the machine (L1, L2)
         self.port = ""
+        self.device_id = 1
         self._ser = None
         self._lock = threading.Lock()
 
     @property
-    def tag(self):
-        return f"{self.number:02d}"
+    def name(self):
+        return f"Loadcell {self.number:02d} (L{self.number})"
 
     @property
-    def name(self):
-        return f"Loadcell {self.tag} (L{self.number})"
+    def stream_mode(self):
+        return self.device_id == STREAM_ID
 
     @staticmethod
     def available():
@@ -42,6 +88,9 @@ class Loadcell:
             raise RuntimeError("pyserial is not installed (pip install pyserial)")
         if not cfg["port"]:
             raise ValueError("Select a COM port")
+        device_id = int(cfg["device_id"])
+        if not 0 <= device_id <= 99:
+            raise ValueError("Indicator ID must be 00 (stream) or 01–99")
         self.disconnect()
         self._ser = serial.Serial(
             port=cfg["port"], baudrate=int(cfg["baudrate"]),
@@ -49,6 +98,7 @@ class Loadcell:
             timeout=0.5, write_timeout=0.5,
         )
         self.port = cfg["port"]
+        self.device_id = device_id
 
     def disconnect(self):
         if self._ser is not None:
@@ -57,23 +107,50 @@ class Loadcell:
             finally:
                 self._ser = None
 
-    def read(self):
-        """Poll once. Returns (command, raw reply, value) — value is a float or None."""
+    def _require_open(self):
         if not self.is_open:
-            raise RuntimeError(f"Loadcell {self.tag} is not connected")
-        command = f"ID{self.tag}P"
+            raise RuntimeError(f"{self.name} is not connected")
+
+    def _command(self, cmd):
+        """Send ID<nn><cmd>; returns the text sent."""
+        if self.stream_mode:
+            raise RuntimeError("Commands need command mode — set the indicator ID (F-40) to 01–99")
+        text = f"ID{self.device_id:02d}{cmd}"
+        self._ser.reset_input_buffer()
+        self._ser.write(text.encode("ascii"))
+        return text
+
+    def read(self):
+        """Get one reading. Returns (sent command or None, raw line, value)."""
+        self._require_open()
         with self._lock:
+            if self.stream_mode:
+                # Drop whatever is buffered (possibly half a line), then take
+                # the next complete frame.
+                self._ser.reset_input_buffer()
+                self._ser.readline()
+                sent = None
+            else:
+                sent = self._command(CMD_READ)
+            raw = self._ser.readline().decode("ascii", errors="replace").strip()
+        if not raw:
+            raise TimeoutError("No response received — check port, baud rate and indicator ID (F-40)")
+        return sent, raw, parse_frame(raw, None if self.stream_mode else self.device_id)
+
+    def zero(self):
+        return self._simple(CMD_ZERO)
+
+    def hold(self):
+        return self._simple(CMD_HOLD)
+
+    def release(self):
+        return self._simple(CMD_RELEASE)
+
+    def _simple(self, cmd):
+        self._require_open()
+        with self._lock:
+            sent = self._command(cmd)
+            time.sleep(0.1)
+            # The manual defines no reply for Z/H/R; drop anything that came back.
             self._ser.reset_input_buffer()
-            self._ser.reset_output_buffer()
-            self._ser.write(command.encode())
-            reply = self._ser.readline().decode("utf-8", errors="replace").strip()
-        if not reply:
-            raise TimeoutError("No response received")
-        parts = reply.split(",")
-        value = None
-        if len(parts) > 1:
-            try:
-                value = float(parts[1].strip())
-            except ValueError:
-                pass
-        return command, reply, value
+        return sent

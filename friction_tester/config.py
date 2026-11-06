@@ -20,10 +20,11 @@ DEFAULT_SETTINGS = {
         "reg_address": "D0000",
         "reg_points": 2,
     },
-    # Two RS232 loadcell indicators, polled with ID01P / ID02P
+    # Two KOMEIN AM-50LW indicators on RS232. device_id is the indicator's
+    # F-40 ID Number: 0 = stream mode, 1-99 = command mode (ID01P etc.).
     "loadcells": [
-        {"port": "", "baudrate": 9600},
-        {"port": "", "baudrate": 9600},
+        {"port": "", "baudrate": 9600, "device_id": 1},
+        {"port": "", "baudrate": 9600, "device_id": 2},
     ],
     "daq": {
         "device": "",

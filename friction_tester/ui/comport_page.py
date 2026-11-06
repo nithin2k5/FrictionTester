@@ -16,7 +16,7 @@ from ..config import save_settings
 from ..devices import loadcell, ni_daq, plc_xgb
 
 PLC_COLS = (("Device", 200), ("COM Port", 140), ("Baud Rate", 140), ("Station ID", 110),
-            ("Action", 220), ("Status", 0))
+            ("Action", 300), ("Status", 0))
 DAQ_COLS = (("Device", 200), ("NI Device", 140), ("AI Channels", 140), ("Terminal", 120),
             ("Input Range", 120), ("Action", 130))
 
@@ -194,6 +194,11 @@ class ComPortPage(tk.Frame):
         for i, lc in enumerate(self.loadcells):
             self._build_loadcell_row(table, i, lc)
 
+        row = self._option_row()
+        self._label(row, f"Loadcells: {loadcell.MODEL}, 8N1. Station ID = indicator ID Number (F-40): "
+                         "00 = stream mode, 01–99 = command mode (polled with ID01P).",
+                    fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
+
         # TEST reads these bit devices
         row = self._option_row()
         self._label(row, "Test Bits", font=(theme.FONT, 11, "bold"), width=18, anchor="w").pack(side="left")
@@ -340,24 +345,30 @@ class ComPortPage(tk.Frame):
             w["connect"] = self._button(f, "CONNECT", lambda: self.toggle_loadcell(i), bg=CONNECT_BG, fg="white")
             w["connect"].pack(side="left", padx=(0, 6))
             w["test"] = self._button(f, "TEST", lambda: self.test_loadcell(i))
-            w["test"].pack(side="left")
+            w["test"].pack(side="left", padx=(0, 6))
+            w["zero"] = self._button(f, "ZERO", lambda: self.zero_loadcell(i), bg="#555", fg="white", width=7)
+            w["zero"].pack(side="left")
             return f
 
-        w["port"], w["baud"], _dash, _actions, w["status"] = self._device_row(
+        w["port"], w["baud"], w["id"], _actions, w["status"] = self._device_row(
             table, PLC_COLS, i + 1, lc.name,
             [
                 lambda p: self._combo(p, [], cfg["port"], width=14),
                 lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=11),
-                lambda p: tk.Label(p, text="-", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 11), width=6),
+                lambda p: self._entry(p, f"{int(cfg['device_id']):02d}", width=7, digits_only=True),
                 make_actions,
                 lambda p: tk.Label(p, text="Not connected", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 10)),
             ],
         )
+        w["id"].config(justify="center")
         self.lc_rows.append(w)
 
     def _lc_config(self, i):
         w = self.lc_rows[i]
-        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get())}
+        dev_id = w["id"].get().strip()
+        if not dev_id.isdigit() or int(dev_id) > 99:
+            raise ValueError("Indicator ID must be 00 (stream) or 01–99")
+        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get()), "device_id": int(dev_id)}
 
     def _show_lc_state(self, i, error=None, text=None):
         lc, w = self.loadcells[i], self.lc_rows[i]
@@ -366,8 +377,10 @@ class ComPortPage(tk.Frame):
         w["connect"].config(text="DISCONNECT" if connected else "CONNECT", bg=bg,
                             activebackground=bg, state="normal")
         w["test"].config(state="normal" if connected else "disabled")
+        w["zero"].config(state="normal" if connected and not lc.stream_mode else "disabled")
         for key in ("port", "baud"):
             w[key].config(state="disabled" if connected else "readonly")
+        w["id"].config(state="disabled" if connected else "normal")
         if text:
             w["status"].config(text=text, fg=theme.PASS if connected else theme.FAIL)
         elif connected:
@@ -384,15 +397,16 @@ class ComPortPage(tk.Frame):
             self.log(f"{lc.name} disconnected.")
             self._show_lc_state(i)
             return
-        cfg = self._lc_config(i)
         try:
+            cfg = self._lc_config(i)
             lc.connect(cfg)
         except Exception as exc:
             self.log(f"{lc.name} Error: {exc}")
             self._show_lc_state(i, error=True)
             return
         self.settings["loadcells"][i] = cfg
-        self.log(f"Connected to {lc.name} on {cfg['port']} ({cfg['baudrate']} 8N1).")
+        mode = "stream mode" if lc.stream_mode else f"command mode, ID {lc.device_id:02d}"
+        self.log(f"Connected to {lc.name} ({loadcell.MODEL}) on {cfg['port']} ({cfg['baudrate']} 8N1, {mode}).")
         self._show_lc_state(i)
 
     def test_loadcell(self, i):
@@ -400,17 +414,27 @@ class ComPortPage(tk.Frame):
 
         def run():
             try:
-                command, reply, value = lc.read()
+                sent, reply, value = lc.read()
             except Exception as exc:
                 self.log(f"{lc.name}: {exc}")
                 self._ui(self._show_lc_state, i, error=True)
                 return
-            self.log(f"{lc.name}  Sent: {command}   Response: {reply}")
-            if value is None:
-                self.log(f"{lc.name}: could not parse a value from the response")
-            else:
-                self.log(f"{lc.name}  Value: {value:g}")
-                self._ui(self._show_lc_state, i, text=f"Connected on {lc.port}  |  {value:g}")
+            prefix = f"Sent: {sent}   " if sent else "Stream: "
+            self.log(f"{lc.name}  {prefix}Response: {reply}   Value: {value:g}")
+            self._ui(self._show_lc_state, i, text=f"Connected on {lc.port}  |  {value:g}")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def zero_loadcell(self, i):
+        lc = self.loadcells[i]
+
+        def run():
+            try:
+                sent = lc.zero()
+            except Exception as exc:
+                self.log(f"{lc.name}: {exc}")
+                return
+            self.log(f"{lc.name}  Sent: {sent} (zero)")
 
         threading.Thread(target=run, daemon=True).start()
 
