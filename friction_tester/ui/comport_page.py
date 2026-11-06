@@ -1,10 +1,14 @@
 """COM Setting page.
 
-PLC slot follows the EOL tester: LS XGB over RS232 (Modbus RTU), with COM
-port, baud rate, station ID, CONNECT / TEST and a status cell, plus a PLC
-register read underneath. The NI USB-6210 has its own row with a TEST button.
-Visual style follows FeederCable: banded rows that light up under the pointer
-and one log box for everything.
+One card per device group, stacked on the left; the communication log fills
+the right. Every device row has the same columns:
+
+    Device | COM Port | Baud Rate | ID | actions | status
+
+* PLC — LS XGB over RS232, Modbus RTU 8N1 (as in the EOL tester): CONNECT /
+  TEST, plus test bits and a D-register read.
+* Loadcells — two KOMEIN AM-50LW indicators: CONNECT / TEST / ZERO.
+* NI DAQ — NI USB-6210 analog input: TEST.
 """
 
 import threading
@@ -13,64 +17,86 @@ from tkinter import ttk
 
 from . import theme
 from ..config import save_settings
-from ..devices import iai_servo, loadcell, ni_daq, plc_xgb
+from ..devices import loadcell, ni_daq, plc_xgb
 
-PLC_COLS = (("Device", 200), ("COM Port", 140), ("Baud Rate", 140), ("Station ID", 110),
-            ("Action", 300), ("Status", 0))
-DAQ_COLS = (("Device", 200), ("NI Device", 140), ("AI Channels", 140), ("Terminal", 120),
-            ("Input Range", 120), ("Action", 130))
+# Shared column widths so every card's rows line up with the others.
+COLS = (("Device", 145), ("COM Port", 130), ("Baud Rate", 105), ("ID", 84), ("", 268), ("Status", 0))
+DAQ_COLS = (("Device", 145), ("AI Channels", 130), ("Terminal", 105), ("Range", 84), ("", 268), ("Status", 0))
 
-CONNECT_BG = theme.PASS
-DISCONNECT_BG = theme.FAIL
+CARD_BG = theme.PANEL
+HEAD_BG = "#171c25"
+ROW_BG = "#141922"
+
+
+class StatusPill(tk.Frame):
+    """A coloured dot and a short state text."""
+
+    COLORS = {"idle": theme.MUTED, "ok": theme.PASS, "busy": theme.BUSY, "error": theme.FAIL}
+
+    def __init__(self, master):
+        bg = master["bg"]
+        super().__init__(master, bg=bg)
+        self.dot = tk.Canvas(self, width=12, height=12, bg=bg, highlightthickness=0)
+        self._oval = self.dot.create_oval(2, 2, 11, 11, fill=theme.MUTED, outline="")
+        self.dot.pack(side="left")
+        self.text = tk.Label(self, text="Not connected", bg=bg, fg=theme.MUTED, font=(theme.FONT, 10), anchor="w")
+        self.text.pack(side="left", padx=(6, 0))
+
+    def set(self, state, text):
+        color = self.COLORS[state]
+        self.dot.itemconfig(self._oval, fill=color)
+        self.text.config(text=text, fg="white" if state == "ok" else color)
 
 
 class ComPortPage(tk.Frame):
-    def __init__(self, master, settings, plc, daq, loadcells, servos):
-        super().__init__(master, bg=theme.PANEL, bd=1, relief="solid",
-                         highlightbackground=theme.BORDER, highlightthickness=1)
+    def __init__(self, master, settings, plc, daq, loadcells):
+        super().__init__(master, bg=theme.BG)
         self.settings = settings
         self.plc = plc
         self.daq = daq
         self.loadcells = loadcells
-        self.servos = servos
-        self.lc_rows = []   # one dict of widgets per loadcell
-        self.sv_rows = []   # one dict of widgets per servo
+        self.lc_rows = []
 
-        self._build_title()
-        self._build_plc_section()
-        self._build_daq_section()
-        self._build_bottom()
-        self._build_log()
+        self._build_toolbar()
+        body = tk.Frame(self, bg=theme.BG)
+        body.pack(fill="both", expand=True, pady=(10, 0))
+        body.columnconfigure(0, weight=0)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        left = tk.Frame(body, bg=theme.BG)
+        left.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        self._build_plc_card(left)
+        self._build_loadcell_card(left)
+        self._build_daq_card(left)
+        self._build_log_card(body).grid(row=0, column=1, sticky="nsew")
 
         self.refresh_hardware(log=False)
         self._show_plc_state()
         for i in range(len(self.loadcells)):
             self._show_lc_state(i)
-        for i in range(len(self.servos)):
-            self._show_sv_state(i)
         if not plc_xgb.XGBPlc.available():
             self.log("pymodbus is not installed — run: pip install pymodbus")
         if not ni_daq.NIDaq.available():
-            self.log("nidaqmx is not installed — run: pip install nidaqmx")
+            self.log("nidaqmx is not installed — run: pip install nidaqmx (and install the NI-DAQmx driver)")
 
-    # --------------------------------------------------------------- helpers
-    def _label(self, parent, text, **kw):
-        opts = {"bg": parent["bg"], "fg": "white", "font": (theme.FONT, 11)}
-        opts.update(kw)
-        return tk.Label(parent, text=text, **opts)
+    # ============================================================ helpers
+    def _label(self, parent, text, fg="white", size=10, bold=False, **kw):
+        return tk.Label(parent, text=text, bg=parent["bg"], fg=fg,
+                        font=(theme.FONT, size, "bold") if bold else (theme.FONT, size), **kw)
 
-    def _entry(self, parent, value, width=12, digits_only=False):
-        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white",
-                     font=(theme.FONT, 11), width=width, bd=1, relief="solid",
+    def _entry(self, parent, value, width=10, digits_only=False, justify="left"):
+        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify=justify,
+                     font=(theme.FONT, 10), width=width, bd=1, relief="solid",
                      highlightbackground=theme.BORDER, highlightthickness=1,
-                     disabledbackground="#16191f", disabledforeground=theme.MUTED)
+                     disabledbackground="#151920", disabledforeground=theme.MUTED)
         e.insert(0, str(value))
         if digits_only:
             check = e.register(lambda p: p == "" or p.isdigit())
             e.configure(validate="key", validatecommand=(check, "%P"))
         return e
 
-    def _combo(self, parent, values, current, width=12):
+    def _combo(self, parent, values, current, width=11):
         values = [str(v) for v in values]
         current = str(current)
         if current and current not in values:
@@ -82,76 +108,53 @@ class ComPortPage(tk.Frame):
             cb.current(0)
         return cb
 
-    def _button(self, parent, text, command, bg=theme.TEST_IDLE, fg="black", width=9):
-        return tk.Button(parent, text=text, bg=bg, fg=fg, activebackground=bg,
-                         font=(theme.FONT, 10, "bold"), width=width, bd=0, cursor="hand2",
-                         disabledforeground="#888", command=command)
+    def _button(self, parent, text, command, kind="secondary", width=8):
+        bg, fg = {"primary": (theme.PASS, "white"), "secondary": (theme.TEST_IDLE, "black"),
+                  "muted": ("#4a505c", "white"), "info": (theme.UPDATE, "white")}[kind]
+        return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=bg,
+                         activeforeground=fg, font=(theme.FONT, 9, "bold"), width=width, bd=0, pady=3,
+                         cursor="hand2", disabledforeground="#8a8f99")
 
     @staticmethod
-    def _grid_cols(frame, cols):
-        # Fixed widths keep rows aligned; a zero width takes the slack.
+    def _cols(frame, cols):
         for i, (_, w) in enumerate(cols):
             frame.columnconfigure(i, minsize=w, weight=0 if w else 1)
-        if all(w for _, w in cols):
-            frame.columnconfigure(len(cols), weight=1)
-        return frame
 
-    def _section_heading(self, text):
-        self._label(self, text, fg=theme.TITLE_FG, font=(theme.FONT, 11, "bold")).pack(
-            anchor="w", padx=30, pady=(8, 0))
+    def _card(self, parent, title, subtitle):
+        """A bordered card with a title strip; returns the body frame."""
+        card = tk.Frame(parent, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
+        card.pack(fill="x", pady=(0, 12))
+        head = tk.Frame(card, bg=HEAD_BG)
+        head.pack(fill="x")
+        tk.Frame(head, bg=theme.TITLE_FG, width=4).pack(side="left", fill="y")
+        self._label(head, title, size=12, bold=True).pack(side="left", padx=(10, 8), pady=7)
+        self._label(head, subtitle, fg=theme.MUTED, size=9).pack(side="left", pady=7)
+        body = tk.Frame(card, bg=CARD_BG)
+        body.pack(fill="x", padx=12, pady=(6, 10))
+        return body
 
-    def _table(self, cols):
-        table = tk.Frame(self, bg=theme.PANEL)
-        table.pack(fill="x", padx=20, pady=(4, 6))
-        header = self._grid_cols(tk.Frame(table, bg=theme.PANEL), cols)
-        header.pack(fill="x")
+    def _table_header(self, body, cols):
+        head = tk.Frame(body, bg=CARD_BG)
+        head.pack(fill="x")
+        self._cols(head, cols)
         for i, (h, _) in enumerate(cols):
-            tk.Label(header, text=h, bg=theme.PANEL, fg=theme.HEADER_FG,
-                     font=(theme.FONT, 10, "bold")).grid(row=0, column=i, sticky="w", padx=(10, 0), pady=(0, 6))
-        tk.Frame(table, bg="#2b3242", height=1).pack(fill="x")
-        return table
+            self._label(head, h, fg=theme.HEADER_FG, size=9, bold=True).grid(
+                row=0, column=i, sticky="w", padx=(8, 0), pady=(0, 4))
 
-    def _device_row(self, table, cols, index, name, makers):
-        """A banded row: the device name, then one widget per maker callable.
-
-        Plain frames and labels in the row take the band colour (and the hover
-        colour); buttons and inputs keep their own.
-        """
-        band = theme.BAND[index % 2]
-        row = self._grid_cols(tk.Frame(table, bg=band), cols)
-        row.pack(fill="x")
-        tk.Label(row, text=name, bg=band, fg="white", font=(theme.FONT, 11), anchor="w").grid(
-            row=0, column=0, sticky="w", padx=(10, 0), pady=5)
+    def _row(self, body, cols, name, makers):
+        """A device row; makers build the widgets for columns 1..n."""
+        row = tk.Frame(body, bg=ROW_BG)
+        row.pack(fill="x", pady=2)
+        self._cols(row, cols)
+        self._label(row, name, size=10, bold=True, anchor="w").grid(row=0, column=0, sticky="w", padx=(8, 0), pady=6)
         built = []
         for col, make in enumerate(makers, start=1):
             w = make(row)
-            w.grid(row=0, column=col, sticky="w", padx=(10, 0), pady=3)
+            w.grid(row=0, column=col, sticky="w", padx=(8, 0), pady=4)
             built.append(w)
-
-        def descendants(w):
-            for c in w.winfo_children():
-                yield c
-                yield from descendants(c)
-
-        def tint(color):
-            for w in (row, *descendants(row)):
-                if type(w) in (tk.Frame, tk.Label):
-                    w.config(bg=color)
-
-        # Tk sends <Leave> to the frame when the pointer moves onto a child,
-        # so every widget in the row carries the same pair of bindings.
-        for w in (row, *descendants(row)):
-            w.bind("<Enter>", lambda _e: tint(theme.BAND_HOVER), add="+")
-            w.bind("<Leave>", lambda _e, c=band: tint(c), add="+")
         return built
 
-    def _option_row(self):
-        row = tk.Frame(self, bg=theme.PANEL)
-        row.pack(fill="x", padx=35, pady=(0, 5))
-        return row
-
     def _ui(self, fn, *args, **kw):
-        """Run a widget update on the Tk thread."""
         self.after(0, lambda: fn(*args, **kw))
 
     def log(self, msg):
@@ -162,63 +165,54 @@ class ComPortPage(tk.Frame):
             self.log_text.config(state="disabled")
         self.after(0, _append)
 
-    # ----------------------------------------------------------------- title
-    def _build_title(self):
-        bar = tk.Frame(self, bg=theme.PANEL)
-        bar.pack(fill="x", padx=20, pady=(10, 8))
-        self._label(bar, "COM Setting", font=(theme.FONT, 14)).pack(side="left")
-        tk.Frame(self, bg=theme.BORDER, height=1).pack(fill="x", padx=20)
+    # ============================================================ toolbar
+    def _build_toolbar(self):
+        bar = tk.Frame(self, bg=theme.BG)
+        bar.pack(fill="x")
+        self._label(bar, "Device Connections", size=15).pack(side="left")
+        self._label(bar, "Connect and test each device, then Save.", fg=theme.MUTED, size=10).pack(
+            side="left", padx=14, pady=(4, 0))
+        for text, cmd, bg in (("Save", self.save, theme.SAVE), ("Rescan Ports", self.refresh_hardware, theme.UPDATE)):
+            tk.Button(bar, text=text, command=cmd, bg=bg, fg="white", activebackground=bg,
+                      activeforeground="white", font=(theme.FONT, 10, "bold"), bd=0, padx=18, pady=5,
+                      cursor="hand2").pack(side="right", padx=(8, 0))
 
-    # ------------------------------------------------------------------- PLC
-    def _build_plc_section(self):
+    # ================================================================ PLC
+    def _build_plc_card(self, parent):
         cfg = self.settings["plc"]
-        self._section_heading("Serial Devices (COM ports)")
-        table = self._table(PLC_COLS)
+        body = self._card(parent, "PLC", "LS XGB  ·  RS232  ·  Modbus RTU 8N1")
+        self._table_header(body, COLS)
 
-        def make_actions(parent):
-            f = tk.Frame(parent, bg=parent["bg"])
-            self.btn_plc_connect = self._button(f, "CONNECT", self.toggle_plc, bg=CONNECT_BG, fg="white")
+        def actions(p):
+            f = tk.Frame(p, bg=p["bg"])
+            self.btn_plc_connect = self._button(f, "CONNECT", self.toggle_plc, "primary", width=11)
             self.btn_plc_connect.pack(side="left", padx=(0, 6))
             self.btn_plc_test = self._button(f, "TEST", self.test_plc)
             self.btn_plc_test.pack(side="left")
             return f
 
-        self.cb_plc_port, self.cb_plc_baud, self.ent_plc_station, _actions, self.lbl_plc_status = self._device_row(
-            table, PLC_COLS, 0, "PLC (LS XGB)",
-            [
-                lambda p: self._combo(p, [], cfg["port"], width=14),
-                lambda p: self._combo(p, plc_xgb.BAUD_RATES, cfg["baudrate"], width=11),
-                lambda p: self._entry(p, cfg["station_id"], width=7, digits_only=True),
-                make_actions,
-                lambda p: tk.Label(p, text="Not connected", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 10)),
-            ],
-        )
-        self.ent_plc_station.config(justify="center")
+        self.cb_plc_port, self.cb_plc_baud, self.ent_plc_station, _a, self.plc_status = self._row(
+            body, COLS, "XGB", [
+                lambda p: self._combo(p, [], cfg["port"]),
+                lambda p: self._combo(p, plc_xgb.BAUD_RATES, cfg["baudrate"], width=9),
+                lambda p: self._entry(p, cfg["station_id"], width=5, digits_only=True, justify="center"),
+                actions,
+                StatusPill,
+            ])
 
-        for i, lc in enumerate(self.loadcells):
-            self._build_loadcell_row(table, i, lc)
-        for i, sv in enumerate(self.servos):
-            self._build_servo_row(table, len(self.loadcells) + 1 + i, i, sv)
-
-        hints = self._option_row()
-        self._label(hints, "Station ID — Loadcell: AM-50LW ID (F-40), 00 = stream  ·  "
-                           "Servo: IAI axis No. 0–15 (Modbus RTU via RS485 converter; servos may share a port)",
-                    fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
-
-        # PLC test bits and register read, on one line
-        row = self._option_row()
-        self._label(row, "PLC Test Bits", font=(theme.FONT, 11, "bold")).pack(side="left")
-        self.ent_plc_bits = self._entry(row, cfg["test_bits"], width=24)
-        self.ent_plc_bits.pack(side="left", padx=(8, 30))
-        self._label(row, "Register Read", font=(theme.FONT, 11, "bold")).pack(side="left", padx=(0, 8))
-        self._label(row, "Address", fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
-        self.ent_reg_addr = self._entry(row, cfg["reg_address"], width=10)
-        self.ent_reg_addr.pack(side="left", padx=(6, 18))
-        self._label(row, "Points", fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
-        self.ent_reg_points = self._entry(row, cfg["reg_points"], width=5, digits_only=True)
-        self.ent_reg_points.pack(side="left", padx=(6, 18))
-        self.btn_reg_read = self._button(row, "READ", self.read_registers, bg=theme.UPDATE, fg="white")
-        self.btn_reg_read.pack(side="left")
+        tools = tk.Frame(body, bg=CARD_BG)
+        tools.pack(fill="x", pady=(8, 0))
+        self._label(tools, "Test bits", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(8, 6))
+        self.ent_plc_bits = self._entry(tools, cfg["test_bits"], width=22)
+        self.ent_plc_bits.pack(side="left")
+        self._label(tools, "Register", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(20, 6))
+        self.ent_reg_addr = self._entry(tools, cfg["reg_address"], width=8, justify="center")
+        self.ent_reg_addr.pack(side="left")
+        self._label(tools, "Points", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(12, 6))
+        self.ent_reg_points = self._entry(tools, cfg["reg_points"], width=4, digits_only=True, justify="center")
+        self.ent_reg_points.pack(side="left")
+        self.btn_reg_read = self._button(tools, "READ", self.read_registers, "info", width=7)
+        self.btn_reg_read.pack(side="left", padx=(10, 0))
 
     def _plc_config(self):
         station = self.ent_plc_station.get().strip()
@@ -242,20 +236,19 @@ class ComPortPage(tk.Frame):
     def _show_plc_state(self, error=None):
         connected = self.plc.is_open
         self.btn_plc_connect.config(text="DISCONNECT" if connected else "CONNECT",
-                                    bg=DISCONNECT_BG if connected else CONNECT_BG,
-                                    activebackground=DISCONNECT_BG if connected else CONNECT_BG,
-                                    state="normal")
-        self.btn_plc_test.config(state="normal" if connected else "disabled")
-        self.btn_reg_read.config(state="normal" if connected else "disabled")
+                                    bg=theme.FAIL if connected else theme.PASS,
+                                    activebackground=theme.FAIL if connected else theme.PASS, state="normal")
+        for b in (self.btn_plc_test, self.btn_reg_read):
+            b.config(state="normal" if connected else "disabled")
         for w in (self.cb_plc_port, self.cb_plc_baud):
             w.config(state="disabled" if connected else "readonly")
         self.ent_plc_station.config(state="disabled" if connected else "normal")
         if connected:
-            self.lbl_plc_status.config(text=f"Connected on {self.plc.port}", fg=theme.PASS)
+            self.plc_status.set("ok", f"Connected · {self.plc.port}")
         elif error:
-            self.lbl_plc_status.config(text="Connection failed", fg=theme.FAIL)
+            self.plc_status.set("error", "Connection failed")
         else:
-            self.lbl_plc_status.config(text="Not connected", fg=theme.MUTED)
+            self.plc_status.set("idle", "Not connected")
 
     def toggle_plc(self):
         if self.plc.is_open:
@@ -268,18 +261,18 @@ class ComPortPage(tk.Frame):
         except ValueError as exc:
             self.log(f"PLC: {exc}")
             return
-        self.btn_plc_connect.config(text="CONNECTING...", bg=theme.BUSY, state="disabled")
-        self.lbl_plc_status.config(text="Connecting...", fg=theme.BUSY)
+        self.btn_plc_connect.config(text="CONNECTING…", bg=theme.BUSY, state="disabled")
+        self.plc_status.set("busy", "Connecting…")
 
         def run():
-            self.log(f"Connecting to PLC on {cfg['port']} ({cfg['baudrate']} 8N1, station {cfg['station_id']})...")
+            self.log(f"Connecting to PLC on {cfg['port']} ({cfg['baudrate']} 8N1, station {cfg['station_id']})…")
             try:
                 self.plc.connect(cfg)
                 self.settings["plc"] = cfg
-                self.log(f"Connected to PLC on {cfg['port']}.")
+                self.log(f"PLC connected on {cfg['port']}.")
                 self._ui(self._show_plc_state)
             except Exception as exc:
-                self.log(f"PLC Error: {exc}")
+                self.log(f"PLC error: {exc}")
                 self._ui(self._show_plc_state, error=True)
 
         threading.Thread(target=run, daemon=True).start()
@@ -291,18 +284,18 @@ class ComPortPage(tk.Frame):
             self.log(f"PLC: {exc}")
             return
         if not bits:
-            self.log("PLC: enter at least one bit address under Test Bits.")
+            self.log("PLC: enter at least one bit address under Test bits.")
             return
 
         def run():
-            self.log("Reading bits:")
             try:
-                for addr, value in self.plc.read_bits(bits):
-                    text = "Error reading coil" if value == "error" else ("ON" if value else "OFF")
-                    self.log(f"  {addr} --> {text}")
+                results = self.plc.read_bits(bits)
             except Exception as exc:
-                self.log(f"PLC Error: {exc}")
+                self.log(f"PLC error: {exc}")
                 self._ui(self._after_plc_failure)
+                return
+            self.log("PLC bits:  " + "   ".join(
+                f"{a}={'ERR' if v == 'error' else ('ON' if v else 'OFF')}" for a, v in results))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -319,49 +312,52 @@ class ComPortPage(tk.Frame):
             try:
                 start, regs = self.plc.read_registers(addr, points)
             except Exception as exc:
-                self.log(f"PLC Error: {exc}")
+                self.log(f"PLC error: {exc}")
                 self._ui(self._after_plc_failure)
                 return
-            self.log(f"Reading {points} holding register(s) from {addr}:")
+            self.log(f"PLC registers from {addr}:")
             for i, v in enumerate(regs):
                 self.log(f"  D{start + i:04d} = {v}  (0x{v:04X}, signed {v - 65536 if v >= 32768 else v})")
             for i, big, swapped in plc_xgb.registers_as_floats(regs):
-                self.log(f"  D{start + i:04d}-D{start + i + 1:04d} as float: "
+                self.log(f"  D{start + i:04d}-D{start + i + 1:04d} float: "
                          f"{big:.6g} (high word first) / {swapped:.6g} (low word first)")
 
         threading.Thread(target=run, daemon=True).start()
 
     def _after_plc_failure(self):
-        # A dropped port leaves pymodbus closed; reflect that on the row.
         if not self.plc.is_open:
             self._show_plc_state(error=True)
 
-    # ------------------------------------------------------------- loadcells
-    def _build_loadcell_row(self, table, i, lc):
+    # ========================================================== loadcells
+    def _build_loadcell_card(self, parent):
+        body = self._card(parent, "Loadcells", f"{loadcell.MODEL}  ·  RS232 8N1  ·  ID = F-40 (00 = stream)")
+        self._table_header(body, COLS)
+        for i, lc in enumerate(self.loadcells):
+            self._build_loadcell_row(body, i, lc)
+
+    def _build_loadcell_row(self, body, i, lc):
         cfg = self.settings["loadcells"][i]
         w = {}
 
-        def make_actions(parent):
-            f = tk.Frame(parent, bg=parent["bg"])
-            w["connect"] = self._button(f, "CONNECT", lambda: self.toggle_loadcell(i), bg=CONNECT_BG, fg="white")
+        def actions(p):
+            f = tk.Frame(p, bg=p["bg"])
+            w["connect"] = self._button(f, "CONNECT", lambda: self.toggle_loadcell(i), "primary", width=11)
             w["connect"].pack(side="left", padx=(0, 6))
             w["test"] = self._button(f, "TEST", lambda: self.test_loadcell(i))
             w["test"].pack(side="left", padx=(0, 6))
-            w["zero"] = self._button(f, "ZERO", lambda: self.zero_loadcell(i), bg="#555", fg="white", width=7)
+            w["zero"] = self._button(f, "ZERO", lambda: self.zero_loadcell(i), "muted", width=6)
             w["zero"].pack(side="left")
             return f
 
-        w["port"], w["baud"], w["id"], _actions, w["status"] = self._device_row(
-            table, PLC_COLS, i + 1, lc.name,
-            [
-                lambda p: self._combo(p, [], cfg["port"], width=14),
-                lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=11),
-                lambda p: self._entry(p, f"{int(cfg['device_id']):02d}", width=7, digits_only=True),
-                make_actions,
-                lambda p: tk.Label(p, text="Not connected", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 10)),
-            ],
-        )
-        w["id"].config(justify="center")
+        w["port"], w["baud"], w["id"], _a, w["status"] = self._row(
+            body, COLS, f"L{lc.number}", [
+                lambda p: self._combo(p, [], cfg["port"]),
+                lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=9),
+                lambda p: self._entry(p, f"{int(cfg['device_id']):02d}", width=5, digits_only=True,
+                                      justify="center"),
+                actions,
+                StatusPill,
+            ])
         self.lc_rows.append(w)
 
     def _lc_config(self, i):
@@ -374,22 +370,22 @@ class ComPortPage(tk.Frame):
     def _show_lc_state(self, i, error=None, text=None):
         lc, w = self.loadcells[i], self.lc_rows[i]
         connected = lc.is_open
-        bg = DISCONNECT_BG if connected else CONNECT_BG
-        w["connect"].config(text="DISCONNECT" if connected else "CONNECT", bg=bg,
-                            activebackground=bg, state="normal")
+        bg = theme.FAIL if connected else theme.PASS
+        w["connect"].config(text="DISCONNECT" if connected else "CONNECT", bg=bg, activebackground=bg,
+                            state="normal")
         w["test"].config(state="normal" if connected else "disabled")
         w["zero"].config(state="normal" if connected and not lc.stream_mode else "disabled")
         for key in ("port", "baud"):
             w[key].config(state="disabled" if connected else "readonly")
         w["id"].config(state="disabled" if connected else "normal")
         if text:
-            w["status"].config(text=text, fg=theme.PASS if connected else theme.FAIL)
+            w["status"].set("error" if error else "ok", text)
         elif connected:
-            w["status"].config(text=f"Connected on {lc.port}", fg=theme.PASS)
+            w["status"].set("ok", f"Connected · {lc.port}")
         elif error:
-            w["status"].config(text="Connection failed", fg=theme.FAIL)
+            w["status"].set("error", "Connection failed")
         else:
-            w["status"].config(text="Not connected", fg=theme.MUTED)
+            w["status"].set("idle", "Not connected")
 
     def toggle_loadcell(self, i):
         lc = self.loadcells[i]
@@ -402,12 +398,12 @@ class ComPortPage(tk.Frame):
             cfg = self._lc_config(i)
             lc.connect(cfg)
         except Exception as exc:
-            self.log(f"{lc.name} Error: {exc}")
+            self.log(f"{lc.name} error: {exc}")
             self._show_lc_state(i, error=True)
             return
         self.settings["loadcells"][i] = cfg
         mode = "stream mode" if lc.stream_mode else f"command mode, ID {lc.device_id:02d}"
-        self.log(f"Connected to {lc.name} ({loadcell.MODEL}) on {cfg['port']} ({cfg['baudrate']} 8N1, {mode}).")
+        self.log(f"{lc.name} connected on {cfg['port']} ({cfg['baudrate']} 8N1, {mode}).")
         self._show_lc_state(i)
 
     def test_loadcell(self, i):
@@ -418,11 +414,11 @@ class ComPortPage(tk.Frame):
                 sent, reply, value = lc.read()
             except Exception as exc:
                 self.log(f"{lc.name}: {exc}")
-                self._ui(self._show_lc_state, i, error=True)
+                self._ui(self._show_lc_state, i, error=True, text="No response")
                 return
-            prefix = f"Sent: {sent}   " if sent else "Stream: "
-            self.log(f"{lc.name}  {prefix}Response: {reply}   Value: {value:g}")
-            self._ui(self._show_lc_state, i, text=f"Connected on {lc.port}  |  {value:g}")
+            prefix = f"sent {sent}, " if sent else "stream, "
+            self.log(f"{lc.name}: {prefix}reply {reply!r} → {value:g}")
+            self._ui(self._show_lc_state, i, text=f"{lc.port} · {value:g}")
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -435,158 +431,53 @@ class ComPortPage(tk.Frame):
             except Exception as exc:
                 self.log(f"{lc.name}: {exc}")
                 return
-            self.log(f"{lc.name}  Sent: {sent} (zero)")
+            self.log(f"{lc.name}: sent {sent} (zero)")
 
         threading.Thread(target=run, daemon=True).start()
 
-    # ---------------------------------------------------------------- servos
-    def _build_servo_row(self, table, band_index, i, sv):
-        cfg = self.settings["servos"][i]
-        w = {}
+    # ================================================================ DAQ
+    def _build_daq_card(self, parent):
+        cfg = self.settings["daq"]
+        body = self._card(parent, "NI DAQ", "NI USB-6210  ·  USB  ·  16-bit analog input")
+        self._table_header(body, DAQ_COLS)
 
-        def make_actions(parent):
-            f = tk.Frame(parent, bg=parent["bg"])
-            w["connect"] = self._button(f, "CONNECT", lambda: self.toggle_servo(i), bg=CONNECT_BG, fg="white")
-            w["connect"].pack(side="left", padx=(0, 6))
-            w["test"] = self._button(f, "TEST", lambda: self.test_servo(i))
-            w["test"].pack(side="left", padx=(0, 6))
-            w["reset"] = self._button(f, "ALM RST", lambda: self.reset_servo(i), bg="#555", fg="white", width=7)
-            w["reset"].pack(side="left")
+        def device_cell(p):
+            self.cb_daq_dev = self._combo(p, [], cfg["device"])
+            return self.cb_daq_dev
+
+        def actions(p):
+            f = tk.Frame(p, bg=p["bg"])
+            self.btn_daq_test = self._button(f, "TEST", self.test_daq)
+            self.btn_daq_test.pack(side="left")
             return f
 
-        w["port"], w["baud"], w["axis"], _actions, w["status"] = self._device_row(
-            table, PLC_COLS, band_index, f"{sv.name} (RCP2)",
-            [
-                lambda p: self._combo(p, [], cfg["port"], width=14),
-                lambda p: self._combo(p, iai_servo.BAUD_RATES, cfg["baudrate"], width=11),
-                lambda p: self._entry(p, cfg["axis"], width=7, digits_only=True),
-                make_actions,
-                lambda p: tk.Label(p, text="Not connected", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 10)),
-            ],
-        )
-        w["axis"].config(justify="center")
-        self.sv_rows.append(w)
+        # The device name goes in the first column's place, so it gets a combo.
+        row = tk.Frame(body, bg=ROW_BG)
+        row.pack(fill="x", pady=2)
+        self._cols(row, DAQ_COLS)
+        device_cell(row).grid(row=0, column=0, sticky="w", padx=(8, 0), pady=4)
+        self.cb_daq_dev.config(width=10)
+        self.ent_daq_ch = self._entry(row, ", ".join(cfg["channels"]), width=14)
+        self.ent_daq_ch.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.cb_daq_term = self._combo(row, ni_daq.TERMINAL_CONFIGS, cfg["terminal_config"], width=9)
+        self.cb_daq_term.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        self.cb_daq_range = self._combo(row, list(ni_daq.VOLTAGE_RANGES), cfg["voltage_range"], width=5)
+        self.cb_daq_range.grid(row=0, column=3, sticky="w", padx=(8, 0))
+        actions(row).grid(row=0, column=4, sticky="w", padx=(8, 0))
+        self.daq_status = StatusPill(row)
+        self.daq_status.grid(row=0, column=5, sticky="w", padx=(8, 0))
+        self.daq_status.set("idle", "Not tested")
 
-    def _sv_config(self, i):
-        w = self.sv_rows[i]
-        axis = w["axis"].get().strip()
-        if not axis.isdigit() or int(axis) > 15:
-            raise ValueError("Axis No. must be 0–15")
-        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get()), "axis": int(axis)}
-
-    def _show_sv_state(self, i, error=None, text=None):
-        sv, w = self.servos[i], self.sv_rows[i]
-        connected = sv.is_open
-        bg = DISCONNECT_BG if connected else CONNECT_BG
-        w["connect"].config(text="DISCONNECT" if connected else "CONNECT", bg=bg,
-                            activebackground=bg, state="normal")
-        for key in ("test", "reset"):
-            w[key].config(state="normal" if connected else "disabled")
-        for key in ("port", "baud"):
-            w[key].config(state="disabled" if connected else "readonly")
-        w["axis"].config(state="disabled" if connected else "normal")
-        if text:
-            w["status"].config(text=text, fg=theme.PASS if not error else theme.FAIL)
-        elif connected:
-            w["status"].config(text=f"Connected on {sv.port}, axis {sv.axis}", fg=theme.PASS)
-        elif error:
-            w["status"].config(text="Connection failed", fg=theme.FAIL)
-        else:
-            w["status"].config(text="Not connected", fg=theme.MUTED)
-
-    def toggle_servo(self, i):
-        sv = self.servos[i]
-        if sv.is_open:
-            sv.disconnect()
-            self.log(f"{sv.name} disconnected.")
-            self._show_sv_state(i)
-            return
-        try:
-            cfg = self._sv_config(i)
-        except ValueError as exc:
-            self.log(f"{sv.name}: {exc}")
-            return
-        w = self.sv_rows[i]
-        w["connect"].config(text="CONNECTING...", bg=theme.BUSY, state="disabled")
-
-        def run():
-            self.log(f"Connecting to {sv.name} on {cfg['port']} ({cfg['baudrate']} 8N1, axis {cfg['axis']}, "
-                     f"slave {cfg['axis'] + 1})...")
-            try:
-                sv.connect(cfg)
-            except Exception as exc:
-                self.log(f"{sv.name} Error: {exc}")
-                self._ui(self._show_sv_state, i, error=True)
-                return
-            self.settings["servos"][i] = cfg
-            self.log(f"Connected to {sv.name}.")
-            self._ui(self._show_sv_state, i)
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def test_servo(self, i):
-        sv = self.servos[i]
-
-        def run():
-            try:
-                st = sv.read_status()
-            except Exception as exc:
-                self.log(f"{sv.name}: {exc}")
-                self._ui(self._show_sv_state, i, error=True, text="No response")
-                return
-            f = st["flags"]
-            on = [name for name in ("PWR", "SV", "HEND", "PEND", "BKRL") if f[name]]
-            faults = [name for name in ("EMGS", "ALMH", "ALML", "STP") if f[name]]
-            alarm = f"{st['alarm']:03X}h" if st["alarm"] else "none"
-            self.log(f"{sv.name}  Pos {st['position_mm']:.2f} mm   Speed {st['speed_mm_s']:.2f} mm/s   "
-                     f"Current {st['current_ma']} mA   Alarm {alarm}")
-            self.log(f"{sv.name}  Status: {', '.join(on) or '-'}"
-                     + (f"   Faults: {', '.join(faults)}" if faults else ""))
-            summary = (f"{st['position_mm']:.2f} mm | SV {'ON' if f['SV'] else 'OFF'} | "
-                       f"{'HOME OK' if f['HEND'] else 'NOT HOMED'} | ALM {alarm}")
-            self._ui(self._show_sv_state, i, error=bool(st["alarm"] or faults), text=summary)
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def reset_servo(self, i):
-        sv = self.servos[i]
-
-        def run():
-            try:
-                sv.alarm_reset()
-            except Exception as exc:
-                self.log(f"{sv.name}: {exc}")
-                return
-            self.log(f"{sv.name}  Alarm reset sent (coil 0407h).")
-
-        threading.Thread(target=run, daemon=True).start()
-
-    # ------------------------------------------------------------------- DAQ
-    def _build_daq_section(self):
-        cfg = self.settings["daq"]
-        self._section_heading("NI DAQ (USB)")
-        table = self._table(DAQ_COLS)
-        (self.cb_daq_dev, self.ent_daq_ch, self.cb_daq_term,
-         self.cb_daq_range, self.btn_daq_test) = self._device_row(
-            table, DAQ_COLS, 0, "NI USB-6210",
-            [
-                lambda p: self._combo(p, [], cfg["device"], width=14),
-                lambda p: self._entry(p, ", ".join(cfg["channels"]), width=14),
-                lambda p: self._combo(p, ni_daq.TERMINAL_CONFIGS, cfg["terminal_config"], width=11),
-                lambda p: self._combo(p, list(ni_daq.VOLTAGE_RANGES), cfg["voltage_range"], width=9),
-                lambda p: self._button(p, "TEST", self.test_daq),
-            ],
-        )
-
-        row = self._option_row()
-        self._label(row, "Sample Rate (S/s)").pack(side="left")
-        self.ent_daq_rate = self._entry(row, cfg["sample_rate"], width=10)
-        self.ent_daq_rate.pack(side="left", padx=(10, 25))
-        self._label(row, "Samples / Channel").pack(side="left")
-        self.ent_daq_samples = self._entry(row, cfg["samples_per_channel"], width=8)
-        self.ent_daq_samples.pack(side="left", padx=(10, 12))
-        self._label(row, "Channels: e.g. ai0, ai2 or ai0-ai3", fg=theme.MUTED,
-                    font=(theme.FONT, 10)).pack(side="left", padx=(13, 0))
+        tools = tk.Frame(body, bg=CARD_BG)
+        tools.pack(fill="x", pady=(8, 0))
+        self._label(tools, "Sample rate", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(8, 6))
+        self.ent_daq_rate = self._entry(tools, f"{cfg['sample_rate']:g}", width=8, justify="center")
+        self.ent_daq_rate.pack(side="left")
+        self._label(tools, "S/s", fg=theme.MUTED, size=9).pack(side="left", padx=(4, 0))
+        self._label(tools, "Samples / ch", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(20, 6))
+        self.ent_daq_samples = self._entry(tools, cfg["samples_per_channel"], width=6, justify="center")
+        self.ent_daq_samples.pack(side="left")
+        self._label(tools, "Channels: ai0, ai2 or ai0-ai3", fg=theme.MUTED, size=9).pack(side="left", padx=(20, 0))
 
     def _daq_config(self):
         try:
@@ -606,65 +497,62 @@ class ComPortPage(tk.Frame):
         }
 
     def test_daq(self):
-        btn = self.btn_daq_test
         try:
             cfg = self._daq_config()
         except ValueError as exc:
-            self.log(f"NI USB-6210: {exc}")
+            self.log(f"NI DAQ: {exc}")
             return
+        self.btn_daq_test.config(text="TESTING…", state="disabled")
+        self.daq_status.set("busy", "Testing…")
 
         def run():
-            self._ui(btn.config, text="TESTING...", bg=theme.BUSY, fg="black")
-            self.log(f"Testing NI USB-6210 on {cfg['device'] or '(none)'} "
-                     f"[{', '.join(cfg['channels'])}], {cfg['terminal_config']}, {cfg['voltage_range']}...")
+            self.log(f"NI DAQ test on {cfg['device'] or '(no device)'} [{', '.join(cfg['channels'])}], "
+                     f"{cfg['terminal_config']}, {cfg['voltage_range']}…")
             try:
                 self.daq.connect(cfg)
                 try:
                     values = self.daq.read_average()
                 finally:
                     self.daq.disconnect()
-                self.log("NI USB-6210 Success: " + "   ".join(f"{ch} = {v:+.4f} V" for ch, v in values.items()))
-                self._ui(btn.config, text="PASS", bg=theme.PASS, fg="white")
+                self.log("NI DAQ: " + "   ".join(f"{ch} = {v:+.4f} V" for ch, v in values.items()))
+                self._ui(self.daq_status.set, "ok", f"PASS · {cfg['device']}")
             except Exception as exc:
-                self.log(f"NI USB-6210 Error: {exc}")
-                self._ui(btn.config, text="FAIL", bg=theme.FAIL, fg="white")
+                self.log(f"NI DAQ error: {exc}")
+                self._ui(self.daq_status.set, "error", "FAIL")
+            self._ui(self.btn_daq_test.config, text="TEST", state="normal")
 
         threading.Thread(target=run, daemon=True).start()
 
-    # ---------------------------------------------------------------- bottom
-    def _build_bottom(self):
-        bar = tk.Frame(self, bg=theme.PANEL)
-        bar.pack(side="bottom", fill="x", padx=20, pady=(0, 12))
-        tk.Button(bar, text="Update", bg=theme.UPDATE, fg="white", font=(theme.FONT, 11, "bold"),
-                  width=12, bd=0, pady=5, cursor="hand2",
-                  command=self.refresh_hardware).pack(side="right", padx=(5, 0))
-        tk.Button(bar, text="Save", bg=theme.SAVE, fg="white", font=(theme.FONT, 11, "bold"),
-                  width=12, bd=0, pady=5, cursor="hand2", command=self.save).pack(side="right", padx=5)
-        tk.Button(bar, text="Clear Log", bg="#333", fg="white", font=(theme.FONT, 10, "bold"),
-                  width=10, bd=0, pady=5, cursor="hand2", command=self.clear_log).pack(side="left")
-
-    def _build_log(self):
-        frame = tk.Frame(self, bg=theme.PANEL, bd=1, relief="solid",
-                         highlightbackground=theme.BORDER, highlightthickness=1)
-        frame.pack(side="top", fill="both", expand=True, padx=20, pady=(6, 10))
-        sb = ttk.Scrollbar(frame, orient="vertical")
+    # ================================================================ log
+    def _build_log_card(self, parent):
+        card = tk.Frame(parent, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
+        head = tk.Frame(card, bg=HEAD_BG)
+        head.pack(fill="x")
+        tk.Frame(head, bg=theme.TITLE_FG, width=4).pack(side="left", fill="y")
+        self._label(head, "Communication Log", size=12, bold=True).pack(side="left", padx=10, pady=7)
+        self._button(head, "CLEAR", self.clear_log, "muted", width=7).pack(side="right", padx=8)
+        box = tk.Frame(card, bg=CARD_BG)
+        box.pack(fill="both", expand=True, padx=8, pady=8)
+        sb = ttk.Scrollbar(box, orient="vertical")
         sb.pack(side="right", fill="y")
-        self.log_text = tk.Text(frame, bg=theme.PANEL, fg="white", font=("Consolas", 11), bd=0, height=8,
-                                yscrollcommand=sb.set)
-        self.log_text.pack(fill="both", expand=True, padx=10, pady=10)
+        self.log_text = tk.Text(box, bg="#0d1016", fg="#d6dbe4", font=("Consolas", 10), bd=0, wrap="word",
+                                padx=8, pady=6, yscrollcommand=sb.set, width=40)
+        self.log_text.pack(fill="both", expand=True)
         sb.config(command=self.log_text.yview)
         self.log_text.config(state="disabled")
+        return card
 
     def clear_log(self):
         self.log_text.config(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
 
+    # ============================================================= common
     def refresh_hardware(self, log=True):
-        """Rescan COM ports and NI devices (the Update button)."""
+        """Rescan COM ports and NI devices."""
         ports = plc_xgb.XGBPlc.list_ports()
         port_names = [dev for dev, _ in ports]
-        for cb in [self.cb_plc_port] + [w["port"] for w in self.lc_rows + self.sv_rows]:
+        for cb in [self.cb_plc_port] + [w["port"] for w in self.lc_rows]:
             current = cb.get()
             cb.config(values=port_names or ([current] if current else []))
         if not self.cb_plc_port.get() and port_names:
@@ -681,16 +569,14 @@ class ComPortPage(tk.Frame):
         if log:
             self.log("COM ports: " + (", ".join(f"{d} ({desc})" for d, desc in ports) or "none found"))
             self.log("NI devices: " + (", ".join(f"{n} ({p})" for n, p in devices) or "none found"))
-            self.btn_daq_test.config(text="TEST", bg=theme.TEST_IDLE, fg="black")
 
     def save(self):
         try:
             self.settings["plc"] = self._plc_config()
             self.settings["loadcells"] = [self._lc_config(i) for i in range(len(self.loadcells))]
-            self.settings["servos"] = [self._sv_config(i) for i in range(len(self.servos))]
             self.settings["daq"] = self._daq_config()
             save_settings(self.settings)
         except Exception as exc:
             self.log(f"Settings not saved: {exc}")
             return
-        self.log("Settings saved successfully!")
+        self.log("Settings saved.")

@@ -19,13 +19,12 @@ class App:
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
     ]
 
-    def __init__(self, root, settings, plc, daq, loadcells, servos):
+    def __init__(self, root, settings, plc, daq, loadcells):
         self.root = root
         self.settings = settings
         self.plc = plc
         self.daq = daq
         self.loadcells = loadcells
-        self.servos = servos
 
         root.title("Friction Tester")
         root.geometry("1350x860")
@@ -52,7 +51,6 @@ class App:
         if s["plc"]["port"]:
             jobs.append((self.plc, s["plc"]))
         jobs += [(dev, cfg) for dev, cfg in zip(self.loadcells, s["loadcells"]) if cfg["port"]]
-        jobs += [(dev, cfg) for dev, cfg in zip(self.servos, s["servos"]) if cfg["port"]]
         for dev, cfg in jobs:
             try:
                 dev.connect(cfg)
@@ -124,8 +122,8 @@ class App:
         self.lbl_title.config(text=title)
 
         if page_name == "comport_settings":
-            ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells, self.servos).pack(
-                fill="both", expand=True, padx=20, pady=20)
+            ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
+                fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
-            TestConsolePage(self.content, self.settings, self.plc, self.loadcells, self.servos).pack(
+            TestConsolePage(self.content, self.settings, self.plc, self.loadcells).pack(
                 fill="both", expand=True, padx=12, pady=10)

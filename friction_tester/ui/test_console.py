@@ -2,16 +2,17 @@
 "Friction Test Machine" it replaces.
 
 Two cable panels side by side:
-    SELECT CABLE -> Servo 1 + Loadcell 01
-    SHIFT CABLE  -> Servo 2 + Loadcell 02
+    SELECT CABLE -> Loadcell 01
+    SHIFT CABLE  -> Loadcell 02
 each with its test conditions, test results (PULL1-3 / PUSH1-3, means,
 OK/NG), a Load-vs-Stroke graph and live LOAD / STROKE / SPEED readouts.
-Underneath, per cable: actuator control (servo on/off, alarm reset), the
-front/rear sensor lamps read from the PLC, and the clamp counter.
+Underneath, per cable: the front/rear sensor lamps read from the PLC and
+the clamp counter.
 
-The page polls connected devices for the live values. It does not run the
-automatic test sequence; `CablePanel.show_results` and `plot` are the hooks
-that sequence will feed.
+The page polls connected devices for the live values: LOAD comes from the
+loadcell; STROKE and SPEED have no source yet and show "--". It does not
+run the automatic test sequence; `CablePanel.show_results`, `set_live` and
+`plot` are the hooks that sequence will feed.
 """
 
 import datetime
@@ -86,9 +87,9 @@ class CablePanel(tk.Frame):
         self.live = {}
         for key, label, unit in (("load", "LOAD", "kgf"), ("stroke", "STROKE", "mm"), ("speed", "SPEED", "mm/s")):
             tk.Label(live, text=label, bg=theme.PANEL, fg=theme.HEADER_FG, font=_font(10, True)).pack(side="left")
-            self.live[key] = self._value(live, "--", width=6, size=14)
+            self.live[key] = self._value(live, "--", width=6, size=13)
             self.live[key].pack(side="left", padx=(5, 3))
-            tk.Label(live, text=unit, bg=theme.PANEL, fg="white", font=_font(9)).pack(side="left", padx=(0, 12))
+            tk.Label(live, text=unit, bg=theme.PANEL, fg="white", font=_font(9)).pack(side="left", padx=(0, 10))
 
     # ----------------------------------------------------------- widgets
     def _value(self, parent, text, width=5, size=11):
@@ -238,16 +239,14 @@ class CablePanel(tk.Frame):
 class TestConsolePage(tk.Frame):
     SIDES = (("select", "SELECT CABLE", "SL"), ("shift", "SHIFT CABLE", "SH"))
 
-    def __init__(self, master, settings, plc, loadcells, servos):
+    def __init__(self, master, settings, plc, loadcells):
         super().__init__(master, bg=theme.BG)
         self.settings = settings
         self.plc = plc
         self.loadcells = loadcells
-        self.servos = servos
         self._polling = False
         self._alive = True
         self._hold_until = 0.0
-        self._servo_on = [False, False]
 
         self._build_status_bar()
         panels = tk.Frame(self, bg=theme.BG)
@@ -288,27 +287,15 @@ class TestConsolePage(tk.Frame):
     def _build_bottom(self):
         bottom = tk.Frame(self, bg=theme.BG)
         bottom.pack(fill="x")
-        self.lamps, self.servo_btns, self.clamps = [], [], []
+        self.lamps, self.clamps = [], []
         for i, (key, _title, short) in enumerate(self.SIDES):
             cfg = self.settings["test"][key]
             box = tk.Frame(bottom, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
             box.grid(row=0, column=i, sticky="nsew", padx=(0, 6) if i == 0 else (6, 0))
             bottom.columnconfigure(i, weight=1, uniform="panel")
 
-            act = tk.LabelFrame(box, text=" Actuator Control ", bg=theme.PANEL, fg="white", font=_font(10),
-                                bd=1, relief="solid", labelanchor="n", padx=8, pady=4)
-            act.pack(side="left", padx=10, pady=6)
-            sbtn = tk.Button(act, text="⚙ SERVO ON/OFF", command=lambda n=i: self.toggle_servo(n),
-                             bg="#e0e0e0", fg="black", bd=0, padx=10, pady=3, font=_font(10, True),
-                             cursor="hand2", disabledforeground="#888")
-            sbtn.pack(side="left", padx=(0, 6))
-            tk.Button(act, text="ALM RST", command=lambda n=i: self.alarm_reset(n), bg="#555", fg="white",
-                      activebackground="#666", activeforeground="white", bd=0, padx=8, pady=3,
-                      font=_font(10, True), cursor="hand2").pack(side="left")
-            self.servo_btns.append(sbtn)
-
             sens = tk.Frame(box, bg=theme.PANEL)
-            sens.pack(side="left", padx=14)
+            sens.pack(side="left", padx=14, pady=6)
             lamps = {}
             for name in ("Front Sensor", "Rear Sensor"):
                 row = tk.Frame(sens, bg=theme.PANEL)
@@ -349,28 +336,6 @@ class TestConsolePage(tk.Frame):
         for p in self.panels:
             p.reset_results()
 
-    def _servo_action(self, n, fn, label):
-        sv = self.servos[n]
-        if not sv.is_open:
-            self._set_status(f"{sv.name} is not connected", theme.FAIL)
-            return
-
-        def run():
-            try:
-                fn(sv)
-                self.after(0, lambda: self._set_status(f"{sv.name}: {label}", theme.PASS))
-            except Exception as exc:
-                self.after(0, lambda e=exc: self._set_status(f"{sv.name}: {e}", theme.FAIL))
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def toggle_servo(self, n):
-        turn_on = not self._servo_on[n]
-        self._servo_action(n, lambda sv: sv.servo(turn_on), "servo ON" if turn_on else "servo OFF")
-
-    def alarm_reset(self, n):
-        self._servo_action(n, lambda sv: sv.alarm_reset(), "alarm reset sent")
-
     # ----------------------------------------------------------- polling
     def _on_destroy(self, event):
         if event.widget is self:
@@ -396,8 +361,8 @@ class TestConsolePage(tk.Frame):
             if not self.plc.is_open:
                 snapshot["missing"].append("PLC")
             for i, (key, _t, _s) in enumerate(self.SIDES):
-                side = {"load": None, "stroke": None, "speed": None, "sv": None, "lamps": {}}
-                lc, sv = self.loadcells[i], self.servos[i]
+                side = {"load": None, "lamps": {}}
+                lc = self.loadcells[i]
                 if lc.is_open:
                     try:
                         side["load"] = lc.read()[2]
@@ -405,14 +370,6 @@ class TestConsolePage(tk.Frame):
                         pass
                 else:
                     snapshot["missing"].append(lc.name.split(" (")[0])
-                if sv.is_open:
-                    try:
-                        st = sv.read_status()
-                        side.update(stroke=st["position_mm"], speed=st["speed_mm_s"], sv=st["flags"]["SV"])
-                    except Exception:
-                        pass
-                else:
-                    snapshot["missing"].append(sv.name)
                 if self.plc.is_open:
                     cfg = self.settings["test"][key]
                     try:
@@ -430,17 +387,9 @@ class TestConsolePage(tk.Frame):
         if not self._alive:
             return
         for i, side in enumerate(snap["sides"]):
-            self.panels[i].set_live(side["load"], side["stroke"], side["speed"])
+            self.panels[i].set_live(load=side["load"])
             for name, (cv, dot) in self.lamps[i].items():
                 cv.itemconfig(dot, fill=LAMP_ON if side["lamps"].get(name) else LAMP_OFF)
-            connected = self.servos[i].is_open
-            if side["sv"] is not None:
-                self._servo_on[i] = side["sv"]
-            label = "⚙ SERVO OFF" if self._servo_on[i] and connected else "⚙ SERVO ON"
-            bg = theme.PASS if self._servo_on[i] and connected else "#e0e0e0"
-            self.servo_btns[i].config(text=label, bg=bg, activebackground=bg,
-                                      fg="white" if bg == theme.PASS else "black",
-                                      state="normal" if connected else "disabled")
         if time.monotonic() < self._hold_until:
             return   # keep the last action's message on screen for a moment
         if snap["missing"]:
