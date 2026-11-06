@@ -20,11 +20,12 @@ class App:
         ("❓", "Help", "help", "Help"),
     ]
 
-    def __init__(self, root, settings, plc, daq):
+    def __init__(self, root, settings, plc, daq, loadcells):
         self.root = root
         self.settings = settings
         self.plc = plc
         self.daq = daq
+        self.loadcells = loadcells
 
         root.title("Friction Tester")
         root.geometry("1350x860")
@@ -104,7 +105,7 @@ class App:
         self.lbl_title.config(text=title)
 
         if page_name == "comport_settings":
-            ComPortPage(self.content, self.settings, self.plc, self.daq).pack(
+            ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
                 fill="both", expand=True, padx=20, pady=20)
         else:
             self._placeholder(title)

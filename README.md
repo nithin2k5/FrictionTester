@@ -26,6 +26,10 @@ station ID, CONNECT / TEST and a status cell. CONNECT opens the port and checks 
 coil = word × 16 + hex bit, so `M0067` → 103). *PLC Register Read* reads D registers
 (`D0001`, N points) and shows raw values plus 32-bit float in both word orders.
 
+**Loadcell 01 / 02 (RS232, 8N1),** same protocol as the EOL tester: COM port, baud rate,
+CONNECT / TEST and status. TEST sends `ID01P` / `ID02P`, logs the reply, and shows the reading
+(second comma-separated field) in the status cell.
+
 **NI USB-6210:** NI device (prefers a 6210), AI channels (e.g. `ai0, ai2` or `ai0-ai3`), terminal
 config (Differential uses ai0–ai7), input range (±10 / ±5 / ±1 / ±0.2 V), sample rate (≤ 250 kS/s
 aggregate) and samples per channel. TEST acquires one block and logs the mean voltage per channel.

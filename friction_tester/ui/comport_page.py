@@ -13,7 +13,7 @@ from tkinter import ttk
 
 from . import theme
 from ..config import save_settings
-from ..devices import ni_daq, plc_xgb
+from ..devices import loadcell, ni_daq, plc_xgb
 
 PLC_COLS = (("Device", 200), ("COM Port", 140), ("Baud Rate", 140), ("Station ID", 110),
             ("Action", 220), ("Status", 0))
@@ -25,12 +25,14 @@ DISCONNECT_BG = theme.FAIL
 
 
 class ComPortPage(tk.Frame):
-    def __init__(self, master, settings, plc, daq):
+    def __init__(self, master, settings, plc, daq, loadcells):
         super().__init__(master, bg=theme.PANEL, bd=1, relief="solid",
                          highlightbackground=theme.BORDER, highlightthickness=1)
         self.settings = settings
         self.plc = plc
         self.daq = daq
+        self.loadcells = loadcells
+        self.lc_rows = []   # one dict of widgets per loadcell
 
         self._build_title()
         self._build_plc_section()
@@ -40,6 +42,8 @@ class ComPortPage(tk.Frame):
 
         self.refresh_hardware(log=False)
         self._show_plc_state()
+        for i in range(len(self.loadcells)):
+            self._show_lc_state(i)
         if not plc_xgb.XGBPlc.available():
             self.log("pymodbus is not installed — run: pip install pymodbus")
         if not ni_daq.NIDaq.available():
@@ -164,7 +168,7 @@ class ComPortPage(tk.Frame):
     # ------------------------------------------------------------------- PLC
     def _build_plc_section(self):
         cfg = self.settings["plc"]
-        self._section_heading("PLC — LS XGB (RS232, Modbus RTU 8N1)")
+        self._section_heading("Serial Devices (RS232)")
         table = self._table(PLC_COLS)
 
         def make_actions(parent):
@@ -176,7 +180,7 @@ class ComPortPage(tk.Frame):
             return f
 
         self.cb_plc_port, self.cb_plc_baud, self.ent_plc_station, _actions, self.lbl_plc_status = self._device_row(
-            table, PLC_COLS, 0, "PLC",
+            table, PLC_COLS, 0, "PLC (LS XGB)",
             [
                 lambda p: self._combo(p, [], cfg["port"], width=14),
                 lambda p: self._combo(p, plc_xgb.BAUD_RATES, cfg["baudrate"], width=11),
@@ -186,6 +190,9 @@ class ComPortPage(tk.Frame):
             ],
         )
         self.ent_plc_station.config(justify="center")
+
+        for i, lc in enumerate(self.loadcells):
+            self._build_loadcell_row(table, i, lc)
 
         # TEST reads these bit devices
         row = self._option_row()
@@ -323,6 +330,90 @@ class ComPortPage(tk.Frame):
         if not self.plc.is_open:
             self._show_plc_state(error=True)
 
+    # ------------------------------------------------------------- loadcells
+    def _build_loadcell_row(self, table, i, lc):
+        cfg = self.settings["loadcells"][i]
+        w = {}
+
+        def make_actions(parent):
+            f = tk.Frame(parent, bg=parent["bg"])
+            w["connect"] = self._button(f, "CONNECT", lambda: self.toggle_loadcell(i), bg=CONNECT_BG, fg="white")
+            w["connect"].pack(side="left", padx=(0, 6))
+            w["test"] = self._button(f, "TEST", lambda: self.test_loadcell(i))
+            w["test"].pack(side="left")
+            return f
+
+        w["port"], w["baud"], _dash, _actions, w["status"] = self._device_row(
+            table, PLC_COLS, i + 1, lc.name,
+            [
+                lambda p: self._combo(p, [], cfg["port"], width=14),
+                lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=11),
+                lambda p: tk.Label(p, text="-", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 11), width=6),
+                make_actions,
+                lambda p: tk.Label(p, text="Not connected", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 10)),
+            ],
+        )
+        self.lc_rows.append(w)
+
+    def _lc_config(self, i):
+        w = self.lc_rows[i]
+        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get())}
+
+    def _show_lc_state(self, i, error=None, text=None):
+        lc, w = self.loadcells[i], self.lc_rows[i]
+        connected = lc.is_open
+        bg = DISCONNECT_BG if connected else CONNECT_BG
+        w["connect"].config(text="DISCONNECT" if connected else "CONNECT", bg=bg,
+                            activebackground=bg, state="normal")
+        w["test"].config(state="normal" if connected else "disabled")
+        for key in ("port", "baud"):
+            w[key].config(state="disabled" if connected else "readonly")
+        if text:
+            w["status"].config(text=text, fg=theme.PASS if connected else theme.FAIL)
+        elif connected:
+            w["status"].config(text=f"Connected on {lc.port}", fg=theme.PASS)
+        elif error:
+            w["status"].config(text="Connection failed", fg=theme.FAIL)
+        else:
+            w["status"].config(text="Not connected", fg=theme.MUTED)
+
+    def toggle_loadcell(self, i):
+        lc = self.loadcells[i]
+        if lc.is_open:
+            lc.disconnect()
+            self.log(f"{lc.name} disconnected.")
+            self._show_lc_state(i)
+            return
+        cfg = self._lc_config(i)
+        try:
+            lc.connect(cfg)
+        except Exception as exc:
+            self.log(f"{lc.name} Error: {exc}")
+            self._show_lc_state(i, error=True)
+            return
+        self.settings["loadcells"][i] = cfg
+        self.log(f"Connected to {lc.name} on {cfg['port']} ({cfg['baudrate']} 8N1).")
+        self._show_lc_state(i)
+
+    def test_loadcell(self, i):
+        lc = self.loadcells[i]
+
+        def run():
+            try:
+                command, reply, value = lc.read()
+            except Exception as exc:
+                self.log(f"{lc.name}: {exc}")
+                self._ui(self._show_lc_state, i, error=True)
+                return
+            self.log(f"{lc.name}  Sent: {command}   Response: {reply}")
+            if value is None:
+                self.log(f"{lc.name}: could not parse a value from the response")
+            else:
+                self.log(f"{lc.name}  Value: {value:g}")
+                self._ui(self._show_lc_state, i, text=f"Connected on {lc.port}  |  {value:g}")
+
+        threading.Thread(target=run, daemon=True).start()
+
     # ------------------------------------------------------------------- DAQ
     def _build_daq_section(self):
         cfg = self.settings["daq"]
@@ -426,9 +517,10 @@ class ComPortPage(tk.Frame):
         """Rescan COM ports and NI devices (the Update button)."""
         ports = plc_xgb.XGBPlc.list_ports()
         port_names = [dev for dev, _ in ports]
-        current = self.cb_plc_port.get()
-        self.cb_plc_port.config(values=port_names or ([current] if current else []))
-        if not current and port_names:
+        for cb in [self.cb_plc_port] + [w["port"] for w in self.lc_rows]:
+            current = cb.get()
+            cb.config(values=port_names or ([current] if current else []))
+        if not self.cb_plc_port.get() and port_names:
             self.cb_plc_port.set(port_names[0])
 
         devices = ni_daq.NIDaq.list_devices()
@@ -447,6 +539,7 @@ class ComPortPage(tk.Frame):
     def save(self):
         try:
             self.settings["plc"] = self._plc_config()
+            self.settings["loadcells"] = [self._lc_config(i) for i in range(len(self.loadcells))]
             self.settings["daq"] = self._daq_config()
             save_settings(self.settings)
         except Exception as exc:

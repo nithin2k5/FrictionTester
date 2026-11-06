@@ -20,6 +20,11 @@ DEFAULT_SETTINGS = {
         "reg_address": "D0000",
         "reg_points": 2,
     },
+    # Two RS232 loadcell indicators, polled with ID01P / ID02P
+    "loadcells": [
+        {"port": "", "baudrate": 9600},
+        {"port": "", "baudrate": 9600},
+    ],
     "daq": {
         "device": "",
         "channels": ["ai0"],
@@ -39,6 +44,12 @@ def _merge(defaults, loaded):
             continue
         if isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = _merge(result[key], value)
+        elif isinstance(result[key], list) and isinstance(value, list):
+            # Same length as the defaults; each dict item merged over its default.
+            result[key] = [
+                _merge(d, value[i]) if i < len(value) and isinstance(d, dict) and isinstance(value[i], dict) else d
+                for i, d in enumerate(result[key])
+            ]
         else:
             result[key] = value
     return result
