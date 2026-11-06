@@ -9,6 +9,7 @@ from .comport_page import ComPortPage
 from .login import LoginScreen
 from .model_page import ModelSettingsPage
 from .report_page import ReportPage
+from .admin_page import AdminPage
 from .test_console import TestConsolePage
 
 NAV_IDLE = ("#111", "white", "#444")        # bg, fg, border
@@ -21,6 +22,7 @@ class App:
         ("🏠", "Test Console", "test_console", "FRICTION TEST MACHINE"),
         ("⚙", "Model\nSettings", "model_settings", "Model Settings"),
         ("📋", "Report", "report", "Test Results"),
+        ("👤", "Admin", "admin", "Admin"),
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
     ]
 
@@ -121,7 +123,7 @@ class App:
             text.config(bg=bg, fg=fg)
 
     # Pages that need a sign-in every time they are opened.
-    LOGIN_PAGES = {"model_settings", "comport_settings"}
+    LOGIN_PAGES = {"admin", "model_settings", "comport_settings"}
 
     def load_page(self, page_name):
         if page_name in self.LOGIN_PAGES:
@@ -134,7 +136,7 @@ class App:
         back = getattr(self, "current_page", "test_console")
         title = next(t for _i, _c, p, t in self.PAGES if p == page_name)
         self._clear_content(page_name, title)
-        LoginScreen(self.content, title, on_success=lambda: self._open_page(page_name),
+        LoginScreen(self.content, title, page=page_name, on_success=lambda: self._open_page(page_name),
                     on_cancel=lambda: self._open_page(back)).pack(fill="both", expand=True)
 
     def _clear_content(self, page_name, title):
@@ -151,6 +153,8 @@ class App:
         if page_name == "comport_settings":
             ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
                 fill="both", expand=True, padx=16, pady=12)
+        elif page_name == "admin":
+            AdminPage(self.content).pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "report":
             ReportPage(self.content, self.settings).pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "model_settings":

@@ -126,6 +126,8 @@ def init_database():
         cur.execute(SCHEMA)
         _migrate(cur)
         cur.execute(RESULTS_SCHEMA)
+        cur.execute(ADMIN_SCHEMA)
+        cur.execute(LOGIN_HISTORY_SCHEMA)
 
 
 # ------------------------------------------------------------- test results
@@ -321,4 +323,91 @@ def list_test_results(date_from=None, date_to=None, model="", text="", lot_resul
     args.append(int(limit))
     with cursor(dictionary=True) as cur:
         cur.execute(sql, args)
+        return cur.fetchall()
+
+
+# ------------------------------------------------------------- users / logins
+# Operator accounts for the pages behind a sign-in (Admin, Model Settings,
+# COM Setting), as in the FeederCable tester. Passwords are stored only as a
+# salted PBKDF2-SHA256 hash (AD_SALT + AD_PWD_HASH), never as text.
+ADMIN_TABLE = "TBL_ADMIN"
+LOGIN_HISTORY_TABLE = "TBL_LOGIN_HISTORY"
+
+ADMIN_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS {ADMIN_TABLE} (
+        AD_ENO VARCHAR(50) PRIMARY KEY,
+        AD_ENAME VARCHAR(100),
+        AD_SALT CHAR(32) NOT NULL,
+        AD_PWD_HASH CHAR(64) NOT NULL,
+        AD_DESIG VARCHAR(100),
+        AD_DEPT VARCHAR(100),
+        AD_CREATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        AD_MODIFIED TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+"""
+
+LOGIN_HISTORY_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS {LOGIN_HISTORY_TABLE} (
+        ID INT AUTO_INCREMENT PRIMARY KEY,
+        LH_DATETIME DATETIME NOT NULL,
+        LH_PAGE VARCHAR(50),
+        LH_ENO VARCHAR(50),
+        LH_ENAME VARCHAR(100),
+        LH_RESULT VARCHAR(10),
+        LH_REASON VARCHAR(200),
+        KEY idx_lh_datetime (LH_DATETIME)
+    )
+"""
+
+
+def list_users():
+    with cursor(dictionary=True) as cur:
+        cur.execute(f"SELECT AD_ENO, AD_ENAME, AD_DESIG, AD_DEPT FROM {ADMIN_TABLE} ORDER BY AD_ENO")
+        return cur.fetchall()
+
+
+def get_user(eno):
+    with cursor(dictionary=True) as cur:
+        cur.execute(f"SELECT * FROM {ADMIN_TABLE} WHERE AD_ENO = %s", (eno,))
+        return cur.fetchone()
+
+
+def save_user(eno, ename, desig, dept, salt=None, pwd_hash=None):
+    """Insert or update a user. salt/pwd_hash None on update = keep the current password."""
+    with cursor(commit=True) as cur:
+        cur.execute(f"SELECT AD_ENO FROM {ADMIN_TABLE} WHERE AD_ENO = %s", (eno,))
+        if cur.fetchone():
+            if pwd_hash:
+                cur.execute(f"UPDATE {ADMIN_TABLE} SET AD_ENAME=%s, AD_DESIG=%s, AD_DEPT=%s, AD_SALT=%s, "
+                            f"AD_PWD_HASH=%s WHERE AD_ENO=%s", (ename, desig, dept, salt, pwd_hash, eno))
+            else:
+                cur.execute(f"UPDATE {ADMIN_TABLE} SET AD_ENAME=%s, AD_DESIG=%s, AD_DEPT=%s WHERE AD_ENO=%s",
+                            (ename, desig, dept, eno))
+            return "updated"
+        if not pwd_hash:
+            raise ValueError("A new user needs a password")
+        cur.execute(f"INSERT INTO {ADMIN_TABLE} (AD_ENO, AD_ENAME, AD_SALT, AD_PWD_HASH, AD_DESIG, AD_DEPT) "
+                    f"VALUES (%s, %s, %s, %s, %s, %s)", (eno, ename, salt, pwd_hash, desig, dept))
+        return "added"
+
+
+def delete_user(eno):
+    with cursor(commit=True) as cur:
+        cur.execute(f"DELETE FROM {ADMIN_TABLE} WHERE AD_ENO = %s", (eno,))
+        return cur.rowcount
+
+
+def record_login(page, eno, ename, ok, reason=""):
+    import datetime as _dt
+    with cursor(commit=True) as cur:
+        cur.execute(f"INSERT INTO {LOGIN_HISTORY_TABLE} (LH_DATETIME, LH_PAGE, LH_ENO, LH_ENAME, LH_RESULT, LH_REASON) "
+                    f"VALUES (%s, %s, %s, %s, %s, %s)",
+                    (_dt.datetime.now().replace(microsecond=0), page, eno, ename,
+                     "SUCCESS" if ok else "FAILED", reason[:200]))
+
+
+def list_login_history(limit=200):
+    with cursor(dictionary=True) as cur:
+        cur.execute(f"SELECT LH_DATETIME, LH_PAGE, LH_ENO, LH_ENAME, LH_RESULT, LH_REASON FROM {LOGIN_HISTORY_TABLE} "
+                    f"ORDER BY LH_DATETIME DESC, ID DESC LIMIT %s", (int(limit),))
         return cur.fetchall()

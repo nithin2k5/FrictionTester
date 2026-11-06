@@ -17,8 +17,9 @@ class LoginScreen(tk.Frame):
     """A centred sign-in card. Calls on_success() after a valid login,
     on_cancel() if the operator backs out."""
 
-    def __init__(self, master, page_title, on_success, on_cancel):
+    def __init__(self, master, page_title, on_success, on_cancel, page=None):
         super().__init__(master, bg=theme.BG)
+        self.page = page or page_title            # recorded in the login history
         self.on_success = on_success
         self.on_cancel = on_cancel
 
@@ -95,10 +96,13 @@ class LoginScreen(tk.Frame):
             self.error.config(text="Enter your user ID.")
             self.ent_id.focus_set()
             return
-        if auth.check(self.ent_id.get(), self.ent_pw.get()):
+        self.error.config(text="Checking…", fg=LABEL_FG)
+        self.update_idletasks()
+        ok, _name, message = auth.login(self.page, self.ent_id.get(), self.ent_pw.get())
+        if ok:
             self.on_success()
         else:
-            self.error.config(text="Incorrect user ID or password.")
+            self.error.config(text=message, fg="#ff6b6b")
             self.ent_pw.delete(0, "end")
             self.ent_pw.focus_set()
 

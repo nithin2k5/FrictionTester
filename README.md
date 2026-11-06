@@ -105,11 +105,19 @@ an address is set, the button only reports that in the status box.
 The automatic test sequence (recording PULL/PUSH) is not implemented yet;
 `CablePanel.show_results()`, `set_live()` and `plot` are where it will report.
 
-## Model Settings
+## Admin
 
-Opening Model Settings or COM Setting shows a sign-in screen first (every time it is opened;
-Cancel goes back to the previous page). The Test Console needs no sign-in. There is one temporary operator account for now; its password is stored only
-as a salted hash in `friction_tester/auth.py`, which also shows how to generate a new one.
+Opening **Admin**, **Model Settings** or **COM Setting** shows a sign-in screen first (every time;
+Cancel goes back to the previous page). The Test Console and Report need no sign-in.
+
+The Admin page (as in the FeederCable tester) manages the operator accounts in `TBL_ADMIN`:
+Employee ID, Name, Password, Designation, Department, with Save / Update, Delete and Clear. Passwords
+are stored only as salted PBKDF2 hashes; when editing a user, leave Password empty to keep it. Every
+sign-in attempt (page, employee, result, reason) is recorded in `TBL_LOGIN_HISTORY` and shown on the
+Admin page. A built-in recovery account (hash in `friction_tester/auth.py`) always works, so the
+machine is never locked out when there are no users yet or the database is down.
+
+## Model Settings
 
 Models are stored in MySQL table **`TBL_MODEL_MASTER`** (database `friction` on the local MySQL
 server). The connection (host, port, user, password, database) is set at the top of
