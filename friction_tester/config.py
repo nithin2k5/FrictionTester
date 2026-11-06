@@ -26,6 +26,12 @@ DEFAULT_SETTINGS = {
         {"port": "", "baudrate": 9600, "device_id": 1},
         {"port": "", "baudrate": 9600, "device_id": 2},
     ],
+    # Two IAI ROBO Cylinder controllers (RCP2-RA4C actuators), Modbus RTU.
+    # axis = controller axis No. 0-15 (Modbus slave = axis + 1).
+    "servos": [
+        {"port": "", "baudrate": 38400, "axis": 0},
+        {"port": "", "baudrate": 38400, "axis": 1},
+    ],
     "daq": {
         "device": "",
         "channels": ["ai0"],

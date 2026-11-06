@@ -13,7 +13,7 @@ from tkinter import ttk
 
 from . import theme
 from ..config import save_settings
-from ..devices import loadcell, ni_daq, plc_xgb
+from ..devices import iai_servo, loadcell, ni_daq, plc_xgb
 
 PLC_COLS = (("Device", 200), ("COM Port", 140), ("Baud Rate", 140), ("Station ID", 110),
             ("Action", 300), ("Status", 0))
@@ -25,14 +25,16 @@ DISCONNECT_BG = theme.FAIL
 
 
 class ComPortPage(tk.Frame):
-    def __init__(self, master, settings, plc, daq, loadcells):
+    def __init__(self, master, settings, plc, daq, loadcells, servos):
         super().__init__(master, bg=theme.PANEL, bd=1, relief="solid",
                          highlightbackground=theme.BORDER, highlightthickness=1)
         self.settings = settings
         self.plc = plc
         self.daq = daq
         self.loadcells = loadcells
+        self.servos = servos
         self.lc_rows = []   # one dict of widgets per loadcell
+        self.sv_rows = []   # one dict of widgets per servo
 
         self._build_title()
         self._build_plc_section()
@@ -44,6 +46,8 @@ class ComPortPage(tk.Frame):
         self._show_plc_state()
         for i in range(len(self.loadcells)):
             self._show_lc_state(i)
+        for i in range(len(self.servos)):
+            self._show_sv_state(i)
         if not plc_xgb.XGBPlc.available():
             self.log("pymodbus is not installed — run: pip install pymodbus")
         if not ni_daq.NIDaq.available():
@@ -94,11 +98,11 @@ class ComPortPage(tk.Frame):
 
     def _section_heading(self, text):
         self._label(self, text, fg=theme.TITLE_FG, font=(theme.FONT, 11, "bold")).pack(
-            anchor="w", padx=30, pady=(14, 0))
+            anchor="w", padx=30, pady=(8, 0))
 
     def _table(self, cols):
         table = tk.Frame(self, bg=theme.PANEL)
-        table.pack(fill="x", padx=20, pady=(6, 8))
+        table.pack(fill="x", padx=20, pady=(4, 6))
         header = self._grid_cols(tk.Frame(table, bg=theme.PANEL), cols)
         header.pack(fill="x")
         for i, (h, _) in enumerate(cols):
@@ -117,11 +121,11 @@ class ComPortPage(tk.Frame):
         row = self._grid_cols(tk.Frame(table, bg=band), cols)
         row.pack(fill="x")
         tk.Label(row, text=name, bg=band, fg="white", font=(theme.FONT, 11), anchor="w").grid(
-            row=0, column=0, sticky="w", padx=(10, 0), pady=7)
+            row=0, column=0, sticky="w", padx=(10, 0), pady=5)
         built = []
         for col, make in enumerate(makers, start=1):
             w = make(row)
-            w.grid(row=0, column=col, sticky="w", padx=(10, 0), pady=4)
+            w.grid(row=0, column=col, sticky="w", padx=(10, 0), pady=3)
             built.append(w)
 
         def descendants(w):
@@ -143,7 +147,7 @@ class ComPortPage(tk.Frame):
 
     def _option_row(self):
         row = tk.Frame(self, bg=theme.PANEL)
-        row.pack(fill="x", padx=35, pady=(0, 8))
+        row.pack(fill="x", padx=35, pady=(0, 5))
         return row
 
     def _ui(self, fn, *args, **kw):
@@ -161,14 +165,14 @@ class ComPortPage(tk.Frame):
     # ----------------------------------------------------------------- title
     def _build_title(self):
         bar = tk.Frame(self, bg=theme.PANEL)
-        bar.pack(fill="x", padx=20, pady=15)
+        bar.pack(fill="x", padx=20, pady=(10, 8))
         self._label(bar, "COM Setting", font=(theme.FONT, 14)).pack(side="left")
         tk.Frame(self, bg=theme.BORDER, height=1).pack(fill="x", padx=20)
 
     # ------------------------------------------------------------------- PLC
     def _build_plc_section(self):
         cfg = self.settings["plc"]
-        self._section_heading("Serial Devices (RS232)")
+        self._section_heading("Serial Devices (COM ports)")
         table = self._table(PLC_COLS)
 
         def make_actions(parent):
@@ -193,24 +197,21 @@ class ComPortPage(tk.Frame):
 
         for i, lc in enumerate(self.loadcells):
             self._build_loadcell_row(table, i, lc)
+        for i, sv in enumerate(self.servos):
+            self._build_servo_row(table, len(self.loadcells) + 1 + i, i, sv)
 
-        row = self._option_row()
-        self._label(row, f"Loadcells: {loadcell.MODEL}, 8N1. Station ID = indicator ID Number (F-40): "
-                         "00 = stream mode, 01–99 = command mode (polled with ID01P).",
+        hints = self._option_row()
+        self._label(hints, "Station ID — Loadcell: AM-50LW ID (F-40), 00 = stream  ·  "
+                           "Servo: IAI axis No. 0–15 (Modbus RTU via RS485 converter; servos may share a port)",
                     fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
 
-        # TEST reads these bit devices
+        # PLC test bits and register read, on one line
         row = self._option_row()
-        self._label(row, "Test Bits", font=(theme.FONT, 11, "bold"), width=18, anchor="w").pack(side="left")
-        self.ent_plc_bits = self._entry(row, cfg["test_bits"], width=30)
-        self.ent_plc_bits.pack(side="left", padx=(0, 12))
-        self._label(row, "XGB bit addresses read by TEST, e.g. P0000, P0001, M0010",
-                    fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
-
-        # PLC register read (D devices)
-        row = self._option_row()
-        self._label(row, "PLC Register Read", font=(theme.FONT, 11, "bold"), width=18, anchor="w").pack(side="left")
-        self._label(row, "Address (e.g. D0001)", fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
+        self._label(row, "PLC Test Bits", font=(theme.FONT, 11, "bold")).pack(side="left")
+        self.ent_plc_bits = self._entry(row, cfg["test_bits"], width=24)
+        self.ent_plc_bits.pack(side="left", padx=(8, 30))
+        self._label(row, "Register Read", font=(theme.FONT, 11, "bold")).pack(side="left", padx=(0, 8))
+        self._label(row, "Address", fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
         self.ent_reg_addr = self._entry(row, cfg["reg_address"], width=10)
         self.ent_reg_addr.pack(side="left", padx=(6, 18))
         self._label(row, "Points", fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
@@ -438,6 +439,128 @@ class ComPortPage(tk.Frame):
 
         threading.Thread(target=run, daemon=True).start()
 
+    # ---------------------------------------------------------------- servos
+    def _build_servo_row(self, table, band_index, i, sv):
+        cfg = self.settings["servos"][i]
+        w = {}
+
+        def make_actions(parent):
+            f = tk.Frame(parent, bg=parent["bg"])
+            w["connect"] = self._button(f, "CONNECT", lambda: self.toggle_servo(i), bg=CONNECT_BG, fg="white")
+            w["connect"].pack(side="left", padx=(0, 6))
+            w["test"] = self._button(f, "TEST", lambda: self.test_servo(i))
+            w["test"].pack(side="left", padx=(0, 6))
+            w["reset"] = self._button(f, "ALM RST", lambda: self.reset_servo(i), bg="#555", fg="white", width=7)
+            w["reset"].pack(side="left")
+            return f
+
+        w["port"], w["baud"], w["axis"], _actions, w["status"] = self._device_row(
+            table, PLC_COLS, band_index, f"{sv.name} (RCP2)",
+            [
+                lambda p: self._combo(p, [], cfg["port"], width=14),
+                lambda p: self._combo(p, iai_servo.BAUD_RATES, cfg["baudrate"], width=11),
+                lambda p: self._entry(p, cfg["axis"], width=7, digits_only=True),
+                make_actions,
+                lambda p: tk.Label(p, text="Not connected", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 10)),
+            ],
+        )
+        w["axis"].config(justify="center")
+        self.sv_rows.append(w)
+
+    def _sv_config(self, i):
+        w = self.sv_rows[i]
+        axis = w["axis"].get().strip()
+        if not axis.isdigit() or int(axis) > 15:
+            raise ValueError("Axis No. must be 0–15")
+        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get()), "axis": int(axis)}
+
+    def _show_sv_state(self, i, error=None, text=None):
+        sv, w = self.servos[i], self.sv_rows[i]
+        connected = sv.is_open
+        bg = DISCONNECT_BG if connected else CONNECT_BG
+        w["connect"].config(text="DISCONNECT" if connected else "CONNECT", bg=bg,
+                            activebackground=bg, state="normal")
+        for key in ("test", "reset"):
+            w[key].config(state="normal" if connected else "disabled")
+        for key in ("port", "baud"):
+            w[key].config(state="disabled" if connected else "readonly")
+        w["axis"].config(state="disabled" if connected else "normal")
+        if text:
+            w["status"].config(text=text, fg=theme.PASS if not error else theme.FAIL)
+        elif connected:
+            w["status"].config(text=f"Connected on {sv.port}, axis {sv.axis}", fg=theme.PASS)
+        elif error:
+            w["status"].config(text="Connection failed", fg=theme.FAIL)
+        else:
+            w["status"].config(text="Not connected", fg=theme.MUTED)
+
+    def toggle_servo(self, i):
+        sv = self.servos[i]
+        if sv.is_open:
+            sv.disconnect()
+            self.log(f"{sv.name} disconnected.")
+            self._show_sv_state(i)
+            return
+        try:
+            cfg = self._sv_config(i)
+        except ValueError as exc:
+            self.log(f"{sv.name}: {exc}")
+            return
+        w = self.sv_rows[i]
+        w["connect"].config(text="CONNECTING...", bg=theme.BUSY, state="disabled")
+
+        def run():
+            self.log(f"Connecting to {sv.name} on {cfg['port']} ({cfg['baudrate']} 8N1, axis {cfg['axis']}, "
+                     f"slave {cfg['axis'] + 1})...")
+            try:
+                sv.connect(cfg)
+            except Exception as exc:
+                self.log(f"{sv.name} Error: {exc}")
+                self._ui(self._show_sv_state, i, error=True)
+                return
+            self.settings["servos"][i] = cfg
+            self.log(f"Connected to {sv.name}.")
+            self._ui(self._show_sv_state, i)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def test_servo(self, i):
+        sv = self.servos[i]
+
+        def run():
+            try:
+                st = sv.read_status()
+            except Exception as exc:
+                self.log(f"{sv.name}: {exc}")
+                self._ui(self._show_sv_state, i, error=True, text="No response")
+                return
+            f = st["flags"]
+            on = [name for name in ("PWR", "SV", "HEND", "PEND", "BKRL") if f[name]]
+            faults = [name for name in ("EMGS", "ALMH", "ALML", "STP") if f[name]]
+            alarm = f"{st['alarm']:03X}h" if st["alarm"] else "none"
+            self.log(f"{sv.name}  Pos {st['position_mm']:.2f} mm   Speed {st['speed_mm_s']:.2f} mm/s   "
+                     f"Current {st['current_ma']} mA   Alarm {alarm}")
+            self.log(f"{sv.name}  Status: {', '.join(on) or '-'}"
+                     + (f"   Faults: {', '.join(faults)}" if faults else ""))
+            summary = (f"{st['position_mm']:.2f} mm | SV {'ON' if f['SV'] else 'OFF'} | "
+                       f"{'HOME OK' if f['HEND'] else 'NOT HOMED'} | ALM {alarm}")
+            self._ui(self._show_sv_state, i, error=bool(st["alarm"] or faults), text=summary)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def reset_servo(self, i):
+        sv = self.servos[i]
+
+        def run():
+            try:
+                sv.alarm_reset()
+            except Exception as exc:
+                self.log(f"{sv.name}: {exc}")
+                return
+            self.log(f"{sv.name}  Alarm reset sent (coil 0407h).")
+
+        threading.Thread(target=run, daemon=True).start()
+
     # ------------------------------------------------------------------- DAQ
     def _build_daq_section(self):
         cfg = self.settings["daq"]
@@ -511,7 +634,7 @@ class ComPortPage(tk.Frame):
     # ---------------------------------------------------------------- bottom
     def _build_bottom(self):
         bar = tk.Frame(self, bg=theme.PANEL)
-        bar.pack(side="bottom", fill="x", padx=20, pady=(0, 20))
+        bar.pack(side="bottom", fill="x", padx=20, pady=(0, 12))
         tk.Button(bar, text="Update", bg=theme.UPDATE, fg="white", font=(theme.FONT, 11, "bold"),
                   width=12, bd=0, pady=5, cursor="hand2",
                   command=self.refresh_hardware).pack(side="right", padx=(5, 0))
@@ -523,7 +646,7 @@ class ComPortPage(tk.Frame):
     def _build_log(self):
         frame = tk.Frame(self, bg=theme.PANEL, bd=1, relief="solid",
                          highlightbackground=theme.BORDER, highlightthickness=1)
-        frame.pack(side="top", fill="both", expand=True, padx=20, pady=(10, 20))
+        frame.pack(side="top", fill="both", expand=True, padx=20, pady=(6, 10))
         sb = ttk.Scrollbar(frame, orient="vertical")
         sb.pack(side="right", fill="y")
         self.log_text = tk.Text(frame, bg=theme.PANEL, fg="white", font=("Consolas", 11), bd=0, height=8,
@@ -541,7 +664,7 @@ class ComPortPage(tk.Frame):
         """Rescan COM ports and NI devices (the Update button)."""
         ports = plc_xgb.XGBPlc.list_ports()
         port_names = [dev for dev, _ in ports]
-        for cb in [self.cb_plc_port] + [w["port"] for w in self.lc_rows]:
+        for cb in [self.cb_plc_port] + [w["port"] for w in self.lc_rows + self.sv_rows]:
             current = cb.get()
             cb.config(values=port_names or ([current] if current else []))
         if not self.cb_plc_port.get() and port_names:
@@ -564,6 +687,7 @@ class ComPortPage(tk.Frame):
         try:
             self.settings["plc"] = self._plc_config()
             self.settings["loadcells"] = [self._lc_config(i) for i in range(len(self.loadcells))]
+            self.settings["servos"] = [self._sv_config(i) for i in range(len(self.servos))]
             self.settings["daq"] = self._daq_config()
             save_settings(self.settings)
         except Exception as exc:

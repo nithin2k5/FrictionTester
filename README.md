@@ -34,6 +34,13 @@ the indicator's ID Number (F-40):
 
 The reading is shown in the status cell and the log.
 
+**Servo 1 / 2 – IAI ROBO Cylinder controllers (RCP2-RA4C actuators), Modbus RTU 8N1** on the
+controller's SIO port (RS485, so the PC needs an RS232/USB-RS485 converter; IAI default 38400 baud).
+Station ID is the controller's axis No. 0–15 (Modbus slave = axis + 1); both servos may share one
+COM port. TEST is read-only: position (9000h, mm), speed (900Ah), current (900Ch), alarm code
+(9002h) and status bits from 9005h (SV, HEND, PEND, EMGS, ALMH, …). ALM RST pulses coil 0407h.
+Nothing on this page moves the actuators.
+
 **NI USB-6210:** NI device (prefers a 6210), AI channels (e.g. `ai0, ai2` or `ai0-ai3`), terminal
 config (Differential uses ai0–ai7), input range (±10 / ±5 / ±1 / ±0.2 V), sample rate (≤ 250 kS/s
 aggregate) and samples per channel. TEST acquires one block and logs the mean voltage per channel.
