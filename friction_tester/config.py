@@ -7,6 +7,16 @@ from pathlib import Path
 SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 
 DEFAULT_SETTINGS = {
+    # Local MySQL, same conventions as the EOL / FeederCable testers. Set the
+    # password in your local settings.json (git-ignored) or the
+    # FRICTION_DB_PASSWORD environment variable — never in this file.
+    "database": {
+        "host": "localhost",
+        "port": 3306,
+        "user": "root",
+        "password": "",
+        "database": "friction",
+    },
     # LS XGB over RS232, Modbus RTU
     "plc": {
         "port": "",
@@ -29,10 +39,10 @@ DEFAULT_SETTINGS = {
     # Test Console conditions per cable, plus the PLC bits for its sensor
     # lamps (XGB addresses — adjust to the machine's I/O list).
     "test": {
-        "select": {"speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
+        "select": {"model": "", "speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
                    "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
                    "front_sensor": "P0000", "rear_sensor": "P0001"},
-        "shift": {"speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
+        "shift": {"model": "", "speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
                   "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
                   "front_sensor": "P0002", "rear_sensor": "P0003"},
     },

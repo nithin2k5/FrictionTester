@@ -36,6 +36,14 @@ def apply_style(root):
         selectforeground=[("readonly", "white")],
         foreground=[("readonly", "white"), ("disabled", MUTED)],
     )
+    # Dark table (Model Settings list)
+    style.configure("Dark.Treeview", background="#0f131a", fieldbackground="#0f131a", foreground="white",
+                    bordercolor=BORDER, rowheight=26, font=(FONT, 10))
+    style.configure("Dark.Treeview.Heading", background="#1c2230", foreground=HEADER_FG,
+                    bordercolor=BORDER, relief="flat", font=(FONT, 10, "bold"))
+    style.map("Dark.Treeview", background=[("selected", "#2a4a7a")], foreground=[("selected", "white")])
+    style.map("Dark.Treeview.Heading", background=[("active", "#252c3b")])
+
     # Drop-down list colours.
     root.option_add("*TCombobox*Listbox.background", "#111")
     root.option_add("*TCombobox*Listbox.foreground", "white")

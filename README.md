@@ -32,6 +32,31 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
 The automatic test sequence (recording PULL/PUSH) is not implemented yet;
 `CablePanel.show_results()`, `set_live()` and `plot` are where it will report.
 
+## Model Settings
+
+Models are stored in MySQL table **`TBL_MODEL_MASTER`** (database `friction` on the local MySQL
+server, user `root` by default). Put the MySQL password in your local `settings.json` under
+`"database": {"password": "..."}` (the file is git-ignored) or in the `FRICTION_DB_PASSWORD`
+environment variable — not in the code. The database and table are created automatically on
+first open.
+
+| Column | Sheet field |
+|---|---|
+| `MM_MODEL` (unique) | Model |
+| `MM_TEST_CABLE` | Test Cable (SELECT CABLE / SHIFT CABLE) |
+| `MM_SAVED_TO` | Saved to |
+| `MM_DATE` | Date (set on SAVE) |
+| `MM_TEST_RESULT` | Test Result (O.K / N.G) |
+| `MM_SPEED` | Speed, mm/Sec |
+| `MM_DELAY_TIME` | Delay Time, Sec |
+| `MM_STROKE` | Stroke, mm |
+| `MM_POSITION_1/2/3` | Position 1–3, mm |
+| `MM_LOAD_MIN`, `MM_LOAD_MAX` | LOAD min ~ max, kgf |
+
+The page lists models (searchable) on the left and edits the selected one on the right:
+NEW, SAVE (insert or update by model), DELETE, and **APPLY TO TEST CONSOLE**, which copies the
+model's test conditions into the SELECT or SHIFT CABLE panel and shows the model name there.
+
 ## COM Setting page
 
 One card per device group on the left, the communication log on the right. Every row has the

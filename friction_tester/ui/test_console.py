@@ -74,6 +74,9 @@ class CablePanel(tk.Frame):
                   font=_font(9, True), cursor="hand2").pack(side="right")
         tk.Label(top, text=title, bg=theme.PANEL, fg="white", font=_font(16)).pack(side="left", expand=True)
         tk.Frame(self, bg=theme.BORDER, height=1).pack(fill="x", padx=10)
+        if cfg.get("model"):
+            tk.Label(self, text=f"Model  {cfg['model']}", bg=theme.PANEL, fg=theme.HEADER_FG,
+                     font=_font(10, True), anchor="w").pack(fill="x", padx=12, pady=(3, 0))
 
         self._build_tables().pack(fill="x", padx=10, pady=6)
 

@@ -6,6 +6,7 @@ import tkinter as tk
 
 from . import theme
 from .comport_page import ComPortPage
+from .model_page import ModelSettingsPage
 from .test_console import TestConsolePage
 
 NAV_IDLE = ("#111", "white", "#444")        # bg, fg, border
@@ -16,6 +17,7 @@ class App:
     # (icon, caption, page key, header title)
     PAGES = [
         ("🏠", "Test Console", "test_console", "FRICTION TEST MACHINE"),
+        ("⚙", "Model\nSettings", "model_settings", "Model Settings"),
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
     ]
 
@@ -124,6 +126,8 @@ class App:
         if page_name == "comport_settings":
             ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
                 fill="both", expand=True, padx=16, pady=12)
+        elif page_name == "model_settings":
+            ModelSettingsPage(self.content, self.settings).pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
             TestConsolePage(self.content, self.settings, self.plc, self.loadcells).pack(
                 fill="both", expand=True, padx=12, pady=10)
