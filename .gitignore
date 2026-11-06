@@ -10,3 +10,6 @@ settings.json
 
 # Test Console screen saves
 screenshots/
+
+# Saved test data (Test Console "Saved to")
+data/

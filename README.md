@@ -25,9 +25,22 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
   Max, OK/NG — OK when every |reading| is within the LOAD range), a Load vs Stroke graph
   (zoom / Fit / pan) and live LOAD (from the loadcell), STROKE and SPEED (no source yet).
 - **Screen Save** writes a PNG of the panel to `screenshots/`.
-- Bottom bar per cable: Front/Rear sensor lamps (PLC bits set in `settings.json` →
-  `test.<cable>.front_sensor / rear_sensor`) and the clamp counter.
+- Bottom bar per cable: **Actuator Control** (SERVO ON/OFF, ALARM RESET, Move Origin),
+  Front/Rear sensor lamps (PLC bits in `settings.json` → `test.<cable>.front_sensor / rear_sensor`)
+  and the clamp counter.
+- Right-hand panel, as on the LabVIEW screen:
+  - **Model Set** — models from `TBL_MODEL_MASTER`; select one and press **Model Change** to load
+    its SELECT CABLE and SHIFT CABLE conditions into the two panels.
+  - **Saved to** folder (default `data/`, opened by **OPEN**) and **Saved Number** per cable.
+  - **Progress Counter** (Target / Complete) and **O.K/N.G Counter** (A day / Cumulative, each
+    with **Del**). Day counts reset at the date change. `record_result()` updates them.
+  - **Test Run, Test Stop, Move Origin**.
+- **EXIT** closes the app (with confirmation).
 - The status box lists any device that isn't connected.
+
+The machine buttons (Servo, Alarm Reset, Move Origin, Test Run, Test Stop) write PLC bits set in
+`settings.json` → `test.commands` (e.g. `"test_run": "M0100"`). They are empty by default; until
+an address is set, the button only reports that in the status box.
 
 The automatic test sequence (recording PULL/PUSH) is not implemented yet;
 `CablePanel.show_results()`, `set_live()` and `plot` are where it will report.

@@ -35,6 +35,20 @@ DEFAULT_SETTINGS = {
         "shift": {"model": "", "speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
                   "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
                   "front_sensor": "P0002", "rear_sensor": "P0003"},
+        # PLC bits the Test Console buttons write (XGB addresses, e.g. "M0100").
+        # Empty = not configured: the button only reports that. Fill these in
+        # from the machine's I/O list.
+        "commands": {
+            "servo_select": "", "alarm_reset_select": "", "origin_select": "",
+            "servo_shift": "", "alarm_reset_shift": "", "origin_shift": "",
+            "test_run": "", "test_stop": "", "move_origin": "",
+        },
+        # Counters on the right-hand panel; day counts reset when the date changes.
+        "counters": {
+            "date": "", "ok_day": 0, "ng_day": 0, "ok_total": 0, "ng_total": 0,
+            "target": 0, "complete": 0, "saved_select": 0, "saved_shift": 0,
+        },
+        "save_dir": "data",
     },
     # NI USB-6210: one entry per analog sensor. In Differential mode channel
     # aiN uses pins AIN (+) and AI(N+8) (-), e.g. Loadcell 1 on AI0 / AI8.
