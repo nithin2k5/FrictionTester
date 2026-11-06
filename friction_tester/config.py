@@ -26,14 +26,15 @@ DEFAULT_SETTINGS = {
         {"port": "", "baudrate": 9600},
         {"port": "", "baudrate": 9600},
     ],
-    # Test Console conditions per cable, plus the PLC bits for its sensor
-    # lamps (XGB addresses — adjust to the machine's I/O list).
+    # Test Console conditions per cable (empty until a model is loaded or they
+    # are typed in), plus the PLC bits for its sensor lamps (XGB addresses —
+    # adjust to the machine's I/O list).
     "test": {
-        "select": {"model": "", "speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
-                   "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
+        "select": {"model": "", "speed": None, "delay": None, "stroke": None, "positions": [None, None, None],
+                   "load_min": None, "load_max": None, "clamp_count": 0,
                    "front_sensor": "P0000", "rear_sensor": "P0001"},
-        "shift": {"model": "", "speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
-                  "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
+        "shift": {"model": "", "speed": None, "delay": None, "stroke": None, "positions": [None, None, None],
+                  "load_min": None, "load_max": None, "clamp_count": 0,
                   "front_sensor": "P0002", "rear_sensor": "P0003"},
         # PLC bits the Test Console buttons write (XGB addresses, e.g. "M0100").
         # Empty = not configured: the button only reports that. Fill these in

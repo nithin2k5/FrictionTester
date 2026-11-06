@@ -141,7 +141,8 @@ class CablePanel(tk.Frame):
         e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify="center",
                      font=_font(10), width=width, bd=1, relief="solid",
                      highlightbackground=theme.BORDER, highlightthickness=1)
-        e.insert(0, fmt.format(value))
+        if value is not None:                # empty (null) conditions stay blank
+            e.insert(0, fmt.format(value))
         return e
 
     def _caption(self, parent, text):
@@ -239,13 +240,18 @@ class CablePanel(tk.Frame):
     # ------------------------------------------------------------- data
     def read_conditions(self):
         """Validated test conditions from the entry boxes (also stored in cfg)."""
-        try:
-            vals = {k: float(e.get()) for k, e in self.ent.items()}
-        except ValueError:
-            raise ValueError("Test conditions must be numbers")
-        if vals["load_min"] > vals["load_max"]:
+        vals = {}
+        for k, e in self.ent.items():        # a blank box is an empty (null) condition
+            text = e.get().strip()
+            try:
+                vals[k] = float(text) if text else None
+            except ValueError:
+                raise ValueError("Test conditions must be numbers (or left empty)")
+        if vals["load_min"] is not None and vals["load_max"] is not None and vals["load_min"] > vals["load_max"]:
             raise ValueError("LOAD minimum is above the maximum")
-        if vals["speed"] <= 0 or vals["stroke"] <= 0 or vals["delay"] < 0:
+        if (vals["speed"] is not None and vals["speed"] <= 0) or \
+                (vals["stroke"] is not None and vals["stroke"] <= 0) or \
+                (vals["delay"] is not None and vals["delay"] < 0):
             raise ValueError("Speed and stroke must be > 0, delay ≥ 0")
         self.cfg.update({
             "speed": vals["speed"], "delay": vals["delay"], "stroke": vals["stroke"],
@@ -257,6 +263,8 @@ class CablePanel(tk.Frame):
     def show_results(self, pulls, pushes):
         """Fill PULL1-3 / PUSH1-3, the means and OK/NG from measured loads."""
         cond = self.read_conditions()
+        if cond["load_min"] is None or cond["load_max"] is None:
+            raise ValueError("LOAD limits are empty - load a model or enter them before judging")
         for i in range(3):
             self.res[f"pull{i + 1}"].config(text=f"{pulls[i]:.2f}" if i < len(pulls) else "0.00")
             self.res[f"push{i + 1}"].config(text=f"{pushes[i]:.2f}" if i < len(pushes) else "0.00")
