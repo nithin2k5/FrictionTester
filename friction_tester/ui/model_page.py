@@ -1,9 +1,8 @@
 """Model Settings page — create, edit and delete rows of TBL_MODEL_MASTER.
 
-Left: the model list (searchable). Right: the selected model — Model, Part
-Number, Customer Name, ALC Code, PRN Template, then "- Test Condition -".
-APPLY → SELECT / APPLY → SHIFT copy the model's test conditions into that
-cable panel on the Test Console.
+Top: the edit form — model details (Model, Part Number, Customer Name, ALC
+Code, PRN Template) beside Test Condition 1 and Test Condition 2, which have
+the same attributes. Below: the model list, searchable; click a row to edit it.
 
 PRN Template choices are the .prn label files in the prn_templates folder.
 
@@ -11,7 +10,6 @@ Database calls run on a worker thread so a slow or missing MySQL server
 never freezes the window.
 """
 
-import datetime
 import os
 import threading
 import tkinter as tk
@@ -20,17 +18,17 @@ from tkinter import messagebox, ttk
 
 from . import theme
 from .. import db
-from ..config import save_settings
 
 CARD_BG = theme.PANEL
 HEAD_BG = "#171c25"
 PRN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                        "prn_templates")
 
-# Model list columns: (db column, heading, width)
-LIST_COLS = [("MM_MODEL", "Model", 130), ("MM_PART_NUMBER", "Part Number", 115),
-             ("MM_CUSTOMER_NAME", "Customer", 105), ("MM_ALC_CODE", "ALC Code", 75),
-             ("MM_PRN_TEMPLATE", "PRN Template", 145), ("LOAD", "LOAD (kgf)", 95)]
+# Model list columns: (key, heading, width). "C1_LOAD"/"C2_LOAD" are min ~ max.
+LIST_COLS = [("MM_MODEL", "Model", 150), ("MM_PART_NUMBER", "Part Number", 130),
+             ("MM_CUSTOMER_NAME", "Customer", 130), ("MM_ALC_CODE", "ALC Code", 90),
+             ("MM_PRN_TEMPLATE", "PRN Template", 170),
+             ("C1", "Condition 1", 230), ("C2", "Condition 2", 230)]
 
 
 def prn_templates():
@@ -47,9 +45,14 @@ def _fmt(v):
         return ""
     if isinstance(v, (Decimal, float)):
         return f"{float(v):g}"
-    if isinstance(v, datetime.datetime):
-        return v.strftime("%Y-%m-%d %H:%M:%S")
     return str(v)
+
+
+def _condition_summary(row, n):
+    c = lambda attr: _fmt(row.get(db.cond_col(n, attr)))
+    if not any(c(a) for a, *_ in db.CONDITION_FIELDS):
+        return ""
+    return f"{c('SPEED')} mm/s · {c('STROKE')} mm · {c('LOAD_MIN')} ~ {c('LOAD_MAX')} kgf"
 
 
 class ModelSettingsPage(tk.Frame):
@@ -60,13 +63,8 @@ class ModelSettingsPage(tk.Frame):
         self.bind("<Destroy>", lambda e: setattr(self, "_alive", False) if e.widget is self else None)
 
         self._build_toolbar()
-        body = tk.Frame(self, bg=theme.BG)
-        body.pack(fill="both", expand=True, pady=(10, 0))
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
-        self._build_list(body).grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        self._build_form(body).grid(row=0, column=1, sticky="ns")
-
+        self._build_form().pack(fill="x", pady=(10, 0))
+        self._build_list().pack(fill="both", expand=True, pady=(12, 0))
         self.status = tk.Label(self, text="", bg=theme.BG, fg=theme.MUTED, font=(theme.FONT, 10), anchor="w")
         self.status.pack(fill="x", pady=(6, 0))
 
@@ -80,11 +78,16 @@ class ModelSettingsPage(tk.Frame):
 
     def _button(self, parent, text, command, bg, fg="white"):
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=bg,
-                         activeforeground=fg, font=(theme.FONT, 10, "bold"), bd=0, padx=14, pady=5,
+                         activeforeground=fg, font=(theme.FONT, 10, "bold"), bd=0, padx=16, pady=5,
                          cursor="hand2", disabledforeground="#8a8f99")
 
-    def _card(self, parent, title, subtitle=""):
-        card = tk.Frame(parent, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
+    def _entry(self, parent, width, justify="left"):
+        return tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify=justify,
+                        font=(theme.FONT, 11), width=width, bd=1, relief="solid",
+                        highlightbackground=theme.BORDER, highlightthickness=1)
+
+    def _card(self, title, subtitle=""):
+        card = tk.Frame(self, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
         head = tk.Frame(card, bg=HEAD_BG)
         head.pack(fill="x")
         tk.Frame(head, bg=theme.TITLE_FG, width=4).pack(side="left", fill="y")
@@ -98,21 +101,65 @@ class ModelSettingsPage(tk.Frame):
         bar.pack(fill="x")
         self._label(bar, "Model Master", size=15).pack(side="left")
         self._label(bar, db.TABLE, fg=theme.MUTED, size=10).pack(side="left", padx=12, pady=(4, 0))
-        self._button(bar, "APPLY → SHIFT", lambda: self.apply_to_console("shift"), theme.UPDATE).pack(
-            side="right", padx=(8, 0))
-        self._button(bar, "APPLY → SELECT", lambda: self.apply_to_console("select"), theme.UPDATE).pack(
-            side="right", padx=(8, 0))
-        self.btn_delete = self._button(bar, "DELETE", self.delete_model, theme.FAIL)
-        self.btn_delete.pack(side="right", padx=(8, 0))
-        self.btn_save = self._button(bar, "SAVE", self.save_model, theme.SAVE)
-        self.btn_save.pack(side="right", padx=(8, 0))
+        self._button(bar, "DELETE", self.delete_model, theme.FAIL).pack(side="right", padx=(8, 0))
+        self._button(bar, "SAVE", self.save_model, theme.SAVE).pack(side="right", padx=(8, 0))
         self._button(bar, "NEW", self.new_model, "#4a505c").pack(side="right", padx=(8, 0))
 
-    def _build_list(self, parent):
-        card, head = self._card(parent, "Models")
-        self.search = tk.Entry(head, bg=theme.ENTRY_BG, fg="white", insertbackground="white",
-                               font=(theme.FONT, 10), width=22, bd=1, relief="solid",
-                               highlightbackground=theme.BORDER, highlightthickness=1)
+    def _build_form(self):
+        card, _ = self._card("Model Details")
+        body = tk.Frame(card, bg=CARD_BG)
+        body.pack(fill="x", padx=14, pady=10)
+        self.fields = {}
+
+        # Model details
+        info = tk.Frame(body, bg=CARD_BG)
+        info.pack(side="left", anchor="n")
+        for r, (col, label, _sql) in enumerate(db.HEADER_FIELDS):
+            self._label(info, label).grid(row=r, column=0, sticky="w", pady=3)
+            if col == "MM_PRN_TEMPLATE":
+                w = ttk.Combobox(info, font=(theme.FONT, 10), width=22, state="readonly")
+                # Re-list the folder each time the drop-down opens, so new files show up.
+                w.config(postcommand=lambda w=w: w.config(values=[""] + prn_templates()))
+            else:
+                w = self._entry(info, 24)
+            w.grid(row=r, column=1, sticky="w", padx=(10, 0), pady=3)
+            self.fields[col] = w
+
+        # Test Condition 1 and 2, same attributes
+        for n in db.CONDITIONS:
+            tk.Frame(body, bg=theme.BORDER, width=1).pack(side="left", fill="y", padx=22)
+            self._build_condition(body, n).pack(side="left", anchor="n")
+        return card
+
+    def _build_condition(self, parent, n):
+        f = tk.Frame(parent, bg=CARD_BG)
+        self._label(f, f"- Test Condition {n} -", fg=theme.TITLE_FG, bold=True).grid(
+            row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
+        r = 1
+        for attr, label, unit, _sql in db.CONDITION_FIELDS:
+            if attr in ("LOAD_MIN", "LOAD_MAX"):
+                continue
+            self._label(f, label).grid(row=r, column=0, sticky="w", pady=2)
+            e = self._entry(f, 8, justify="center")
+            e.grid(row=r, column=1, sticky="w", padx=(10, 6), pady=2)
+            self._label(f, unit, fg=theme.MUTED, size=9).grid(row=r, column=2, sticky="w")
+            self.fields[db.cond_col(n, attr)] = e
+            r += 1
+        # LOAD min ~ max on one line
+        self._label(f, "LOAD").grid(row=r, column=0, sticky="w", pady=2)
+        load = tk.Frame(f, bg=CARD_BG)
+        load.grid(row=r, column=1, columnspan=3, sticky="w", padx=(10, 0), pady=2)
+        for attr, sep in (("LOAD_MIN", "~"), ("LOAD_MAX", "kgf")):
+            e = self._entry(load, 7, justify="center")
+            e.pack(side="left")
+            self._label(load, sep, fg=theme.MUTED, size=9).pack(side="left", padx=6)
+            self.fields[db.cond_col(n, attr)] = e
+        return f
+
+    def _build_list(self):
+        card, head = self._card("Models")
+        self.search = self._entry(head, 22)
+        self.search.config(font=(theme.FONT, 10))
         self.search.pack(side="right", padx=8)
         self.search.bind("<KeyRelease>", lambda _e: self._schedule_search())
         self._label(head, "Search", fg=theme.MUTED, size=9).pack(side="right")
@@ -123,7 +170,8 @@ class ModelSettingsPage(tk.Frame):
                                  selectmode="browse", style="Dark.Treeview")
         for col, heading, width in LIST_COLS:
             self.tree.heading(col, text=heading)
-            self.tree.column(col, width=width, minwidth=40, anchor="w" if col == "MM_MODEL" else "center")
+            self.tree.column(col, width=width, minwidth=50,
+                             anchor="w" if col in ("MM_MODEL", "MM_PRN_TEMPLATE") else "center")
         sb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -134,83 +182,18 @@ class ModelSettingsPage(tk.Frame):
         self._search_job = None
         return card
 
-    def _build_form(self, parent):
-        card, _ = self._card(parent, "Model Details")
-        form = tk.Frame(card, bg=CARD_BG)
-        form.pack(fill="both", expand=True, padx=14, pady=10)
-        self.fields = {}
-
-        def entry(width=16):
-            return tk.Entry(form, bg=theme.ENTRY_BG, fg="white", insertbackground="white",
-                            font=(theme.FONT, 11), width=width, bd=1, relief="solid",
-                            highlightbackground=theme.BORDER, highlightthickness=1,
-                            readonlybackground="#151920", disabledbackground="#151920")
-
-        def combo(values, width=14):
-            return ttk.Combobox(form, values=values, font=(theme.FONT, 10), width=width, state="readonly")
-
-        row = 0
-
-        def add(col, widget, unit=""):
-            nonlocal row
-            label = next(lbl for c, lbl, _ in db.FIELDS if c == col)
-            self._label(form, label).grid(row=row, column=0, sticky="w", pady=3)
-            widget.grid(row=row, column=1, sticky="w", padx=(10, 6), pady=3)
-            if unit:
-                self._label(form, unit, fg=theme.MUTED, size=9).grid(row=row, column=2, sticky="w")
-            self.fields[col] = widget
-            row += 1
-
-        add("MM_MODEL", entry(20))
-        add("MM_PART_NUMBER", entry(20))
-        add("MM_CUSTOMER_NAME", entry(20))
-        add("MM_ALC_CODE", entry(20))
-        prn = combo([], width=18)
-        # Re-list the folder each time the drop-down opens, so new files show up.
-        prn.config(postcommand=lambda: prn.config(values=[""] + prn_templates()))
-        add("MM_PRN_TEMPLATE", prn)
-
-        self._label(form, "- Test Condition -", fg=theme.TITLE_FG, bold=True).grid(
-            row=row, column=0, columnspan=3, sticky="w", pady=(12, 4))
-        row += 1
-        for col, _label, unit in db.FIELDS:
-            if col in ("MM_SPEED", "MM_DELAY_TIME", "MM_STROKE", "MM_POSITION_1", "MM_POSITION_2",
-                       "MM_POSITION_3"):
-                e = entry(8)
-                e.config(justify="center")
-                add(col, e, unit)
-
-        # LOAD min ~ max on one line, as on the sheet
-        self._label(form, "LOAD").grid(row=row, column=0, sticky="w", pady=3)
-        load = tk.Frame(form, bg=CARD_BG)
-        load.grid(row=row, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=3)
-        for col, sep in (("MM_LOAD_MIN", "~"), ("MM_LOAD_MAX", "kgf")):
-            e = tk.Entry(load, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify="center",
-                         font=(theme.FONT, 11), width=8, bd=1, relief="solid",
-                         highlightbackground=theme.BORDER, highlightthickness=1)
-            e.pack(side="left")
-            self._label(load, sep, fg=theme.MUTED, size=9).pack(side="left", padx=6)
-            self.fields[col] = e
-        return card
-
     # ============================================================ form data
     def _set_field(self, col, value):
         w = self.fields[col]
-        text = _fmt(value)
         if isinstance(w, ttk.Combobox):
-            w.set(text)
-            return
-        readonly = w.cget("state") == "readonly"
-        if readonly:
-            w.config(state="normal")
-        w.delete(0, "end")
-        w.insert(0, text)
-        if readonly:
-            w.config(state="readonly")
+            w.set(_fmt(value))
+        else:
+            w.delete(0, "end")
+            w.insert(0, _fmt(value))
 
     def _read_form(self):
         row = {}
-        for col, label, _ in db.FIELDS:
+        for col in db.COLUMNS:
             text = self.fields[col].get().strip()
             if col in db.NUMERIC:
                 if text == "":
@@ -219,28 +202,29 @@ class ModelSettingsPage(tk.Frame):
                 try:
                     row[col] = float(text)
                 except ValueError:
-                    raise ValueError(f"{label} must be a number")
+                    raise ValueError(f"{db.LABELS[col]} must be a number")
             else:
                 row[col] = text or None
         if not row["MM_MODEL"]:
             raise ValueError("Model is required")
-        if row["MM_LOAD_MIN"] is not None and row["MM_LOAD_MAX"] is not None \
-                and row["MM_LOAD_MIN"] > row["MM_LOAD_MAX"]:
-            raise ValueError("LOAD min is above LOAD max")
+        for n in db.CONDITIONS:
+            lo, hi = row[db.cond_col(n, "LOAD_MIN")], row[db.cond_col(n, "LOAD_MAX")]
+            if lo is not None and hi is not None and lo > hi:
+                raise ValueError(f"Condition {n}: LOAD min is above LOAD max")
         return row
 
     def new_model(self):
-        """Clear the form, prefilled with the default test conditions."""
+        """Clear the form; both conditions start from the Test Console's defaults."""
         self.tree.selection_remove(self.tree.selection())
-        defaults = self.settings["test"]["select"]
-        values = {
-            "MM_SPEED": defaults["speed"], "MM_DELAY_TIME": defaults["delay"], "MM_STROKE": defaults["stroke"],
-            "MM_POSITION_1": defaults["positions"][0], "MM_POSITION_2": defaults["positions"][1],
-            "MM_POSITION_3": defaults["positions"][2],
-            "MM_LOAD_MIN": defaults["load_min"], "MM_LOAD_MAX": defaults["load_max"],
-        }
         for col in db.COLUMNS:
-            self._set_field(col, values.get(col))
+            self._set_field(col, None)
+        for n, key in zip(db.CONDITIONS, ("select", "shift")):
+            d = self.settings["test"][key]
+            defaults = {"SPEED": d["speed"], "DELAY_TIME": d["delay"], "STROKE": d["stroke"],
+                        "POSITION_1": d["positions"][0], "POSITION_2": d["positions"][1],
+                        "POSITION_3": d["positions"][2], "LOAD_MIN": d["load_min"], "LOAD_MAX": d["load_max"]}
+            for attr, value in defaults.items():
+                self._set_field(db.cond_col(n, attr), value)
         self.fields["MM_MODEL"].focus_set()
 
     def _on_select(self):
@@ -285,8 +269,8 @@ class ModelSettingsPage(tk.Frame):
         self.tree.delete(*self.tree.get_children())
         self._rows = {}
         for i, r in enumerate(rows):
-            load = f"{_fmt(r['MM_LOAD_MIN'])} ~ {_fmt(r['MM_LOAD_MAX'])}"
-            values = [load if c == "LOAD" else _fmt(r.get(c)) for c, _, _ in LIST_COLS]
+            values = [_condition_summary(r, 1) if c == "C1" else
+                      _condition_summary(r, 2) if c == "C2" else _fmt(r.get(c)) for c, _, _ in LIST_COLS]
             iid = self.tree.insert("", "end", values=values, tags=("odd",) if i % 2 else ())
             self._rows[iid] = r
             if select and r["MM_MODEL"] == select:
@@ -331,24 +315,3 @@ class ModelSettingsPage(tk.Frame):
             self.refresh()
 
         self._run(lambda: db.delete_model(model), f"Deleting {model}…", done)
-
-    def apply_to_console(self, key):
-        """Copy this model's test conditions into the SELECT or SHIFT CABLE panel."""
-        try:
-            row = self._read_form()
-        except ValueError as exc:
-            messagebox.showerror("Apply", str(exc), parent=self)
-            return
-        cable = "SHIFT CABLE" if key == "shift" else "SELECT CABLE"
-        missing = [lbl for c, lbl, _ in db.FIELDS if c in db.NUMERIC and row[c] is None]
-        if missing:
-            messagebox.showerror("Apply", "Fill in: " + ", ".join(missing), parent=self)
-            return
-        self.settings["test"][key].update({
-            "speed": row["MM_SPEED"], "delay": row["MM_DELAY_TIME"], "stroke": row["MM_STROKE"],
-            "positions": [row["MM_POSITION_1"], row["MM_POSITION_2"], row["MM_POSITION_3"]],
-            "load_min": row["MM_LOAD_MIN"], "load_max": row["MM_LOAD_MAX"],
-            "model": row["MM_MODEL"],
-        })
-        save_settings(self.settings)
-        self._set_status(f"{row['MM_MODEL']} applied to {cable} on the Test Console", theme.PASS)

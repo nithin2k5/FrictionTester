@@ -7,7 +7,9 @@ start-up to create the database and tables.
 TBL_MODEL_MASTER holds one row per model:
 
     Model, Part Number, Customer Name, ALC Code, PRN Template,
-    Speed, Delay Time, Stroke, Position 1, Position 2, Position 3, LOAD (min ~ max)
+    then two test conditions with the same attributes —
+    Speed, Delay Time, Stroke, Position 1-3, LOAD (min ~ max) —
+    as MM_C1_<attr> and MM_C2_<attr>.
 """
 
 from contextlib import contextmanager
@@ -26,53 +28,50 @@ DATABASE = "friction"
 
 TABLE = "TBL_MODEL_MASTER"
 
-SCHEMA = f"""
-    CREATE TABLE IF NOT EXISTS {TABLE} (
-        ID INT AUTO_INCREMENT PRIMARY KEY,
-        MM_MODEL VARCHAR(100) NOT NULL UNIQUE,
-        MM_PART_NUMBER VARCHAR(100),
-        MM_CUSTOMER_NAME VARCHAR(255),
-        MM_ALC_CODE VARCHAR(100),
-        MM_PRN_TEMPLATE VARCHAR(255),
-        MM_SPEED DECIMAL(10,2),
-        MM_DELAY_TIME DECIMAL(10,2),
-        MM_STROKE DECIMAL(10,2),
-        MM_POSITION_1 DECIMAL(10,2),
-        MM_POSITION_2 DECIMAL(10,2),
-        MM_POSITION_3 DECIMAL(10,2),
-        MM_LOAD_MIN DECIMAL(10,3),
-        MM_LOAD_MAX DECIMAL(10,3)
-    )
-"""
-
-# Column, label, unit — in sheet order. Used by the Model Settings page.
-FIELDS = [
-    ("MM_MODEL", "Model", ""),
-    ("MM_PART_NUMBER", "Part Number", ""),
-    ("MM_CUSTOMER_NAME", "Customer Name", ""),
-    ("MM_ALC_CODE", "ALC Code", ""),
-    ("MM_PRN_TEMPLATE", "PRN Template", ""),
-    ("MM_SPEED", "Speed", "mm/Sec"),
-    ("MM_DELAY_TIME", "Delay Time", "Sec"),
-    ("MM_STROKE", "Stroke", "mm"),
-    ("MM_POSITION_1", "Position 1", "mm"),
-    ("MM_POSITION_2", "Position 2", "mm"),
-    ("MM_POSITION_3", "Position 3", "mm"),
-    ("MM_LOAD_MIN", "LOAD min", "kgf"),
-    ("MM_LOAD_MAX", "LOAD max", "kgf"),
+# Model details: (column, label, SQL type)
+HEADER_FIELDS = [
+    ("MM_MODEL", "Model", "VARCHAR(100) NOT NULL UNIQUE"),
+    ("MM_PART_NUMBER", "Part Number", "VARCHAR(100)"),
+    ("MM_CUSTOMER_NAME", "Customer Name", "VARCHAR(255)"),
+    ("MM_ALC_CODE", "ALC Code", "VARCHAR(100)"),
+    ("MM_PRN_TEMPLATE", "PRN Template", "VARCHAR(255)"),
 ]
-COLUMNS = [c for c, _, _ in FIELDS]
-NUMERIC = {"MM_SPEED", "MM_DELAY_TIME", "MM_STROKE", "MM_POSITION_1", "MM_POSITION_2",
-           "MM_POSITION_3", "MM_LOAD_MIN", "MM_LOAD_MAX"}
 
-# A table created by an earlier version is brought up to date by init_database:
-# missing columns are added, retired ones dropped.
-ADDED_COLUMNS = [
-    ("MM_PART_NUMBER", "VARCHAR(100) AFTER MM_MODEL"),
-    ("MM_CUSTOMER_NAME", "VARCHAR(255) AFTER MM_PART_NUMBER"),
-    ("MM_ALC_CODE", "VARCHAR(100) AFTER MM_CUSTOMER_NAME"),
-    ("MM_PRN_TEMPLATE", "VARCHAR(255) AFTER MM_ALC_CODE"),
+# One test condition: (attribute, label, unit, SQL type). There are two of
+# them, stored as MM_C1_<attribute> and MM_C2_<attribute>.
+CONDITION_FIELDS = [
+    ("SPEED", "Speed", "mm/Sec", "DECIMAL(10,2)"),
+    ("DELAY_TIME", "Delay Time", "Sec", "DECIMAL(10,2)"),
+    ("STROKE", "Stroke", "mm", "DECIMAL(10,2)"),
+    ("POSITION_1", "Position 1", "mm", "DECIMAL(10,2)"),
+    ("POSITION_2", "Position 2", "mm", "DECIMAL(10,2)"),
+    ("POSITION_3", "Position 3", "mm", "DECIMAL(10,2)"),
+    ("LOAD_MIN", "LOAD min", "kgf", "DECIMAL(10,3)"),
+    ("LOAD_MAX", "LOAD max", "kgf", "DECIMAL(10,3)"),
 ]
+CONDITIONS = (1, 2)
+
+
+def cond_col(n, attr):
+    """Column for one attribute of test condition n, e.g. cond_col(2, 'SPEED') -> MM_C2_SPEED."""
+    return f"MM_C{n}_{attr}"
+
+
+# Every data column in table order: (column, label, unit, SQL type)
+FIELDS = [(c, label, "", sql) for c, label, sql in HEADER_FIELDS] + [
+    (cond_col(n, attr), f"Condition {n} {label}", unit, sql)
+    for n in CONDITIONS for attr, label, unit, sql in CONDITION_FIELDS
+]
+COLUMNS = [f[0] for f in FIELDS]
+LABELS = {f[0]: f[1] for f in FIELDS}
+NUMERIC = {cond_col(n, attr) for n in CONDITIONS for attr, *_ in CONDITION_FIELDS}
+
+SCHEMA = (f"CREATE TABLE IF NOT EXISTS {TABLE} (ID INT AUTO_INCREMENT PRIMARY KEY, "
+          + ", ".join(f"{c} {sql}" for c, _l, _u, sql in FIELDS) + ")")
+
+# Columns from earlier versions. The single test condition (MM_SPEED, ...)
+# becomes condition 1 with its data kept; the rest are dropped.
+RENAMED_COLUMNS = {f"MM_{attr}": (cond_col(1, attr), sql) for attr, _l, _u, sql in CONDITION_FIELDS}
 RETIRED_COLUMNS = ["MM_TEST_CABLE", "MM_SAVED_TO", "MM_DATE", "MM_TEST_RESULT"]
 
 
@@ -124,9 +123,19 @@ def _migrate(cur):
     cur.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS "
                 "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s", (DATABASE, TABLE))
     existing = {r[0].upper() for r in cur.fetchall()}
-    for column, definition in ADDED_COLUMNS:
+    # Old single condition -> condition 1, keeping the data
+    for old, (new, sql) in RENAMED_COLUMNS.items():
+        if old in existing and new not in existing:
+            cur.execute(f"ALTER TABLE {TABLE} CHANGE COLUMN {old} {new} {sql}")
+            existing.discard(old)
+            existing.add(new)
+    # Any other missing column, placed after its neighbour in table order
+    previous = "ID"
+    for column, _label, _unit, sql in FIELDS:
         if column not in existing:
-            cur.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} {definition}")
+            sql = sql.replace(" NOT NULL UNIQUE", "")   # MM_MODEL always exists already
+            cur.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} {sql} AFTER {previous}")
+        previous = column
     for column in RETIRED_COLUMNS:
         if column in existing:
             cur.execute(f"ALTER TABLE {TABLE} DROP COLUMN {column}")

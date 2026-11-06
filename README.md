@@ -45,19 +45,19 @@ server). The connection (host, port, user, password, database) is set at the top
 | `MM_CUSTOMER_NAME` | Customer Name |
 | `MM_ALC_CODE` | ALC Code |
 | `MM_PRN_TEMPLATE` | PRN Template — chosen from the `.prn` files in `prn_templates/` |
-| `MM_SPEED` | Speed, mm/Sec |
-| `MM_DELAY_TIME` | Delay Time, Sec |
-| `MM_STROKE` | Stroke, mm |
-| `MM_POSITION_1/2/3` | Position 1–3, mm |
-| `MM_LOAD_MIN`, `MM_LOAD_MAX` | LOAD min ~ max, kgf |
+| `MM_C1_SPEED`, `MM_C2_SPEED` | Test Condition 1 / 2 — Speed, mm/Sec |
+| `MM_C1_DELAY_TIME`, `MM_C2_DELAY_TIME` | Delay Time, Sec |
+| `MM_C1_STROKE`, `MM_C2_STROKE` | Stroke, mm |
+| `MM_C1_POSITION_1/2/3`, `MM_C2_POSITION_1/2/3` | Position 1–3, mm |
+| `MM_C1_LOAD_MIN/MAX`, `MM_C2_LOAD_MIN/MAX` | LOAD min ~ max, kgf |
 
-A table made by an earlier version is updated automatically (new columns added, the old
-Test Cable / Saved to / Date / Test Result columns dropped).
+A table made by an earlier version is updated automatically: the single test condition becomes
+Condition 1 (data kept), Condition 2 columns are added, and the old Test Cable / Saved to /
+Date / Test Result columns are dropped.
 
-The page lists models (searchable by model, part number, customer or ALC code) on the left and
-edits the selected one on the right: NEW, SAVE (insert or update by model), DELETE, and
-**APPLY → SELECT / APPLY → SHIFT**, which copy the model's test conditions into that cable panel
-on the Test Console and show the model name there.
+The edit form is at the top (model details beside Test Condition 1 and 2); the model list is
+below, searchable by model, part number, customer or ALC code. Click a row to edit it; NEW,
+SAVE (insert or update by model) and DELETE are in the toolbar.
 
 ## COM Setting page
 
