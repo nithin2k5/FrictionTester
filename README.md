@@ -12,8 +12,19 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
    ```
 3. Run:
    ```
-   python main.py
+   python main.py              # normal
+   python main.py --simulate   # Test Console against the shared-cycle PLC simulator
    ```
+4. Tests (simulator, no hardware): `python -m pytest tests -q`
+
+## Shared PLC cycle
+
+`test.integration.mode = "shared_cycle"` connects the Test Console to the machine ladder's single
+automatic cycle (M00029 start pulse, step D05010, verdict M0000D/M0000C, counters D00150/D00152,
+stored samples and finals D01250/D01253). The ladder trace, register map, completion rules and the
+commissioning items still needed are in [docs/plc_shared_cycle.md](docs/plc_shared_cycle.md).
+Live writes stay off until the Modbus mapping is verified; the default mode (`independent`) keeps the
+per-cable start/done handshake below.
 
 ## Test Console
 

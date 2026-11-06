@@ -48,6 +48,35 @@ DEFAULT_SETTINGS = {
             "start_shift": "", "done_shift": "",
         },
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
+        # How the Test Console talks to the PLC (docs/plc_shared_cycle.md).
+        #   "independent": per-cable start_<cable>/done_<cable> handshake above
+        #   "shared_cycle": the ladder's one automatic cycle (M00029 / D05010)
+        "integration": {
+            "mode": "independent",
+            "shared": {
+                # Writing M00029 needs BOTH live_start_enabled and mapping.verified.
+                "live_start_enabled": False,
+                "poll_interval": 0.25,
+                "start_timeout": 10.0,
+                # XG5000 area -> Modbus table/offset. Default = the legacy driver's
+                # assumption; NOT verified against the PLC's Cnet Modbus settings.
+                "mapping": {
+                    "verified": False,
+                    "areas": {
+                        "P": {"table": "coils", "base": 0},
+                        "M": {"table": "coils", "base": 0},
+                        "D": {"table": "holding_registers", "base": 0},
+                    },
+                },
+                # Machine facts the ladder does not establish - set when confirmed:
+                "at_cable_selection": "",            # "" or "operator_fixture"
+                "mt_one_cycle_tests_both": False,
+                "channel_cable": {"1": "", "2": ""},  # "select" / "shift"
+                "direction_role": {"forward": "", "return": ""},  # "pull" / "push"
+                "force_scale": 0.0, "force_unit": "",       # 0 = show raw PLC counts
+                "position_scale": 0.0, "position_unit": "",
+            },
+        },
         # Counters on the right-hand panel; day counts reset when the date changes.
         "counters": {
             "date": "", "ok_day": 0, "ng_day": 0, "ok_total": 0, "ng_total": 0,

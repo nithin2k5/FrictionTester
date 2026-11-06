@@ -22,7 +22,8 @@ class App:
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
     ]
 
-    def __init__(self, root, settings, plc, daq, loadcells):
+    def __init__(self, root, settings, plc, daq, loadcells, simulator=None):
+        self.simulator = simulator       # plc.simulator.SharedCycleSimulator in --simulate mode
         self.root = root
         self.settings = settings
         self.plc = plc
@@ -151,5 +152,6 @@ class App:
         elif page_name == "model_settings":
             ModelSettingsPage(self.content, self.settings).pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
-            TestConsolePage(self.content, self.settings, self.plc, self.loadcells).pack(
+            TestConsolePage(self.content, self.settings, self.plc, self.loadcells,
+                            simulator=self.simulator).pack(
                 fill="both", expand=True, padx=12, pady=10)

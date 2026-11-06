@@ -157,6 +157,34 @@ class XGBPlc:
         if resp.isError():
             raise RuntimeError(f"Write to {address} failed: {resp}")
 
+    # ---- raw Modbus access, used by friction_tester.plc.modbus_map ----------
+    # The helpers above assume every XGB bit is coil (word*16 + bit) and every
+    # D word is holding register n, ignoring the area letter. That mapping is
+    # not verified for this machine; the shared-cycle integration goes through
+    # an explicit, configurable mapping instead (plc/modbus_map.py).
+    _READERS = {"coils": "read_coils", "discrete_inputs": "read_discrete_inputs",
+                "holding_registers": "read_holding_registers", "input_registers": "read_input_registers"}
+
+    def read_table(self, table, address, count):
+        """Read `count` bits/registers from a Modbus table at a raw address."""
+        self._require_open()
+        method = self._READERS[table]
+        with self._lock:
+            resp = getattr(self._client, method)(address, count=count, device_id=self._station)
+        if resp.isError():
+            raise RuntimeError(f"Modbus {table} read at {address} x{count} failed: {resp}")
+        if table in ("coils", "discrete_inputs"):
+            return [bool(b) for b in resp.bits[:count]]
+        return list(resp.registers[:count])
+
+    def write_coil_raw(self, address, value):
+        """Write one coil at a raw Modbus address (function 05)."""
+        self._require_open()
+        with self._lock:
+            resp = self._client.write_coil(address, bool(value), device_id=self._station)
+        if resp.isError():
+            raise RuntimeError(f"Modbus coil write at {address} failed: {resp}")
+
     def read_registers(self, address, count=1):
         """Read `count` holding registers starting at a D address."""
         if not 1 <= count <= 125:

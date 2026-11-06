@@ -22,9 +22,36 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+import copy
+import csv
+import queue as _queue
+
 from . import theme
 from .plot import LoadStrokePlot
 from ..config import save_settings
+from ..plc.modbus_map import ModbusMapping, ModbusPlcBackend
+from ..plc.part_flow import SharedCycleFlow, panel_assignments
+from ..plc.shared_cycle import STEP_NAMES, CycleTracker, SharedCycleMonitor
+
+NO_DATA = "—"      # shown for a value that was not measured (a measured zero shows 0)
+
+# In simulation the simulator stands in for the PLC: its mapping is exact and
+# writing the start request is harmless. These assumptions apply to the
+# simulator only and are never written to settings.json.
+SIMULATION_PROFILE = {
+    "mode": "shared_cycle",
+    "shared": {"live_start_enabled": True, "at_cable_selection": "operator_fixture",
+               "mt_one_cycle_tests_both": True},
+}
+
+
+def effective_integration(settings, simulator=None):
+    """test.integration from settings, with the simulation profile laid over it."""
+    cfg = copy.deepcopy(settings["test"]["integration"])
+    if simulator is not None:
+        cfg["mode"] = SIMULATION_PROFILE["mode"]
+        cfg["shared"].update(SIMULATION_PROFILE["shared"])
+    return cfg
 
 VALUE_FG = "#ff6fd8"     # measured values (magenta, as on the LabVIEW screen)
 FIELD_BG = "#0d1016"
@@ -66,10 +93,12 @@ class CablePanel(tk.Frame):
         self.judge = tk.Label(top, text="– – –", bg=FIELD_BG, fg="#4f8cff", font=_font(13, True),
                               relief="solid", bd=1, width=5)
         self.judge.pack(side="left")
-        tk.Label(top, text="Max", bg=theme.PANEL, fg="white", font=_font(9, True)).pack(side="left", padx=(8, 3))
-        self.res = {"max": self._value(top, "0.00")}
+        self.max_lbl = tk.Label(top, text="Max", bg=theme.PANEL, fg="white", font=_font(9, True))
+        self.max_lbl.pack(side="left", padx=(8, 3))
+        self.res = {"max": self._value(top, NO_DATA)}
         self.res["max"].pack(side="left")
-        tk.Label(top, text="kgf", bg=theme.PANEL, fg="white", font=_font(8)).pack(side="left", padx=(2, 0))
+        self.max_unit = tk.Label(top, text="kgf", bg=theme.PANEL, fg="white", font=_font(8))
+        self.max_unit.pack(side="left", padx=(2, 0))
         tk.Button(top, text="Screen Save", command=self.save_screen, bg="#333", fg="white",
                   activebackground="#444", activeforeground="white", bd=0, padx=8, pady=2,
                   font=_font(8, True), cursor="hand2").pack(side="right")
@@ -79,6 +108,10 @@ class CablePanel(tk.Frame):
                                   font=_font(9, True), anchor="w")
         self.model_lbl.pack(fill="x", padx=10, pady=(2, 0))
         self._show_model(cfg.get("model", ""))
+        # Where the numbers on this panel come from (PLC channel, serial loadcell, ...)
+        self.source_lbl = tk.Label(self, text="", bg=theme.PANEL, fg=theme.MUTED, font=_font(8),
+                                   anchor="w", justify="left")
+        self.source_lbl.pack(fill="x", padx=10)
 
         self._build_tables().pack(fill="x", padx=8, pady=4)
 
@@ -89,12 +122,13 @@ class CablePanel(tk.Frame):
 
         live = tk.Frame(self, bg=theme.PANEL)
         live.pack(fill="x", padx=8, pady=(2, 6))
-        self.live = {}
+        self.live, self.live_units = {}, {}
         for key, label, unit in (("load", "LOAD", "kgf"), ("stroke", "STROKE", "mm"), ("speed", "SPEED", "mm/s")):
             tk.Label(live, text=label, bg=theme.PANEL, fg=theme.HEADER_FG, font=_font(9, True)).pack(side="left")
-            self.live[key] = self._value(live, "--", width=6, size=11)
+            self.live[key] = self._value(live, NO_DATA, width=6, size=11)
             self.live[key].pack(side="left", padx=(4, 2))
-            tk.Label(live, text=unit, bg=theme.PANEL, fg="white", font=_font(8)).pack(side="left", padx=(0, 8))
+            self.live_units[key] = tk.Label(live, text=unit, bg=theme.PANEL, fg="white", font=_font(8))
+            self.live_units[key].pack(side="left", padx=(0, 8))
 
     # ----------------------------------------------------------- widgets
     def _value(self, parent, text, width=5, size=10):
@@ -147,8 +181,9 @@ class CablePanel(tk.Frame):
         cell = {"padx": 2, "pady": 1, "sticky": "ew"}
 
         def text(col, row, t, bold=False, fg="white", sticky="w", **kw):
-            tk.Label(f, text=t, bg=theme.PANEL, fg=fg, font=_font(9 if bold else 8, bold)).grid(
-                row=row, column=col, sticky=sticky, **kw)
+            lbl = tk.Label(f, text=t, bg=theme.PANEL, fg=fg, font=_font(9 if bold else 8, bold))
+            lbl.grid(row=row, column=col, sticky=sticky, **kw)
+            return lbl
 
         # Captions
         self._caption(f, "TEST CONDITION").grid(row=0, column=0, columnspan=3, sticky="w")
@@ -180,17 +215,18 @@ class CablePanel(tk.Frame):
         tk.Frame(f, bg=theme.BORDER, width=1).grid(row=0, column=6, rowspan=5, sticky="ns", padx=5)
 
         # Test results, rows 1-3, then the means on row 4
+        self.row_lbls, self.res_units = {}, []
         for i in range(1, 4):
             for col, kind in ((7, "PULL"), (10, "PUSH")):
-                text(col, i, f"{kind}{i}")
-                self.res[f"{kind.lower()}{i}"] = self._value(f, "0.00")
+                self.row_lbls[f"{kind.lower()}{i}"] = text(col, i, f"{kind}{i}")
+                self.res[f"{kind.lower()}{i}"] = self._value(f, NO_DATA)
                 self.res[f"{kind.lower()}{i}"].grid(row=i, column=col + 1, **cell)
-                text(col + 2, i, "kgf", padx=(0, 3))
+                self.res_units.append(text(col + 2, i, "kgf", padx=(0, 3)))
         for col, kind in ((7, "pull"), (10, "push")):
-            text(col, 4, "Mean", bold=True)
-            self.res[f"{kind}_mean"] = self._value(f, "0.00")
+            self.row_lbls[f"{kind}_mean"] = text(col, 4, "Mean", bold=True)
+            self.res[f"{kind}_mean"] = self._value(f, NO_DATA)
             self.res[f"{kind}_mean"].grid(row=4, column=col + 1, **cell)
-            text(col + 2, 4, "kgf", padx=(0, 3))
+            self.res_units.append(text(col + 2, 4, "kgf", padx=(0, 3)))
 
         # Same height for every data row, so the two tables share baselines
         for col in (1, 4, 8, 11):          # condition entries and result values
@@ -235,13 +271,85 @@ class CablePanel(tk.Frame):
     def reset_results(self):
         self.last_ok = None              # no judgement for the current test yet
         for lbl in self.res.values():
-            lbl.config(text="0.00")
+            lbl.config(text=NO_DATA)     # "—" = not measured, distinct from a measured 0
         self.judge.config(text="– – –", fg="#4f8cff")
         self.plot.clear()
 
+    def set_source(self, text):
+        self.source_lbl.config(text=text)
+
+    def set_result_labels(self, first, second, unit, final_label="Max"):
+        """Relabel the result rows (PULL/PUSH, or FWD/RET until the direction is mapped)."""
+        for i in range(1, 4):
+            self.row_lbls[f"pull{i}"].config(text=f"{first}{i}")
+            self.row_lbls[f"push{i}"].config(text=f"{second}{i}")
+        for lbl in self.res_units:
+            lbl.config(text=unit)
+        self.max_lbl.config(text=final_label)
+        self.max_unit.config(text=unit)
+
+    def show_plc_channel(self, channel, meas, verdict, mapped, shared_cfg):
+        """Show one PLC channel's stored samples, final value and the overall verdict.
+
+        Positions 1-3 go in the result rows; the two extra windows are listed
+        separately. Values are raw PLC counts unless a force scale is set.
+        Means are not calculated here - the PLC's final value is shown instead.
+        """
+        roles = shared_cfg.get("direction_role") or {}
+        scale = float(shared_cfg.get("force_scale") or 0)
+        unit = (shared_cfg.get("force_unit") or "") if scale else "raw"
+
+        def fmt(v):
+            if v is None:
+                return NO_DATA
+            return f"{v * scale:.2f}" if scale else f"{v:d}"
+
+        if roles.get("forward") in ("pull", "push") and roles.get("return") in ("pull", "push") \
+                and roles["forward"] != roles["return"]:
+            first_dir = "forward" if roles["forward"] == "pull" else "return"
+            second_dir = "return" if first_dir == "forward" else "forward"
+            self.set_result_labels("PULL", "PUSH", unit, "Final")
+        else:
+            first_dir, second_dir = "forward", "return"
+            self.set_result_labels("FWD", "RET", unit, "Final")
+        samples = (meas or {}).get("samples", {}).get(channel, {})
+        for i in range(1, 4):
+            self.res[f"pull{i}"].config(text=fmt(samples.get(first_dir, {}).get(f"P{i}")))
+            self.res[f"push{i}"].config(text=fmt(samples.get(second_dir, {}).get(f"P{i}")))
+        self.res["pull_mean"].config(text=NO_DATA)
+        self.res["push_mean"].config(text=NO_DATA)
+        final = (meas or {}).get("finals", {}).get(channel)
+        self.res["max"].config(text=fmt(final))
+        self.judge.config(text=verdict, fg=theme.PASS if verdict == "OK" else theme.FAIL)
+        self.last_ok = None              # counted per part by the flow, not per panel
+        ch_ng = (meas or {}).get("channel_ng", {}).get(channel)
+        lo_hi = (meas or {}).get("limits", {}).get(channel)
+        extras = []
+        for d, tag in (("forward", "F"), ("return", "R")):
+            xs = samples.get(d, {})
+            extras.append(f"{tag} {fmt(xs.get('X1'))} / {fmt(xs.get('X2'))}")
+        who = f"PLC Channel {channel}" + ("" if mapped else " — cable not mapped")
+        limit = "" if ch_ng is None else f" · Ch{channel} limit {'NG' if ch_ng else 'OK'}"
+        rng = f" ({lo_hi[0]}..{lo_hi[1]})" if lo_hi else ""
+        self.set_source(f"Source: {who} · overall PLC verdict{limit}{rng}\n"
+                        f"Extra windows (+1000): {'   '.join(extras)}")
+        if meas is None:
+            self.set_source(f"Source: {who} · overall PLC verdict - stored samples could not be read")
+
+    def set_live_values(self, load, stroke, load_unit, stroke_unit):
+        for key, val, unit in (("load", load, load_unit), ("stroke", stroke, stroke_unit)):
+            if val is None:
+                self.live[key].config(text=NO_DATA)
+            elif isinstance(val, float):
+                self.live[key].config(text=f"{val:.2f}")
+            else:
+                self.live[key].config(text=str(val))
+            self.live_units[key].config(text=unit)
+        self.live["speed"].config(text=NO_DATA)
+
     def set_live(self, load=None, stroke=None, speed=None):
         for key, val, fmt in (("load", load, "{:.2f}"), ("stroke", stroke, "{:.2f}"), ("speed", speed, "{:.1f}")):
-            self.live[key].config(text="--" if val is None else fmt.format(val))
+            self.live[key].config(text=NO_DATA if val is None else fmt.format(val))
 
     def save_screen(self):
         """Save a PNG of this panel to ./screenshots."""
@@ -266,11 +374,15 @@ class CablePanel(tk.Frame):
 class TestConsolePage(tk.Frame):
     SIDES = (("select", "SELECT CABLE", "SL"), ("shift", "SHIFT CABLE", "SH"))
 
-    def __init__(self, master, settings, plc, loadcells):
+    def __init__(self, master, settings, plc, loadcells, simulator=None):
         super().__init__(master, bg=theme.BG)
         self.settings = settings
         self.plc = plc
         self.loadcells = loadcells
+        self.simulator = simulator
+        self.integration = effective_integration(settings, simulator)
+        self.shared = self.integration["mode"] == "shared_cycle"
+        self.monitor = None
         self._polling = False
         self._alive = True
         self._hold_until = 0.0
@@ -290,6 +402,8 @@ class TestConsolePage(tk.Frame):
 
         left = tk.Frame(body, bg=theme.BG)
         left.grid(row=0, column=0, sticky="nsew")
+        if self.shared:
+            self._build_plc_strip(left)      # left column only, so the side panel keeps its height
         panels = tk.Frame(left, bg=theme.BG)
         panels.pack(fill="both", expand=True, pady=(0, 6))
         self.panels = []
@@ -307,6 +421,11 @@ class TestConsolePage(tk.Frame):
         self.bind("<Destroy>", self._on_destroy)
         self.after(200, self._poll)
         self._load_model_list()
+        if self.shared:
+            self._start_shared_cycle()
+        else:
+            for n, p in enumerate(self.panels):
+                p.set_source(f"Source: serial loadcell L{n + 1} (live LOAD) · results: start/done handshake")
 
     # ------------------------------------------------------------ layout
     def _build_status_bar(self):
@@ -331,6 +450,161 @@ class TestConsolePage(tk.Frame):
         self.status = tk.Label(bar, text="System initialization", bg=FIELD_BG, fg="white", font=_font(11),
                                relief="solid", bd=1, padx=12, pady=5, anchor="w")
         self.status.pack(side="left", fill="x", expand=True, padx=16)
+
+    # ---------------------------------------------------- shared PLC cycle
+    def _build_plc_strip(self, parent):
+        """One line of live PLC cycle state above the cable panels."""
+        strip = tk.Frame(parent, bg="#10141b", highlightbackground=theme.BORDER, highlightthickness=1)
+        strip.pack(fill="x", pady=(0, 4))
+        self.plc_badge = tk.Label(strip, text="PLC", bg="#10141b", fg=theme.MUTED, font=_font(9, True), padx=8)
+        self.plc_badge.pack(side="left")
+        self.plc_strip = tk.Label(strip, text="Connecting…", bg="#10141b", fg="#c9d1dc", font=_font(9),
+                                  anchor="w")
+        self.plc_strip.pack(side="left", fill="x", expand=True)
+        self.plc_mode = tk.Label(strip, text="", bg="#10141b", fg=theme.MUTED, font=_font(8, True), padx=8)
+        self.plc_mode.pack(side="right")
+
+    def _start_shared_cycle(self):
+        shared = self.integration["shared"]
+        if self.simulator is not None:
+            backend = self.simulator
+            mapping_text = "simulator"
+        else:
+            mapping = ModbusMapping(shared.get("mapping"))
+            backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(shared.get("live_start_enabled")))
+            mapping_text = "map " + ("verified" if mapping.verified else "UNVERIFIED")
+        self.backend = backend
+        writes = lambda: bool(getattr(backend, "can_write", False))
+        tracker = CycleTracker(start_timeout=float(shared.get("start_timeout", 10.0)))
+        self.monitor = SharedCycleMonitor(backend, tracker, can_write=writes,
+                                          interval=float(shared.get("poll_interval", 0.25)))
+        self.flow = SharedCycleFlow(shared, self, self.monitor, writes)
+        mode = "SIMULATION · " if self.simulator is not None else ""
+        self.plc_mode.config(text=f"{mode}{mapping_text} · live start {'ON' if writes() else 'OFF'}",
+                             fg=theme.BUSY if self.simulator is not None else
+                             (theme.MUTED if writes() else theme.FAIL))
+        assign = panel_assignments(shared, "MT", "both")
+        roles = shared.get("direction_role") or {}
+        directions_mapped = {roles.get("forward"), roles.get("return")} == {"pull", "push"}
+        unit = (shared.get("force_unit") or "") if float(shared.get("force_scale") or 0) else "raw"
+        for p in self.panels:                      # labels say what is known, before the first result
+            if directions_mapped:
+                p.set_result_labels("PULL", "PUSH", unit, "Final")
+            else:
+                p.set_result_labels("FWD", "RET", unit, "Final")
+        for panel_idx, ch, mapped in assign:
+            self.panels[panel_idx].set_source(
+                f"Source: PLC Channel {ch}" + ("" if mapped else " — cable not mapped") + " · shared cycle")
+        self._live_assign = assign
+        self.monitor.start()
+        self.after(100, self._drain_monitor)
+
+    def _drain_monitor(self):
+        """UI thread: take what the monitor thread produced (it never touches Tk)."""
+        if not self._alive:
+            return
+        last = None
+        try:
+            while True:
+                snap, events = self.monitor.queue.get_nowait()
+                last = (snap,)
+                for ev in events:
+                    self.flow.on_event(ev)
+                    self.flow.on_global_event(ev)
+                    if ev.kind == "connected" and ev.data.get("stale_verdict"):
+                        self._set_status(f"PLC connected - a previous {ev.data['stale_verdict']} verdict is "
+                                         "still latched; it will not be used for the next part", theme.MUTED, 5)
+                    elif ev.kind == "counter_reset":
+                        self._set_status("PLC OK/NG counters were reset on the PLC", theme.MUTED, 5)
+        except _queue.Empty:
+            pass
+        if last is not None:
+            self._show_plc_snapshot(last[0])
+        self.after(100, self._drain_monitor)
+
+    def _show_plc_snapshot(self, s):
+        shared = self.integration["shared"]
+        if s is None:
+            self.plc_badge.config(fg=theme.FAIL)
+            self.plc_strip.config(text="PLC not reachable - monitoring paused, no results can be confirmed")
+            for panel_idx, _ch, _m in self._live_assign:
+                self.panels[panel_idx].set_live_values(None, None, "raw", "raw")
+            return
+        self.plc_badge.config(fg=theme.PASS if s.step == 0 else theme.UPDATE)
+        state = "RUNNING" if s.step else "IDLE"
+        verdict = s.verdict_bits or "—"
+        self.plc_strip.config(text=(
+            f"Step {s.step} {STEP_NAMES.get(s.step, '')} · {state} · Rep {s.rep_count}/{s.rep_target} · "
+            f"Ch1 {s.live[1]} · Ch2 {s.live[2]} · Pos {s.position} (raw) · "
+            f"latched {verdict} · PLC OK {s.ok_count} NG {s.ng_count} Total {s.total_count}"))
+        fscale = float(shared.get("force_scale") or 0)
+        pscale = float(shared.get("position_scale") or 0)
+        funit = (shared.get("force_unit") or "") if fscale else "raw"
+        punit = (shared.get("position_unit") or "") if pscale else "raw"
+        pos = s.position * pscale if pscale else s.position
+        for panel_idx, ch, _mapped in self._live_assign:
+            load = s.live[ch] * fscale if fscale else s.live[ch]
+            self.panels[panel_idx].set_live_values(load, pos, funit, punit)
+
+    # ---- callbacks used by plc.part_flow.SharedCycleFlow
+    def set_state(self, state):
+        self._set_flow(state)
+
+    def message(self, text, level="info"):
+        color = {"pass": theme.PASS, "fail": theme.FAIL, "busy": theme.BUSY, "info": theme.UPDATE}.get(level, "white")
+        self._set_status(text, color, hold=10 if level == "fail" else 4)
+
+    def clear_panels(self, indices):
+        for i in indices:
+            self.panels[i].reset_results()
+            self.panels[i].judge.config(text="TEST", fg=theme.BUSY)
+
+    def show_cycle(self, stage, assignments, ev):
+        meas = ev.data.get("measurements")
+        for panel_idx, ch, mapped in assignments:
+            self.panels[panel_idx].show_plc_channel(ch, meas, ev.data["verdict"], mapped,
+                                                    self.integration["shared"])
+
+    def part_done(self, record):
+        self.record_part(record)
+
+    def record_part(self, record):
+        """One confirmed part: production counters once, and one row in the Saved-to folder."""
+        self._roll_day()
+        c = self.counters
+        key = "ok" if record["verdict"] == "OK" else "ng"
+        c[f"{key}_day"] += 1
+        c[f"{key}_total"] += 1
+        c["complete"] += 1
+        for cable in record.get("cables", []):
+            c[f"saved_{cable}"] += 1
+        self._show_counters()
+        self._save_counters()
+        try:
+            self._append_result_row(record)
+        except Exception as exc:
+            self._set_status(f"Part counted, but the result file could not be written: {exc}", theme.FAIL, 10)
+
+    def _result_dir(self):
+        path = self.save_dir.get().strip() or "data"
+        if not os.path.isabs(path):
+            path = os.path.join(os.path.dirname(SCREENSHOT_DIR), path)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _append_result_row(self, record):
+        path = os.path.join(self._result_dir(), f"results_{datetime.date.today():%Y%m%d}.csv")
+        new = not os.path.exists(path)
+        stages = "; ".join(
+            f"{s['stage']}={s['verdict']} (PLC OK {s.get('ok_count')}/NG {s.get('ng_count')}, "
+            f"finals {s.get('finals')}, {s.get('evidence')})" for s in record["stages"])
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(["time", "model", "type", "label_select", "label_shift", "verdict", "verdict_basis",
+                            "stages"])
+            w.writerow([record["time"], record["model"], record["type"], record["label_select"],
+                        record["label_shift"], record["verdict"], record["verdict_basis"], stages])
 
     def _small_button(self, parent, text, command, bg="#e0e0e0", fg="black", width=12):
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=bg,
@@ -760,6 +1034,12 @@ class TestConsolePage(tk.Frame):
 
     def start_flow(self):
         """RUN: arm the flow for the loaded model's type."""
+        if self.shared:
+            t = self.settings["test"]
+            if self.flow.run(t["select"].get("model"), t.get("model_type", "")):
+                for e in self.scan_entries.values():
+                    e.delete(0, "end")
+            return
         if self._flow != "idle":
             self._set_status("A test is already in progress — press STOP to cancel it", theme.BUSY)
             return
@@ -781,6 +1061,9 @@ class TestConsolePage(tk.Frame):
 
     def stop_flow(self):
         """STOP: cancel the flow and tell the machine to stop (if configured)."""
+        if self.shared:
+            self.flow.stop()             # app flow only - no stop command is sent to the PLC
+            return
         if self._flow == "idle":
             self.plc_pulse("test_stop", "Test stop")
             return
@@ -798,6 +1081,14 @@ class TestConsolePage(tk.Frame):
         """A label was scanned (or typed + Enter) into the SELECT or SHIFT box."""
         label = self.scan_entries[key].get().strip()
         if not label:
+            return
+        if self.shared:
+            if self._flow == "mt_scan":
+                for e in self.scan_entries.values():
+                    if e.get().strip() != label:
+                        e.delete(0, "end")
+                        e.insert(0, label)
+            self.flow.scan(key, label)
             return
         state = self._flow
         if state == "at_scan_select" and key == "select":
@@ -961,6 +1252,8 @@ class TestConsolePage(tk.Frame):
     def _on_destroy(self, event):
         if event.widget is self:
             self._alive = False
+            if self.monitor:
+                self.monitor.stop()
 
     def _set_status(self, text, color="white", hold=3):
         """Show an action's message; polling won't overwrite it for `hold` seconds."""
@@ -979,8 +1272,8 @@ class TestConsolePage(tk.Frame):
     def _poll_worker(self):
         snapshot = {"missing": [], "sides": []}
         try:
-            if not self.plc.is_open:
-                snapshot["missing"].append("PLC")
+            if not self.plc.is_open and not self.shared:
+                snapshot["missing"].append("PLC")      # shared mode: the PLC strip shows it
             for i, (key, _t, _s) in enumerate(self.SIDES):
                 side = {"load": None, "lamps": {}}
                 lc = self.loadcells[i]
@@ -1008,7 +1301,8 @@ class TestConsolePage(tk.Frame):
         if not self._alive:
             return
         for i, side in enumerate(snap["sides"]):
-            self.panels[i].set_live(load=side["load"])
+            if not self.shared:                       # shared mode: the PLC monitor owns LOAD/STROKE
+                self.panels[i].set_live(load=side["load"])
             for name, (cv, dot) in self.lamps[i].items():
                 cv.itemconfig(dot, fill=LAMP_ON if side["lamps"].get(name) else LAMP_OFF)
         if time.monotonic() < self._hold_until:

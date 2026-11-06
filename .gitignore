@@ -13,3 +13,6 @@ screenshots/
 
 # Saved test data (Test Console "Saved to")
 data/
+
+# Test runs
+.pytest_cache/
