@@ -4,10 +4,9 @@ EOL and FeederCable testers: local MySQL, pure-Python driver).
 Connection settings are the constants below. Call init_database() once at
 start-up to create the database and tables.
 
-TBL_MODEL_MASTER holds one row per model, with the fields of the LabVIEW
-model sheet:
+TBL_MODEL_MASTER holds one row per model:
 
-    Model, Test Cable, Saved to, Date, Test Result,
+    Model, Part Number, Customer Name, ALC Code, PRN Template,
     Speed, Delay Time, Stroke, Position 1, Position 2, Position 3, LOAD (min ~ max)
 """
 
@@ -31,10 +30,10 @@ SCHEMA = f"""
     CREATE TABLE IF NOT EXISTS {TABLE} (
         ID INT AUTO_INCREMENT PRIMARY KEY,
         MM_MODEL VARCHAR(100) NOT NULL UNIQUE,
-        MM_TEST_CABLE VARCHAR(50),
-        MM_SAVED_TO VARCHAR(255),
-        MM_DATE DATETIME,
-        MM_TEST_RESULT VARCHAR(10),
+        MM_PART_NUMBER VARCHAR(100),
+        MM_CUSTOMER_NAME VARCHAR(255),
+        MM_ALC_CODE VARCHAR(100),
+        MM_PRN_TEMPLATE VARCHAR(255),
         MM_SPEED DECIMAL(10,2),
         MM_DELAY_TIME DECIMAL(10,2),
         MM_STROKE DECIMAL(10,2),
@@ -49,10 +48,10 @@ SCHEMA = f"""
 # Column, label, unit — in sheet order. Used by the Model Settings page.
 FIELDS = [
     ("MM_MODEL", "Model", ""),
-    ("MM_TEST_CABLE", "Test Cable", ""),
-    ("MM_SAVED_TO", "Saved to", ""),
-    ("MM_DATE", "Date", ""),
-    ("MM_TEST_RESULT", "Test Result", ""),
+    ("MM_PART_NUMBER", "Part Number", ""),
+    ("MM_CUSTOMER_NAME", "Customer Name", ""),
+    ("MM_ALC_CODE", "ALC Code", ""),
+    ("MM_PRN_TEMPLATE", "PRN Template", ""),
     ("MM_SPEED", "Speed", "mm/Sec"),
     ("MM_DELAY_TIME", "Delay Time", "Sec"),
     ("MM_STROKE", "Stroke", "mm"),
@@ -65,6 +64,17 @@ FIELDS = [
 COLUMNS = [c for c, _, _ in FIELDS]
 NUMERIC = {"MM_SPEED", "MM_DELAY_TIME", "MM_STROKE", "MM_POSITION_1", "MM_POSITION_2",
            "MM_POSITION_3", "MM_LOAD_MIN", "MM_LOAD_MAX"}
+
+# A table created by an earlier version is brought up to date by init_database:
+# missing columns are added, retired ones dropped.
+ADDED_COLUMNS = [
+    ("MM_PART_NUMBER", "VARCHAR(100) AFTER MM_MODEL"),
+    ("MM_CUSTOMER_NAME", "VARCHAR(255) AFTER MM_PART_NUMBER"),
+    ("MM_ALC_CODE", "VARCHAR(100) AFTER MM_CUSTOMER_NAME"),
+    ("MM_PRN_TEMPLATE", "VARCHAR(255) AFTER MM_ALC_CODE"),
+]
+RETIRED_COLUMNS = ["MM_TEST_CABLE", "MM_SAVED_TO", "MM_DATE", "MM_TEST_RESULT"]
+
 
 def available():
     return mysql is not None
@@ -106,15 +116,32 @@ def init_database():
         conn.close()
     with cursor(commit=True) as cur:
         cur.execute(SCHEMA)
+        _migrate(cur)
+
+
+def _migrate(cur):
+    """Bring a TBL_MODEL_MASTER made by an earlier version up to date."""
+    cur.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s", (DATABASE, TABLE))
+    existing = {r[0].upper() for r in cur.fetchall()}
+    for column, definition in ADDED_COLUMNS:
+        if column not in existing:
+            cur.execute(f"ALTER TABLE {TABLE} ADD COLUMN {column} {definition}")
+    for column in RETIRED_COLUMNS:
+        if column in existing:
+            cur.execute(f"ALTER TABLE {TABLE} DROP COLUMN {column}")
 
 
 # ------------------------------------------------------------------ models
+SEARCH_COLUMNS = ["MM_MODEL", "MM_PART_NUMBER", "MM_CUSTOMER_NAME", "MM_ALC_CODE"]
+
+
 def list_models(search=""):
     sql = f"SELECT ID, {', '.join(COLUMNS)} FROM {TABLE}"
     args = ()
     if search:
-        sql += " WHERE MM_MODEL LIKE %s OR MM_TEST_CABLE LIKE %s"
-        args = (f"%{search}%", f"%{search}%")
+        sql += " WHERE " + " OR ".join(f"{c} LIKE %s" for c in SEARCH_COLUMNS)
+        args = tuple(f"%{search}%" for _ in SEARCH_COLUMNS)
     sql += " ORDER BY MM_MODEL"
     with cursor(dictionary=True) as cur:
         cur.execute(sql, args)

@@ -1,15 +1,18 @@
 """Model Settings page — create, edit and delete rows of TBL_MODEL_MASTER.
 
-Left: the model list (searchable). Right: the selected model laid out like the
-LabVIEW model sheet — header fields, then "- Test Condition -". APPLY TO TEST
-CONSOLE copies the model's test conditions into the matching cable panel
-(SELECT CABLE or SHIFT CABLE).
+Left: the model list (searchable). Right: the selected model — Model, Part
+Number, Customer Name, ALC Code, PRN Template, then "- Test Condition -".
+APPLY → SELECT / APPLY → SHIFT copy the model's test conditions into that
+cable panel on the Test Console.
+
+PRN Template choices are the .prn label files in the prn_templates folder.
 
 Database calls run on a worker thread so a slow or missing MySQL server
 never freezes the window.
 """
 
 import datetime
+import os
 import threading
 import tkinter as tk
 from decimal import Decimal
@@ -21,13 +24,21 @@ from ..config import save_settings
 
 CARD_BG = theme.PANEL
 HEAD_BG = "#171c25"
-CABLES = ["SELECT CABLE", "SHIFT CABLE"]
-RESULTS = ["", "O.K", "N.G"]
+PRN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                       "prn_templates")
 
 # Model list columns: (db column, heading, width)
-LIST_COLS = [("MM_MODEL", "Model", 150), ("MM_TEST_CABLE", "Test Cable", 120),
-             ("MM_SPEED", "Speed", 55), ("MM_STROKE", "Stroke", 55),
-             ("LOAD", "LOAD (kgf)", 90), ("MM_DATE", "Date", 160), ("MM_TEST_RESULT", "Result", 55)]
+LIST_COLS = [("MM_MODEL", "Model", 130), ("MM_PART_NUMBER", "Part Number", 115),
+             ("MM_CUSTOMER_NAME", "Customer", 105), ("MM_ALC_CODE", "ALC Code", 75),
+             ("MM_PRN_TEMPLATE", "PRN Template", 145), ("LOAD", "LOAD (kgf)", 95)]
+
+
+def prn_templates():
+    """Names of the .prn label templates in the prn_templates folder."""
+    try:
+        return sorted(f for f in os.listdir(PRN_DIR) if f.lower().endswith(".prn"))
+    except FileNotFoundError:
+        return []
 
 
 def _fmt(v):
@@ -87,8 +98,10 @@ class ModelSettingsPage(tk.Frame):
         bar.pack(fill="x")
         self._label(bar, "Model Master", size=15).pack(side="left")
         self._label(bar, db.TABLE, fg=theme.MUTED, size=10).pack(side="left", padx=12, pady=(4, 0))
-        self.btn_apply = self._button(bar, "APPLY TO TEST CONSOLE", self.apply_to_console, theme.UPDATE)
-        self.btn_apply.pack(side="right", padx=(8, 0))
+        self._button(bar, "APPLY → SHIFT", lambda: self.apply_to_console("shift"), theme.UPDATE).pack(
+            side="right", padx=(8, 0))
+        self._button(bar, "APPLY → SELECT", lambda: self.apply_to_console("select"), theme.UPDATE).pack(
+            side="right", padx=(8, 0))
         self.btn_delete = self._button(bar, "DELETE", self.delete_model, theme.FAIL)
         self.btn_delete.pack(side="right", padx=(8, 0))
         self.btn_save = self._button(bar, "SAVE", self.save_model, theme.SAVE)
@@ -149,12 +162,13 @@ class ModelSettingsPage(tk.Frame):
             row += 1
 
         add("MM_MODEL", entry(20))
-        add("MM_TEST_CABLE", combo(CABLES))
-        add("MM_SAVED_TO", entry(20))
-        date = entry(20)
-        add("MM_DATE", date)
-        date.config(state="readonly")
-        add("MM_TEST_RESULT", combo(RESULTS, width=8))
+        add("MM_PART_NUMBER", entry(20))
+        add("MM_CUSTOMER_NAME", entry(20))
+        add("MM_ALC_CODE", entry(20))
+        prn = combo([], width=18)
+        # Re-list the folder each time the drop-down opens, so new files show up.
+        prn.config(postcommand=lambda: prn.config(values=[""] + prn_templates()))
+        add("MM_PRN_TEMPLATE", prn)
 
         self._label(form, "- Test Condition -", fg=theme.TITLE_FG, bold=True).grid(
             row=row, column=0, columnspan=3, sticky="w", pady=(12, 4))
@@ -197,8 +211,6 @@ class ModelSettingsPage(tk.Frame):
     def _read_form(self):
         row = {}
         for col, label, _ in db.FIELDS:
-            if col == "MM_DATE":
-                continue
             text = self.fields[col].get().strip()
             if col in db.NUMERIC:
                 if text == "":
@@ -215,7 +227,6 @@ class ModelSettingsPage(tk.Frame):
         if row["MM_LOAD_MIN"] is not None and row["MM_LOAD_MAX"] is not None \
                 and row["MM_LOAD_MIN"] > row["MM_LOAD_MAX"]:
             raise ValueError("LOAD min is above LOAD max")
-        row["MM_DATE"] = datetime.datetime.now().replace(microsecond=0)
         return row
 
     def new_model(self):
@@ -223,7 +234,6 @@ class ModelSettingsPage(tk.Frame):
         self.tree.selection_remove(self.tree.selection())
         defaults = self.settings["test"]["select"]
         values = {
-            "MM_TEST_CABLE": "SELECT CABLE", "MM_TEST_RESULT": "",
             "MM_SPEED": defaults["speed"], "MM_DELAY_TIME": defaults["delay"], "MM_STROKE": defaults["stroke"],
             "MM_POSITION_1": defaults["positions"][0], "MM_POSITION_2": defaults["positions"][1],
             "MM_POSITION_3": defaults["positions"][2],
@@ -300,7 +310,6 @@ class ModelSettingsPage(tk.Frame):
         except ValueError as exc:
             messagebox.showerror("Save Model", str(exc), parent=self)
             return
-        self._set_field("MM_DATE", row["MM_DATE"])
 
         def done(_):
             self._set_status(f"Saved {row['MM_MODEL']}", theme.PASS)
@@ -323,15 +332,14 @@ class ModelSettingsPage(tk.Frame):
 
         self._run(lambda: db.delete_model(model), f"Deleting {model}…", done)
 
-    def apply_to_console(self):
-        """Copy this model's test conditions into the matching Test Console panel."""
+    def apply_to_console(self, key):
+        """Copy this model's test conditions into the SELECT or SHIFT CABLE panel."""
         try:
             row = self._read_form()
         except ValueError as exc:
             messagebox.showerror("Apply", str(exc), parent=self)
             return
-        cable = row["MM_TEST_CABLE"] or "SELECT CABLE"
-        key = "shift" if cable == "SHIFT CABLE" else "select"
+        cable = "SHIFT CABLE" if key == "shift" else "SELECT CABLE"
         missing = [lbl for c, lbl, _ in db.FIELDS if c in db.NUMERIC and row[c] is None]
         if missing:
             messagebox.showerror("Apply", "Fill in: " + ", ".join(missing), parent=self)

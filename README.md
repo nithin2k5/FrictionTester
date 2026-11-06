@@ -38,22 +38,26 @@ Models are stored in MySQL table **`TBL_MODEL_MASTER`** (database `friction` on 
 server). The connection (host, port, user, password, database) is set at the top of
 `friction_tester/db.py`. The database and table are created automatically on first open.
 
-| Column | Sheet field |
+| Column | Field |
 |---|---|
 | `MM_MODEL` (unique) | Model |
-| `MM_TEST_CABLE` | Test Cable (SELECT CABLE / SHIFT CABLE) |
-| `MM_SAVED_TO` | Saved to |
-| `MM_DATE` | Date (set on SAVE) |
-| `MM_TEST_RESULT` | Test Result (O.K / N.G) |
+| `MM_PART_NUMBER` | Part Number |
+| `MM_CUSTOMER_NAME` | Customer Name |
+| `MM_ALC_CODE` | ALC Code |
+| `MM_PRN_TEMPLATE` | PRN Template — chosen from the `.prn` files in `prn_templates/` |
 | `MM_SPEED` | Speed, mm/Sec |
 | `MM_DELAY_TIME` | Delay Time, Sec |
 | `MM_STROKE` | Stroke, mm |
 | `MM_POSITION_1/2/3` | Position 1–3, mm |
 | `MM_LOAD_MIN`, `MM_LOAD_MAX` | LOAD min ~ max, kgf |
 
-The page lists models (searchable) on the left and edits the selected one on the right:
-NEW, SAVE (insert or update by model), DELETE, and **APPLY TO TEST CONSOLE**, which copies the
-model's test conditions into the SELECT or SHIFT CABLE panel and shows the model name there.
+A table made by an earlier version is updated automatically (new columns added, the old
+Test Cable / Saved to / Date / Test Result columns dropped).
+
+The page lists models (searchable by model, part number, customer or ALC code) on the left and
+edits the selected one on the right: NEW, SAVE (insert or update by model), DELETE, and
+**APPLY → SELECT / APPLY → SHIFT**, which copy the model's test conditions into that cable panel
+on the Test Console and show the model name there.
 
 ## COM Setting page
 
