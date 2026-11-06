@@ -7,16 +7,6 @@ from pathlib import Path
 SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 
 DEFAULT_SETTINGS = {
-    # Local MySQL, same conventions as the EOL / FeederCable testers. Set the
-    # password in your local settings.json (git-ignored) or the
-    # FRICTION_DB_PASSWORD environment variable — never in this file.
-    "database": {
-        "host": "localhost",
-        "port": 3306,
-        "user": "root",
-        "password": "",
-        "database": "friction",
-    },
     # LS XGB over RS232, Modbus RTU
     "plc": {
         "port": "",

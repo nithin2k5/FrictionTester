@@ -35,10 +35,8 @@ The automatic test sequence (recording PULL/PUSH) is not implemented yet;
 ## Model Settings
 
 Models are stored in MySQL table **`TBL_MODEL_MASTER`** (database `friction` on the local MySQL
-server, user `root` by default). Put the MySQL password in your local `settings.json` under
-`"database": {"password": "..."}` (the file is git-ignored) or in the `FRICTION_DB_PASSWORD`
-environment variable — not in the code. The database and table are created automatically on
-first open.
+server). The connection (host, port, user, password, database) is set at the top of
+`friction_tester/db.py`. The database and table are created automatically on first open.
 
 | Column | Sheet field |
 |---|---|

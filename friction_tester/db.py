@@ -1,8 +1,8 @@
 """MySQL access for the Friction Tester (same server conventions as the
 EOL and FeederCable testers: local MySQL, pure-Python driver).
 
-Connection settings come from settings.json -> "database". Call
-init_database() once at start-up to create the database and tables.
+Connection settings are the constants below. Call init_database() once at
+start-up to create the database and tables.
 
 TBL_MODEL_MASTER holds one row per model, with the fields of the LabVIEW
 model sheet:
@@ -11,7 +11,6 @@ model sheet:
     Speed, Delay Time, Stroke, Position 1, Position 2, Position 3, LOAD (min ~ max)
 """
 
-import os
 from contextlib import contextmanager
 
 try:
@@ -19,15 +18,12 @@ try:
 except ImportError:  # pragma: no cover - reported in the UI
     mysql = None
 
-# No password in the code: put it in settings.json -> database.password
-# (git-ignored) or the FRICTION_DB_PASSWORD environment variable.
-DEFAULTS = {
-    "host": "localhost",
-    "port": 3306,
-    "user": "root",
-    "password": "",
-    "database": "friction",
-}
+# Database connection
+HOST = "localhost"
+PORT = 3306
+USER = "root"
+PASSWORD = "root"
+DATABASE = "friction"
 
 TABLE = "TBL_MODEL_MASTER"
 
@@ -70,19 +66,6 @@ COLUMNS = [c for c, _, _ in FIELDS]
 NUMERIC = {"MM_SPEED", "MM_DELAY_TIME", "MM_STROKE", "MM_POSITION_1", "MM_POSITION_2",
            "MM_POSITION_3", "MM_LOAD_MIN", "MM_LOAD_MAX"}
 
-_settings = dict(DEFAULTS)
-
-
-def configure(cfg):
-    """Use these connection settings (from settings.json) from now on.
-
-    An empty password falls back to the FRICTION_DB_PASSWORD environment variable.
-    """
-    _settings.update({k: cfg[k] for k in DEFAULTS if k in cfg})
-    if not _settings["password"]:
-        _settings["password"] = os.environ.get("FRICTION_DB_PASSWORD", "")
-
-
 def available():
     return mysql is not None
 
@@ -90,9 +73,10 @@ def available():
 def _connect(with_database=True):
     if mysql is None:
         raise RuntimeError("mysql-connector-python is not installed (pip install mysql-connector-python)")
-    args = dict(_settings, use_pure=True, connection_timeout=5)
-    if not with_database:
-        args.pop("database")
+    args = {"host": HOST, "port": PORT, "user": USER, "password": PASSWORD,
+            "use_pure": True, "connection_timeout": 5}
+    if with_database:
+        args["database"] = DATABASE
     return mysql.connector.connect(**args)
 
 
@@ -116,7 +100,7 @@ def init_database():
     conn = _connect(with_database=False)
     try:
         cur = conn.cursor()
-        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{_settings['database']}`")
+        cur.execute(f"CREATE DATABASE IF NOT EXISTS `{DATABASE}`")
         cur.close()
     finally:
         conn.close()

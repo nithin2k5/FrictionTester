@@ -47,7 +47,6 @@ class ModelSettingsPage(tk.Frame):
         self.settings = settings
         self._alive = True
         self.bind("<Destroy>", lambda e: setattr(self, "_alive", False) if e.widget is self else None)
-        db.configure(settings["database"])
 
         self._build_toolbar()
         body = tk.Frame(self, bg=theme.BG)
