@@ -622,17 +622,29 @@ class TestConsolePage(tk.Frame):
     # ------------------------------------------------------- model set
     def _load_model_list(self):
         """Fill the Model Set list from TBL_MODEL_MASTER (on a worker thread)."""
+        # The page is built before the Tk main loop starts, so the worker
+        # must not call Tk itself; it leaves the result here and the main
+        # thread picks it up.
+        result = {}
+
         def worker():
             try:
                 from .. import db
                 db.init_database()
-                rows, error = db.list_models(), None
+                result["rows"], result["error"] = db.list_models(), None
             except Exception as exc:
-                rows, error = [], exc
-            if self._alive:
-                self.after(0, lambda: self._show_model_list(rows, error))
+                result["rows"], result["error"] = [], exc
+
+        def collect():
+            if not self._alive:
+                return
+            if "rows" in result:
+                self._show_model_list(result["rows"], result["error"])
+            else:
+                self.after(100, collect)
 
         threading.Thread(target=worker, daemon=True).start()
+        self.after(100, collect)
 
     def _show_model_list(self, rows, error):
         if not self._alive:

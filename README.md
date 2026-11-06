@@ -71,7 +71,15 @@ old Test Cable / Saved to / Date / Test Result columns are dropped.
 The top of the page has three boxes — Model Information, SELECT CABLE and SHIFT CABLE (each
 condition laid out like the Test Console: Speed / Delay / Stroke beside Position 1–3, LOAD
 underneath). The model list is below, searchable by model, part number, customer or ALC code.
-Click a row to edit it; NEW, SAVE (insert or update by model) and DELETE are in the toolbar.
+Empty values show as `-` and are stored as NULL.
+
+Buttons:
+- On opening, the form is locked and only **NEW** is available.
+- **NEW** clears and unlocks the form. **SAVE** adds the model; if that model name already exists
+  it asks before overwriting.
+- Clicking a model in the list opens it for editing (the Model name is locked — it is the key).
+  **SAVE** updates it, **DELETE** removes it (with confirmation) and locks the form again.
+- All buttons are disabled while a database operation is running.
 
 ## COM Setting page
 

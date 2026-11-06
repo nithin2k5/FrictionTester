@@ -74,7 +74,13 @@ class ModelSettingsPage(tk.Frame):
         self.status = tk.Label(self, text="", bg=theme.BG, fg=theme.MUTED, font=(theme.FONT, 10), anchor="w")
         self.status.pack(fill="x", pady=(6, 0))
 
-        self.new_model()
+        # Form mode: "idle" (locked, nothing selected), "new" (adding a model)
+        # or "edit" (the selected model; its name is the key, so it's locked).
+        self._mode = "idle"
+        self._editing = None      # model name being edited
+        self._busy = False
+        self._clear_form()
+        self._apply_mode()
         self._run(self._init_and_load, "Connecting to database…", self._show_models)
 
     # ============================================================ layout
@@ -90,7 +96,8 @@ class ModelSettingsPage(tk.Frame):
     def _entry(self, parent, width, justify="left", placeholder=True):
         e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify=justify,
                      font=(theme.FONT, 11), width=width, bd=1, relief="solid",
-                     highlightbackground=theme.BORDER, highlightthickness=1)
+                     highlightbackground=theme.BORDER, highlightthickness=1,
+                     disabledbackground="#151920", disabledforeground="#8a93a3")
         if placeholder:
             # Typing replaces the "-" (text is selected on focus); a box left
             # empty shows "-" again.
@@ -120,9 +127,12 @@ class ModelSettingsPage(tk.Frame):
         bar.pack(fill="x")
         self._label(bar, "Model Master", size=15).pack(side="left")
         self._label(bar, db.TABLE, fg=theme.MUTED, size=10).pack(side="left", padx=12, pady=(4, 0))
-        self._button(bar, "DELETE", self.delete_model, theme.FAIL).pack(side="right", padx=(8, 0))
-        self._button(bar, "SAVE", self.save_model, theme.SAVE).pack(side="right", padx=(8, 0))
-        self._button(bar, "NEW", self.new_model, "#4a505c").pack(side="right", padx=(8, 0))
+        self.btn_delete = self._button(bar, "DELETE", self.delete_model, theme.FAIL)
+        self.btn_delete.pack(side="right", padx=(8, 0))
+        self.btn_save = self._button(bar, "SAVE", self.save_model, theme.SAVE)
+        self.btn_save.pack(side="right", padx=(8, 0))
+        self.btn_new = self._button(bar, "NEW", self.new_model, "#4a505c")
+        self.btn_new.pack(side="right", padx=(8, 0))
 
     def _section(self, parent, title, subtitle):
         """A bordered box with a title strip; returns (box, body)."""
@@ -229,11 +239,30 @@ class ModelSettingsPage(tk.Frame):
     # ============================================================ form data
     def _set_field(self, col, value):
         w = self.fields[col]
+        state = str(w.cget("state"))
+        w.config(state="normal")          # a disabled widget ignores set/insert
         if isinstance(w, ttk.Combobox):
             w.set(_fmt(value))
         else:
             w.delete(0, "end")
             w.insert(0, _fmt(value))
+        w.config(state=state)
+
+    def _clear_form(self):
+        for col in db.COLUMNS:
+            self._set_field(col, None)
+
+    def _apply_mode(self):
+        """Lock/unlock the form and enable only the buttons that make sense."""
+        mode, busy = self._mode, self._busy
+        for col, w in self.fields.items():
+            if mode == "idle" or (mode == "edit" and col == "MM_MODEL"):
+                w.config(state="disabled")
+            else:
+                w.config(state="readonly" if isinstance(w, ttk.Combobox) else "normal")
+        self.btn_new.config(state="disabled" if busy else "normal")
+        self.btn_save.config(state="normal" if mode in ("new", "edit") and not busy else "disabled")
+        self.btn_delete.config(state="normal" if mode == "edit" and not busy else "disabled")
 
     def _read_form(self):
         row = {}
@@ -260,23 +289,35 @@ class ModelSettingsPage(tk.Frame):
         return row
 
     def new_model(self):
-        """Clear the form: every field shows "-" until it is filled in."""
+        """NEW: an empty, unlocked form for a new model (every field shows "-")."""
         self.tree.selection_remove(self.tree.selection())
-        for col in db.COLUMNS:
-            self._set_field(col, None)
+        self._mode, self._editing = "new", None
+        self._apply_mode()
+        self._clear_form()
         self.fields["MM_MODEL"].focus_set()
+        self._set_status("New model: fill in the fields and press SAVE", theme.MUTED)
 
     def _on_select(self):
+        """Clicking a model opens it for editing."""
         sel = self.tree.selection()
-        if sel and sel[0] in self._rows:
-            row = self._rows[sel[0]]
-            for col in db.COLUMNS:
-                self._set_field(col, row.get(col))
+        if not sel or sel[0] not in self._rows or self._busy:
+            return
+        row = self._rows[sel[0]]
+        self._mode, self._editing = "edit", row["MM_MODEL"]
+        self._apply_mode()
+        for col in db.COLUMNS:
+            self._set_field(col, row.get(col))
 
     # ============================================================ database
     def _run(self, work, busy_text, done=None):
-        """Run work() on a thread; done(result) back on the Tk thread."""
+        """Run work() on a thread; done(result) back on the Tk thread.
+
+        Buttons are disabled while it runs, so a slow database can't be
+        sent the same action twice.
+        """
         self._set_status(busy_text, theme.BUSY)
+        self._busy = True
+        self._apply_mode()
 
         def worker():
             try:
@@ -291,6 +332,8 @@ class ModelSettingsPage(tk.Frame):
     def _finish(self, result, error, done):
         if not self._alive:
             return
+        self._busy = False
+        self._apply_mode()
         if error is not None:
             self._set_status(f"Database error: {error}", theme.FAIL)
             return
@@ -328,29 +371,52 @@ class ModelSettingsPage(tk.Frame):
         self._search_job = self.after(300, self.refresh)
 
     def save_model(self):
+        """SAVE: add the new model, or update the one being edited."""
+        if self._mode not in ("new", "edit"):
+            return
         try:
             row = self._read_form()
         except ValueError as exc:
             messagebox.showerror("Save Model", str(exc), parent=self)
             return
+        model = row["MM_MODEL"]
 
-        def done(_):
-            self._set_status(f"Saved {row['MM_MODEL']}", theme.PASS)
-            self.refresh(select=row["MM_MODEL"])
+        def saved(_):
+            self._set_status(f"Saved {model}", theme.PASS)
+            self.refresh(select=model)        # selecting it reopens it for editing
 
-        self._run(lambda: db.save_model(row), f"Saving {row['MM_MODEL']}…", done)
+        def write():
+            self._run(lambda: db.save_model(row), f"Saving {model}…", saved)
+
+        if self._mode == "edit":
+            write()
+            return
+
+        # New model: don't silently overwrite one that already exists.
+        def checked(existing):
+            if existing and not messagebox.askyesno(
+                    "Save Model", f"Model {model} already exists.\nOverwrite it with these values?", parent=self):
+                self._set_status(f"{model} not saved", theme.MUTED)
+                return
+            write()
+
+        self._run(lambda: db.get_model(model), f"Checking {model}…", checked)
 
     def delete_model(self):
-        model = self.fields["MM_MODEL"].get().strip()
-        if not model:
+        """DELETE: remove the model being edited (the selected one)."""
+        model = self._editing
+        if self._mode != "edit" or not model:
             return
         if not messagebox.askyesno("Delete Model", f"Delete model {model} from {db.TABLE}?", parent=self):
             return
 
         def done(count):
+            self.tree.selection_remove(self.tree.selection())
+            self._mode, self._editing = "idle", None
+            self._apply_mode()
+            self._clear_form()
+            self.refresh()
             self._set_status(f"Deleted {model}" if count else f"{model} was not in the table",
                              theme.PASS if count else theme.MUTED)
-            self.new_model()
-            self.refresh()
 
         self._run(lambda: db.delete_model(model), f"Deleting {model}…", done)
