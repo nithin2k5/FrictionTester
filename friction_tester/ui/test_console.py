@@ -738,8 +738,9 @@ class TestConsolePage(tk.Frame):
         self.target.configure(validate="key", validatecommand=(digits_only, "%P"))
         if c.get("target"):
             self.target.insert(0, str(c["target"]))
-        self.target.bind("<FocusOut>", lambda _e: self._save_counters())
-        self.target.bind("<Return>", lambda _e: self._save_counters())
+        self.target.bind("<Return>", lambda _e: self.set_target())
+        self.target.bind("<KP_Enter>", lambda _e: self.set_target())
+        self.target.bind("<FocusOut>", lambda _e: self._discard_target_edit())
         self.target.pack(pady=(2, 0), padx=6, fill="x")
         tk.Label(tgt, text="TARGET", bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 3))
         t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], "#4fa3ff", size=16)
@@ -1035,9 +1036,35 @@ class TestConsolePage(tk.Frame):
     def _first_scan_state(self):
         return "mt_scan" if self.settings["test"].get("model_type") == "MT" else "at_scan_select"
 
+    def set_target(self):
+        """Enter in the Target box: store the typed target."""
+        text = self.target.get().strip()
+        value = int(text) if text.isdigit() else 0
+        if value <= 0:
+            self._set_status("Target must be a whole number above 0", theme.FAIL, hold=5)
+            return "break"
+        self.counters["target"] = value
+        self._save_counters()
+        self._set_status(f"Target set: {value}", theme.PASS, hold=4)
+        # brief green outline to confirm, then hand the focus back to the page
+        self.target.config(highlightbackground=theme.PASS, highlightcolor=theme.PASS)
+        self.after(900, lambda: self.target.config(highlightbackground=self.TILE, highlightcolor=theme.UPDATE)
+                   if self._alive else None)
+        self.focus_set()
+        return "break"
+
+    def _discard_target_edit(self):
+        """Leaving the box without Enter: show the stored target again."""
+        stored = self.counters.get("target", 0)
+        shown = self.target.get().strip()
+        if shown != (str(stored) if stored else ""):
+            self.target.delete(0, "end")
+            if stored:
+                self.target.insert(0, str(stored))
+            self._set_status("Target not changed: type the number and press Enter to set it", theme.BUSY, hold=5)
+
     def _target_is_set(self):
         """RUN needs a production target. Warn with a pop-up when it is missing."""
-        self._save_counters()
         if self.counters.get("target", 0) > 0:
             return True
         messagebox.showwarning("Target not set",
@@ -1223,8 +1250,7 @@ class TestConsolePage(tk.Frame):
         self._draw_progress()
 
     def _save_counters(self):
-        target = self.target.get().strip()
-        self.counters["target"] = int(target) if target.isdigit() else 0
+        # The target is only changed by set_target() (Enter in the Target box).
         self._draw_progress()
         self.settings["test"]["save_dir"] = self.save_dir.get().strip() or "data"
         save_settings(self.settings)
