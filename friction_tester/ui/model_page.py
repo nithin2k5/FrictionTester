@@ -28,7 +28,9 @@ PRN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
                        "prn_templates")
 
 # Model list columns: (key, heading, width). SELECT / SHIFT show a condition summary.
-LIST_COLS = [("MM_MODEL", "Model", 150), ("MM_PART_NUMBER", "Part Number", 130),
+MODEL_TYPES = ["", "MT", "AT"]      # blank = not set
+
+LIST_COLS = [("MM_MODEL", "Model", 150), ("MM_TYPE", "Type", 60), ("MM_PART_NUMBER", "Part Number", 130),
              ("MM_CUSTOMER_NAME", "Customer", 130), ("MM_ALC_CODE", "ALC Code", 90),
              ("MM_PRN_TEMPLATE", "PRN Template", 170)] + [
     (key, name, 230) for key, name in db.TESTS]
@@ -152,9 +154,11 @@ class ModelSettingsPage(tk.Frame):
                 w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly")
                 # Re-list the folder each time the drop-down opens, so new files show up.
                 w.config(postcommand=lambda w=w: w.config(values=[""] + prn_templates()))
+            elif col == "MM_TYPE":
+                w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly", values=MODEL_TYPES, width=8)
             else:
                 w = self._entry(body, 20)
-            w.grid(row=r, column=1, sticky="ew", padx=(12, 0), pady=3)
+            w.grid(row=r, column=1, sticky="w" if col == "MM_TYPE" else "ew", padx=(12, 0), pady=3)
             self.fields[col] = w
         return box
 

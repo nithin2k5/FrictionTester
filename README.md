@@ -59,6 +59,7 @@ server). The connection (host, port, user, password, database) is set at the top
 | Column | Field |
 |---|---|
 | `MM_MODEL` (unique) | Model |
+| `MM_TYPE` | Type — MT or AT (drop-down) |
 | `MM_PART_NUMBER` | Part Number |
 | `MM_CUSTOMER_NAME` | Customer Name |
 | `MM_ALC_CODE` | ALC Code |

@@ -6,7 +6,7 @@ start-up to create the database and tables.
 
 TBL_MODEL_MASTER holds one row per model:
 
-    Model, Part Number, Customer Name, ALC Code, PRN Template,
+    Model, Type (MT / AT), Part Number, Customer Name, ALC Code, PRN Template,
     then the test conditions of the two tests, SELECT CABLE and SHIFT CABLE,
     with the same attributes — Speed, Delay Time, Stroke, Position 1-3,
     LOAD (min ~ max) — as MM_SELECT_<attr> and MM_SHIFT_<attr>.
@@ -31,6 +31,7 @@ TABLE = "TBL_MODEL_MASTER"
 # Model details: (column, label, SQL type)
 HEADER_FIELDS = [
     ("MM_MODEL", "Model", "VARCHAR(100) NOT NULL UNIQUE"),
+    ("MM_TYPE", "Type", "VARCHAR(10)"),                 # MT / AT
     ("MM_PART_NUMBER", "Part Number", "VARCHAR(100)"),
     ("MM_CUSTOMER_NAME", "Customer Name", "VARCHAR(255)"),
     ("MM_ALC_CODE", "ALC Code", "VARCHAR(100)"),
