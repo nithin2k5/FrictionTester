@@ -2,6 +2,11 @@
 
 USB-6210: 16 single-ended / 8 differential AI, 16-bit, 250 kS/s aggregate,
 input ranges ±10, ±5, ±1, ±0.2 V. No analog outputs.
+
+Pins per channel n:
+    Differential  AI n (+) and AI n+8 (-)    n = 0..7   e.g. ai0 -> AI0 / AI8
+    RSE           AI n against AI GND        n = 0..15
+    NRSE          AI n against AI SENSE      n = 0..15
 """
 
 try:
@@ -11,10 +16,25 @@ try:
 except ImportError:  # pragma: no cover - reported in the UI
     nidaqmx = None
 
-AI_CHANNELS = [f"ai{i}" for i in range(16)]
 TERMINAL_CONFIGS = ["Differential", "RSE", "NRSE"]
 VOLTAGE_RANGES = {"±10 V": 10.0, "±5 V": 5.0, "±1 V": 1.0, "±0.2 V": 0.2}
 MAX_AGGREGATE_RATE = 250_000.0
+
+
+def channels_for(terminal_config):
+    """Channels that exist in this wiring mode."""
+    count = 8 if terminal_config == "Differential" else 16
+    return [f"ai{i}" for i in range(count)]
+
+
+def pins_for(channel, terminal_config):
+    """The screw-terminal signals a channel uses, e.g. 'AI0+ / AI8−'."""
+    n = int(channel[2:])
+    if terminal_config == "Differential":
+        return f"AI{n}+ / AI{n + 8}−"
+    if terminal_config == "NRSE":
+        return f"AI{n} / AI SENSE"
+    return f"AI{n} / AI GND"
 
 
 def parse_channels(text):
@@ -47,6 +67,7 @@ class NIDaq:
     def __init__(self):
         self._task = None
         self._cfg = None
+        self._channels = []
 
     @staticmethod
     def available():
@@ -68,56 +89,57 @@ class NIDaq:
         return self._task is not None
 
     def connect(self, cfg):
+        """Create a finite-sample task.
+
+        cfg: device, terminal_config, sample_rate, samples_per_channel and
+        channels = [{"channel": "ai0", "range": "±10 V"}, ...]. A channel
+        listed twice is read once (first range wins).
+        """
         if nidaqmx is None:
             raise RuntimeError("nidaqmx is not installed (pip install nidaqmx)")
         if not cfg["device"]:
             raise ValueError("Select a DAQ device")
-        channels = cfg["channels"]
-        if not channels:
+        specs, seen = [], set()
+        for spec in cfg["channels"]:
+            if spec["channel"] not in seen:
+                seen.add(spec["channel"])
+                specs.append(spec)
+        if not specs:
             raise ValueError("Select at least one AI channel")
 
+        terminal = cfg["terminal_config"]
+        valid = channels_for(terminal)
+        bad = [s["channel"] for s in specs if s["channel"] not in valid]
+        if bad:
+            raise ValueError(f"{', '.join(bad)} not available in {terminal} mode "
+                             f"({valid[0]}–{valid[-1]})")
         rate = float(cfg["sample_rate"])
-        if rate <= 0 or rate * len(channels) > MAX_AGGREGATE_RATE:
-            raise ValueError(
-                f"Sample rate × channels must be ≤ {MAX_AGGREGATE_RATE:,.0f} S/s "
-                f"(got {rate * len(channels):,.0f})"
-            )
-        if cfg["terminal_config"] == "Differential":
-            bad = [c for c in channels if int(c[2:]) >= 8]
-            if bad:
-                raise ValueError(
-                    "Differential mode uses ai0–ai7 only (ai8–ai15 are their negative inputs): "
-                    + ", ".join(bad)
-                )
+        if rate <= 0 or rate * len(specs) > MAX_AGGREGATE_RATE:
+            raise ValueError(f"Sample rate × channels must be ≤ {MAX_AGGREGATE_RATE:,.0f} S/s "
+                             f"(got {rate * len(specs):,.0f})")
 
         self.disconnect()
         term = {
             "Differential": TerminalConfiguration.DIFF,
             "RSE": TerminalConfiguration.RSE,
             "NRSE": TerminalConfiguration.NRSE,
-        }[cfg["terminal_config"]]
-        vmax = VOLTAGE_RANGES[cfg["voltage_range"]]
-
+        }[terminal]
         task = nidaqmx.Task()
         try:
-            for ch in channels:
+            for spec in specs:
+                vmax = VOLTAGE_RANGES[spec["range"]]
                 task.ai_channels.add_ai_voltage_chan(
-                    f"{cfg['device']}/{ch}",
-                    terminal_config=term,
-                    min_val=-vmax,
-                    max_val=vmax,
-                )
+                    f"{cfg['device']}/{spec['channel']}", terminal_config=term,
+                    min_val=-vmax, max_val=vmax)
             task.timing.cfg_samp_clk_timing(
-                rate,
-                sample_mode=AcquisitionType.FINITE,
-                samps_per_chan=int(cfg["samples_per_channel"]),
-            )
+                rate, sample_mode=AcquisitionType.FINITE,
+                samps_per_chan=int(cfg["samples_per_channel"]))
             task.control(nidaqmx.constants.TaskMode.TASK_VERIFY)
         except Exception:
             task.close()
             raise
-        self._task = task
-        self._cfg = dict(cfg)
+        self._task, self._cfg = task, dict(cfg)
+        self._channels = [s["channel"] for s in specs]
 
     def disconnect(self):
         if self._task is not None:
@@ -134,7 +156,6 @@ class NIDaq:
         timeout = n / float(self._cfg["sample_rate"]) + 2.0
         data = self._task.read(number_of_samples_per_channel=n, timeout=timeout)
         self._task.stop()
-        channels = self._cfg["channels"]
-        if len(channels) == 1:
+        if len(self._channels) == 1:
             data = [data]
-        return {ch: sum(vals) / len(vals) for ch, vals in zip(channels, data)}
+        return {ch: sum(vals) / len(vals) for ch, vals in zip(self._channels, data)}

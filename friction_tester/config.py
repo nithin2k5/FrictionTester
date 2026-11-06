@@ -36,13 +36,20 @@ DEFAULT_SETTINGS = {
                   "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
                   "front_sensor": "P0002", "rear_sensor": "P0003"},
     },
+    # NI USB-6210: one entry per analog sensor. In Differential mode channel
+    # aiN uses pins AIN (+) and AI(N+8) (-), e.g. Loadcell 1 on AI0 / AI8.
+    # value = (volts - offset_v) * scale  -> shown in `unit`.
     "daq": {
         "device": "",
-        "channels": ["ai0"],
         "terminal_config": "Differential",
-        "voltage_range": "±10 V",
         "sample_rate": 1000.0,
         "samples_per_channel": 100,
+        "sensors": [
+            {"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "kgf"},
+            {"name": "Loadcell 2", "channel": "ai1", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "kgf"},
+            {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "mm"},
+            {"name": "LVDT 2", "channel": "ai3", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "mm"},
+        ],
     },
 }
 

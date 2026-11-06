@@ -21,7 +21,6 @@ from ..devices import loadcell, ni_daq, plc_xgb
 
 # Shared column widths so every card's rows line up with the others.
 COLS = (("Device", 145), ("COM Port", 130), ("Baud Rate", 105), ("ID", 84), ("", 268), ("Status", 0))
-DAQ_COLS = (("Device", 145), ("AI Channels", 130), ("Terminal", 105), ("Range", 84), ("", 268), ("Status", 0))
 
 CARD_BG = theme.PANEL
 HEAD_BG = "#171c25"
@@ -439,88 +438,138 @@ class ComPortPage(tk.Frame):
     # ================================================================ DAQ
     def _build_daq_card(self, parent):
         cfg = self.settings["daq"]
-        body = self._card(parent, "NI DAQ", "NI USB-6210  ·  USB  ·  16-bit analog input")
-        self._table_header(body, DAQ_COLS)
+        body = self._card(parent, "NI DAQ", "NI USB-6210  ·  USB  ·  analog inputs for loadcells and LVDTs")
 
-        def device_cell(p):
-            self.cb_daq_dev = self._combo(p, [], cfg["device"])
-            return self.cb_daq_dev
-
-        def actions(p):
-            f = tk.Frame(p, bg=p["bg"])
-            self.btn_daq_test = self._button(f, "TEST", self.test_daq)
-            self.btn_daq_test.pack(side="left")
-            return f
-
-        # The device name goes in the first column's place, so it gets a combo.
-        row = tk.Frame(body, bg=ROW_BG)
-        row.pack(fill="x", pady=2)
-        self._cols(row, DAQ_COLS)
-        device_cell(row).grid(row=0, column=0, sticky="w", padx=(8, 0), pady=4)
-        self.cb_daq_dev.config(width=10)
-        self.ent_daq_ch = self._entry(row, ", ".join(cfg["channels"]), width=14)
-        self.ent_daq_ch.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        self.cb_daq_term = self._combo(row, ni_daq.TERMINAL_CONFIGS, cfg["terminal_config"], width=9)
-        self.cb_daq_term.grid(row=0, column=2, sticky="w", padx=(8, 0))
-        self.cb_daq_range = self._combo(row, list(ni_daq.VOLTAGE_RANGES), cfg["voltage_range"], width=5)
-        self.cb_daq_range.grid(row=0, column=3, sticky="w", padx=(8, 0))
-        actions(row).grid(row=0, column=4, sticky="w", padx=(8, 0))
-        self.daq_status = StatusPill(row)
-        self.daq_status.grid(row=0, column=5, sticky="w", padx=(8, 0))
-        self.daq_status.set("idle", "Not tested")
-
-        tools = tk.Frame(body, bg=CARD_BG)
-        tools.pack(fill="x", pady=(8, 0))
-        self._label(tools, "Sample rate", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(8, 6))
-        self.ent_daq_rate = self._entry(tools, f"{cfg['sample_rate']:g}", width=8, justify="center")
+        # Device-wide settings
+        top = tk.Frame(body, bg=CARD_BG)
+        top.pack(fill="x", pady=(0, 6))
+        self._label(top, "Device", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(8, 6))
+        self.cb_daq_dev = self._combo(top, [], cfg["device"], width=10)
+        self.cb_daq_dev.pack(side="left")
+        self._label(top, "Wiring", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(16, 6))
+        self.cb_daq_term = self._combo(top, ni_daq.TERMINAL_CONFIGS, cfg["terminal_config"], width=10)
+        self.cb_daq_term.pack(side="left")
+        self.cb_daq_term.bind("<<ComboboxSelected>>", lambda _e: self._on_terminal_change())
+        self._label(top, "Rate", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(16, 6))
+        self.ent_daq_rate = self._entry(top, f"{cfg['sample_rate']:g}", width=7, justify="center")
         self.ent_daq_rate.pack(side="left")
-        self._label(tools, "S/s", fg=theme.MUTED, size=9).pack(side="left", padx=(4, 0))
-        self._label(tools, "Samples / ch", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(20, 6))
-        self.ent_daq_samples = self._entry(tools, cfg["samples_per_channel"], width=6, justify="center")
+        self._label(top, "S/s", fg=theme.MUTED, size=9).pack(side="left", padx=(3, 0))
+        self._label(top, "Samples", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(16, 6))
+        self.ent_daq_samples = self._entry(top, cfg["samples_per_channel"], width=5, justify="center")
         self.ent_daq_samples.pack(side="left")
-        self._label(tools, "Channels: ai0, ai2 or ai0-ai3", fg=theme.MUTED, size=9).pack(side="left", padx=(20, 0))
+        self.btn_daq_all = self._button(top, "TEST ALL", self.test_all_sensors, "info", width=9)
+        self.btn_daq_all.pack(side="right", padx=(0, 4))
+
+        # One row per sensor
+        cols = (("Sensor", 100), ("Channel", 70), ("Pins", 112), ("Range", 78), ("Scale /V", 66),
+                ("Offset V", 66), ("Unit", 52), ("", 64), ("Reading", 0))
+        self._table_header(body, cols)
+        terminal = cfg["terminal_config"]
+        self.sensor_rows = []
+        for i, s in enumerate(cfg["sensors"]):
+            row = tk.Frame(body, bg=ROW_BG)
+            row.pack(fill="x", pady=2)
+            self._cols(row, cols)
+            w = {"name": s["name"]}
+            self._label(row, s["name"], bold=True, anchor="w").grid(row=0, column=0, sticky="w", padx=(8, 0), pady=5)
+            w["channel"] = self._combo(row, ni_daq.channels_for(terminal), s["channel"], width=4)
+            w["channel"].bind("<<ComboboxSelected>>", lambda _e, n=i: self._update_pins(n))
+            w["pins"] = self._label(row, "", fg="#4fa3ff", anchor="w")
+            w["range"] = self._combo(row, list(ni_daq.VOLTAGE_RANGES), s["range"], width=6)
+            w["scale"] = self._entry(row, f"{s['scale']:g}", width=6, justify="center")
+            w["offset"] = self._entry(row, f"{s['offset_v']:g}", width=6, justify="center")
+            w["unit"] = self._entry(row, s["unit"], width=4, justify="center")
+            w["test"] = self._button(row, "TEST", lambda n=i: self.test_sensors([n]), width=6)
+            w["reading"] = StatusPill(row)
+            w["reading"].set("idle", "—")
+            for col, key in enumerate(("channel", "pins", "range", "scale", "offset", "unit", "test", "reading"),
+                                      start=1):
+                w[key].grid(row=0, column=col, sticky="w", padx=(8, 0), pady=3)
+            self.sensor_rows.append(w)
+            self._update_pins(i)
+
+        self._label(body, "Reading = (volts − offset) × scale.  Differential: ai0 uses pins AI0+ / AI8−, "
+                          "ai1 → AI1 / AI9, …", fg=theme.MUTED, size=9).pack(anchor="w", padx=8, pady=(6, 0))
+
+    def _update_pins(self, i):
+        w = self.sensor_rows[i]
+        ch = w["channel"].get()
+        w["pins"].config(text=ni_daq.pins_for(ch, self.cb_daq_term.get()) if ch else "")
+
+    def _on_terminal_change(self):
+        """Wiring mode changed: restrict channel lists and refresh the pins."""
+        valid = ni_daq.channels_for(self.cb_daq_term.get())
+        for i, w in enumerate(self.sensor_rows):
+            w["channel"].config(values=valid)
+            if w["channel"].get() not in valid:
+                w["channel"].set(valid[min(i, len(valid) - 1)])
+            self._update_pins(i)
 
     def _daq_config(self):
         try:
             rate = float(self.ent_daq_rate.get())
             samples = int(self.ent_daq_samples.get())
         except ValueError:
-            raise ValueError("Sample rate and samples/channel must be numbers")
+            raise ValueError("Rate and samples must be numbers")
         if samples < 1:
-            raise ValueError("Samples / channel must be at least 1")
+            raise ValueError("Samples must be at least 1")
+        sensors = []
+        for w in self.sensor_rows:
+            try:
+                scale, offset = float(w["scale"].get()), float(w["offset"].get())
+            except ValueError:
+                raise ValueError(f"{w['name']}: scale and offset must be numbers")
+            sensors.append({"name": w["name"], "channel": w["channel"].get(), "range": w["range"].get(),
+                            "scale": scale, "offset_v": offset, "unit": w["unit"].get().strip()})
         return {
             "device": self.cb_daq_dev.get().strip(),
-            "channels": ni_daq.parse_channels(self.ent_daq_ch.get()),
             "terminal_config": self.cb_daq_term.get(),
-            "voltage_range": self.cb_daq_range.get(),
             "sample_rate": rate,
             "samples_per_channel": samples,
+            "sensors": sensors,
         }
 
-    def test_daq(self):
+    def test_all_sensors(self):
+        self.test_sensors(list(range(len(self.sensor_rows))))
+
+    def test_sensors(self, indices):
+        """Read the selected sensors' pins in one acquisition and show the results."""
         try:
             cfg = self._daq_config()
         except ValueError as exc:
             self.log(f"NI DAQ: {exc}")
             return
-        self.btn_daq_test.config(text="TESTING…", state="disabled")
-        self.daq_status.set("busy", "Testing…")
+        chosen = [cfg["sensors"][i] for i in indices]
+        task_cfg = dict(cfg, channels=[{"channel": s["channel"], "range": s["range"]} for s in chosen])
+        buttons = [self.sensor_rows[i]["test"] for i in indices] + [self.btn_daq_all]
+        for b in buttons:
+            b.config(state="disabled")
+        for i in indices:
+            self.sensor_rows[i]["reading"].set("busy", "Reading…")
 
         def run():
-            self.log(f"NI DAQ test on {cfg['device'] or '(no device)'} [{', '.join(cfg['channels'])}], "
-                     f"{cfg['terminal_config']}, {cfg['voltage_range']}…")
+            names = ", ".join(f"{s['name']} ({ni_daq.pins_for(s['channel'], cfg['terminal_config'])})"
+                              for s in chosen)
+            self.log(f"NI DAQ: reading {names} on {cfg['device'] or '(no device)'}…")
             try:
-                self.daq.connect(cfg)
+                self.daq.connect(task_cfg)
                 try:
-                    values = self.daq.read_average()
+                    volts = self.daq.read_average()
                 finally:
                     self.daq.disconnect()
-                self.log("NI DAQ: " + "   ".join(f"{ch} = {v:+.4f} V" for ch, v in values.items()))
-                self._ui(self.daq_status.set, "ok", f"PASS · {cfg['device']}")
             except Exception as exc:
                 self.log(f"NI DAQ error: {exc}")
-                self._ui(self.daq_status.set, "error", "FAIL")
-            self._ui(self.btn_daq_test.config, text="TEST", state="normal")
+                for i in indices:
+                    self._ui(self.sensor_rows[i]["reading"].set, "error", "FAIL")
+            else:
+                for i, s in zip(indices, chosen):
+                    v = volts[s["channel"]]
+                    value = (v - s["offset_v"]) * s["scale"]
+                    self.log(f"  {s['name']}: {v:+.4f} V → {value:.3f} {s['unit']}")
+                    self._ui(self.sensor_rows[i]["reading"].set, "ok",
+                             f"{value:.3f} {s['unit']}   ({v:+.4f} V)")
+            for b in buttons:
+                self._ui(b.config, state="normal")
 
         threading.Thread(target=run, daemon=True).start()
 

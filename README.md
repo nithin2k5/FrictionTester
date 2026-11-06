@@ -53,7 +53,11 @@ on the page (as in the EOL tester). CONNECT detects the mode:
   `ID02P` (L2) and parses `ID,01,+01234.5`; ZERO sends `ID01Z`. Set F-40 on the indicators to
   `001` and `002` to match.
 
-**NI DAQ – NI USB-6210:** device (prefers a 6210), AI channels (e.g. `ai0, ai2` or `ai0-ai3`),
-terminal config (Differential uses ai0–ai7), range (±10 / ±5 / ±1 / ±0.2 V), sample rate
-(≤ 250 kS/s aggregate) and samples per channel. TEST acquires one block and logs the mean
-voltage per channel.
+**NI DAQ – NI USB-6210 analog inputs.** Device (prefers a 6210), wiring mode, sample rate and
+samples per reading, then one row per sensor: **Loadcell 1, Loadcell 2, LVDT 1, LVDT 2**. Each row
+picks a channel and shows the screw-terminal pins it uses (Differential: `ai0` → `AI0+ / AI8−`,
+`ai1` → `AI1 / AI9`, …; RSE: `AIn / AI GND`; NRSE: `AIn / AI SENSE`), plus input range, scale
+(units per volt), offset (V) and unit. TEST reads that sensor; TEST ALL reads all four in one
+acquisition. Reading = (volts − offset) × scale, shown with the raw voltage.
+
+Defaults: Loadcell 1 = AI0/AI8, Loadcell 2 = AI1/AI9, LVDT 1 = AI2/AI10, LVDT 2 = AI3/AI11.
