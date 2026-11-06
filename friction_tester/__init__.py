@@ -1,0 +1,1 @@
+"""FrictionTester application package."""
