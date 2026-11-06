@@ -47,6 +47,10 @@ The automatic test sequence (recording PULL/PUSH) is not implemented yet;
 
 ## Model Settings
 
+Opening Model Settings shows a sign-in screen first (every time it is opened; Cancel goes back to
+the previous page). There is one temporary operator account for now; its password is stored only
+as a salted hash in `friction_tester/auth.py`, which also shows how to generate a new one.
+
 Models are stored in MySQL table **`TBL_MODEL_MASTER`** (database `friction` on the local MySQL
 server). The connection (host, port, user, password, database) is set at the top of
 `friction_tester/db.py`. The database and table are created automatically on first open.
@@ -71,7 +75,7 @@ old Test Cable / Saved to / Date / Test Result columns are dropped.
 The top of the page has three boxes — Model Information, SELECT CABLE and SHIFT CABLE (each
 condition laid out like the Test Console: Speed / Delay / Stroke beside Position 1–3, LOAD
 underneath). The model list is below, searchable by model, part number, customer or ALC code.
-Empty values show as `-` and are stored as NULL.
+Empty fields are stored as NULL.
 
 Buttons:
 - On opening, the form is locked and only **NEW** is available.

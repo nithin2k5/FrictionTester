@@ -6,6 +6,7 @@ import tkinter as tk
 
 from . import theme
 from .comport_page import ComPortPage
+from .login import LoginScreen
 from .model_page import ModelSettingsPage
 from .test_console import TestConsolePage
 
@@ -116,12 +117,33 @@ class App:
             icon.config(bg=bg, fg=fg)
             text.config(bg=bg, fg=fg)
 
+    # Pages that need a sign-in every time they are opened.
+    LOGIN_PAGES = {"model_settings"}
+
     def load_page(self, page_name):
+        if page_name in self.LOGIN_PAGES:
+            self._show_login(page_name)
+        else:
+            self._open_page(page_name)
+
+    def _show_login(self, page_name):
+        """Sign-in screen in the content area; Cancel returns to the page you came from."""
+        back = getattr(self, "current_page", "test_console")
+        title = next(t for _i, _c, p, t in self.PAGES if p == page_name)
+        self._clear_content(page_name, title)
+        LoginScreen(self.content, title, on_success=lambda: self._open_page(page_name),
+                    on_cancel=lambda: self._open_page(back)).pack(fill="both", expand=True)
+
+    def _clear_content(self, page_name, title):
         self._set_active_nav(page_name)
         for w in self.content.winfo_children():
             w.destroy()
-        title = next(t for _i, _c, p, t in self.PAGES if p == page_name)
         self.lbl_title.config(text=title)
+
+    def _open_page(self, page_name):
+        title = next(t for _i, _c, p, t in self.PAGES if p == page_name)
+        self._clear_content(page_name, title)
+        self.current_page = page_name
 
         if page_name == "comport_settings":
             ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
