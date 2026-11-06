@@ -47,8 +47,8 @@ The automatic test sequence (recording PULL/PUSH) is not implemented yet;
 
 ## Model Settings
 
-Opening Model Settings shows a sign-in screen first (every time it is opened; Cancel goes back to
-the previous page). There is one temporary operator account for now; its password is stored only
+Opening Model Settings or COM Setting shows a sign-in screen first (every time it is opened;
+Cancel goes back to the previous page). The Test Console needs no sign-in. There is one temporary operator account for now; its password is stored only
 as a salted hash in `friction_tester/auth.py`, which also shows how to generate a new one.
 
 Models are stored in MySQL table **`TBL_MODEL_MASTER`** (database `friction` on the local MySQL

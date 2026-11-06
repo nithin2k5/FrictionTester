@@ -118,7 +118,7 @@ class App:
             text.config(bg=bg, fg=fg)
 
     # Pages that need a sign-in every time they are opened.
-    LOGIN_PAGES = {"model_settings"}
+    LOGIN_PAGES = {"model_settings", "comport_settings"}
 
     def load_page(self, page_name):
         if page_name in self.LOGIN_PAGES:
