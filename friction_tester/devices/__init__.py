@@ -1,4 +1,4 @@
-from .plc_serial import PLCSerial
+from .plc_xgb import XGBPlc
 from .ni_daq import NIDaq
 
-__all__ = ["PLCSerial", "NIDaq"]
+__all__ = ["XGBPlc", "NIDaq"]

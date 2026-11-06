@@ -20,8 +20,11 @@ The interface follows the FeederCable tester: a black header (logo, page title, 
 tiles, and a dark settings panel with one row per device. Each row's **TEST** button shows
 TESTING… → PASS / FAIL, and details go to the log box at the bottom.
 
-**PLC – RS232:** COM port, baud rate, format (e.g. 8N1, 7E1), flow control, terminator and
-timeout. TEST opens the port and, if a *Test Command* is set, sends it and expects a reply.
+**PLC – LS XGB (RS232, Modbus RTU 8N1),** laid out like the EOL tester: COM port, baud rate,
+station ID, CONNECT / TEST and a status cell. CONNECT opens the port and checks the PLC answers
+(coil 0, three tries). TEST reads the *Test Bits* (XGB bit addresses such as `P0000`, `M0010`;
+coil = word × 16 + hex bit, so `M0067` → 103). *PLC Register Read* reads D registers
+(`D0001`, N points) and shows raw values plus 32-bit float in both word orders.
 
 **NI USB-6210:** NI device (prefers a 6210), AI channels (e.g. `ai0, ai2` or `ai0-ai3`), terminal
 config (Differential uses ai0–ai7), input range (±10 / ±5 / ±1 / ±0.2 V), sample rate (≤ 250 kS/s

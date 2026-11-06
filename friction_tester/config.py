@@ -7,16 +7,18 @@ from pathlib import Path
 SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 
 DEFAULT_SETTINGS = {
+    # LS XGB over RS232, Modbus RTU
     "plc": {
         "port": "",
         "baudrate": 9600,
+        "station_id": 1,
         "bytesize": 8,
-        "parity": "None",
-        "stopbits": "1",
-        "flow_control": "None",
+        "parity": "N",
+        "stopbits": 1,
         "timeout": 1.0,
-        "terminator": "CR",
-        "test_command": "",
+        "test_bits": "P0000, P0001, M0000",
+        "reg_address": "D0000",
+        "reg_points": 2,
     },
     "daq": {
         "device": "",

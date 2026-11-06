@@ -1,8 +1,10 @@
-"""COM Setting page: PLC over RS232 and the NI USB-6210, in the FeederCable style.
+"""COM Setting page.
 
-One banded row per device holding its main settings and a TEST button that
-turns PASS/FAIL; secondary settings sit on plain rows underneath, and every
-test writes to the log box at the bottom.
+PLC slot follows the EOL tester: LS XGB over RS232 (Modbus RTU), with COM
+port, baud rate, station ID, CONNECT / TEST and a status cell, plus a PLC
+register read underneath. The NI USB-6210 has its own row with a TEST button.
+Visual style follows FeederCable: banded rows that light up under the pointer
+and one log box for everything.
 """
 
 import threading
@@ -11,24 +13,15 @@ from tkinter import ttk
 
 from . import theme
 from ..config import save_settings
-from ..devices import ni_daq, plc_serial
+from ..devices import ni_daq, plc_xgb
 
-SERIAL_COLS = (("Device", 200), ("COM Port", 140), ("Baud Rate", 140), ("Format", 120), ("Action", 130))
+PLC_COLS = (("Device", 200), ("COM Port", 140), ("Baud Rate", 140), ("Station ID", 110),
+            ("Action", 220), ("Status", 0))
 DAQ_COLS = (("Device", 200), ("NI Device", 140), ("AI Channels", 140), ("Terminal", 120),
             ("Input Range", 120), ("Action", 130))
 
-# data bits / parity / stop bits shorthand, e.g. "8N1"
-FORMATS = ["8N1", "8E1", "8O1", "7E1", "7O1", "8N2", "7N2"]
-_PARITY_CODE = {"None": "N", "Even": "E", "Odd": "O", "Mark": "M", "Space": "S"}
-_PARITY_NAME = {v: k for k, v in _PARITY_CODE.items()}
-
-
-def _fmt_from_cfg(cfg):
-    return f"{cfg['bytesize']}{_PARITY_CODE.get(cfg['parity'], 'N')}{cfg['stopbits']}"
-
-
-def _fmt_to_cfg(fmt):
-    return {"bytesize": int(fmt[0]), "parity": _PARITY_NAME[fmt[1]], "stopbits": fmt[2:]}
+CONNECT_BG = theme.PASS
+DISCONNECT_BG = theme.FAIL
 
 
 class ComPortPage(tk.Frame):
@@ -40,14 +33,15 @@ class ComPortPage(tk.Frame):
         self.daq = daq
 
         self._build_title()
-        self._build_serial_section()
+        self._build_plc_section()
         self._build_daq_section()
         self._build_bottom()
         self._build_log()
 
         self.refresh_hardware(log=False)
-        if not plc_serial.PLCSerial.available():
-            self.log("pyserial is not installed — run: pip install pyserial")
+        self._show_plc_state()
+        if not plc_xgb.XGBPlc.available():
+            self.log("pymodbus is not installed — run: pip install pymodbus")
         if not ni_daq.NIDaq.available():
             self.log("nidaqmx is not installed — run: pip install nidaqmx")
 
@@ -57,33 +51,41 @@ class ComPortPage(tk.Frame):
         opts.update(kw)
         return tk.Label(parent, text=text, **opts)
 
-    def _entry(self, parent, value, width=12):
+    def _entry(self, parent, value, width=12, digits_only=False):
         e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white",
                      font=(theme.FONT, 11), width=width, bd=1, relief="solid",
-                     highlightbackground=theme.BORDER, highlightthickness=1)
+                     highlightbackground=theme.BORDER, highlightthickness=1,
+                     disabledbackground="#16191f", disabledforeground=theme.MUTED)
         e.insert(0, str(value))
+        if digits_only:
+            check = e.register(lambda p: p == "" or p.isdigit())
+            e.configure(validate="key", validatecommand=(check, "%P"))
         return e
 
-    def _combo(self, parent, values, current, width=12, readonly=True):
+    def _combo(self, parent, values, current, width=12):
         values = [str(v) for v in values]
         current = str(current)
         if current and current not in values:
             values.append(current)
-        cb = ttk.Combobox(parent, values=values, font=(theme.FONT, 10), width=width,
-                          state="readonly" if readonly else "normal")
+        cb = ttk.Combobox(parent, values=values, font=(theme.FONT, 10), width=width, state="readonly")
         if current:
             cb.set(current)
         elif values:
             cb.current(0)
         return cb
 
+    def _button(self, parent, text, command, bg=theme.TEST_IDLE, fg="black", width=9):
+        return tk.Button(parent, text=text, bg=bg, fg=fg, activebackground=bg,
+                         font=(theme.FONT, 10, "bold"), width=width, bd=0, cursor="hand2",
+                         disabledforeground="#888", command=command)
+
     @staticmethod
     def _grid_cols(frame, cols):
-        # Fixed column widths keep every row aligned; the slack goes to a
-        # trailing column so the table stays gathered on the left.
+        # Fixed widths keep rows aligned; a zero width takes the slack.
         for i, (_, w) in enumerate(cols):
-            frame.columnconfigure(i, minsize=w, weight=0)
-        frame.columnconfigure(len(cols), weight=1)
+            frame.columnconfigure(i, minsize=w, weight=0 if w else 1)
+        if all(w for _, w in cols):
+            frame.columnconfigure(len(cols), weight=1)
         return frame
 
     def _section_heading(self, text):
@@ -101,44 +103,50 @@ class ComPortPage(tk.Frame):
         tk.Frame(table, bg="#2b3242", height=1).pack(fill="x")
         return table
 
-    def _device_row(self, table, cols, index, name, widgets):
-        """A banded row: name label, then `widgets` (built by callables) in order."""
+    def _device_row(self, table, cols, index, name, makers):
+        """A banded row: the device name, then one widget per maker callable.
+
+        Plain frames and labels in the row take the band colour (and the hover
+        colour); buttons and inputs keep their own.
+        """
         band = theme.BAND[index % 2]
         row = self._grid_cols(tk.Frame(table, bg=band), cols)
         row.pack(fill="x")
-        name_lbl = tk.Label(row, text=name, bg=band, fg="white", font=(theme.FONT, 11), anchor="w")
-        name_lbl.grid(row=0, column=0, sticky="w", padx=(10, 0), pady=7)
+        tk.Label(row, text=name, bg=band, fg="white", font=(theme.FONT, 11), anchor="w").grid(
+            row=0, column=0, sticky="w", padx=(10, 0), pady=7)
         built = []
-        for col, make in enumerate(widgets, start=1):
+        for col, make in enumerate(makers, start=1):
             w = make(row)
             w.grid(row=0, column=col, sticky="w", padx=(10, 0), pady=4)
             built.append(w)
 
-        # Light the whole strip under the pointer. Every child gets the same
-        # bindings, because Tk sends <Leave> to the frame on entering a child.
-        def tint(color):
-            row.config(bg=color)
-            name_lbl.config(bg=color)
+        def descendants(w):
+            for c in w.winfo_children():
+                yield c
+                yield from descendants(c)
 
-        for w in (row, name_lbl, *built):
+        def tint(color):
+            for w in (row, *descendants(row)):
+                if type(w) in (tk.Frame, tk.Label):
+                    w.config(bg=color)
+
+        # Tk sends <Leave> to the frame when the pointer moves onto a child,
+        # so every widget in the row carries the same pair of bindings.
+        for w in (row, *descendants(row)):
             w.bind("<Enter>", lambda _e: tint(theme.BAND_HOVER), add="+")
             w.bind("<Leave>", lambda _e, c=band: tint(c), add="+")
         return built
-
-    def _test_button(self, parent, command):
-        return tk.Button(parent, text="TEST", bg=theme.TEST_IDLE, fg="black",
-                         font=(theme.FONT, 10, "bold"), width=9, bd=0, cursor="hand2", command=command)
 
     def _option_row(self):
         row = tk.Frame(self, bg=theme.PANEL)
         row.pack(fill="x", padx=35, pady=(0, 8))
         return row
 
-    def _set_btn(self, btn, text, bg, fg="white"):
-        self.after(0, lambda: btn.config(text=text, bg=bg, fg=fg))
+    def _ui(self, fn, *args, **kw):
+        """Run a widget update on the Tk thread."""
+        self.after(0, lambda: fn(*args, **kw))
 
     def log(self, msg):
-        """Thread-safe append to the log box."""
         def _append():
             self.log_text.config(state="normal")
             self.log_text.insert("end", msg + "\n")
@@ -153,92 +161,167 @@ class ComPortPage(tk.Frame):
         self._label(bar, "COM Setting", font=(theme.FONT, 14)).pack(side="left")
         tk.Frame(self, bg=theme.BORDER, height=1).pack(fill="x", padx=20)
 
-    # ---------------------------------------------------------------- serial
-    def _build_serial_section(self):
+    # ------------------------------------------------------------------- PLC
+    def _build_plc_section(self):
         cfg = self.settings["plc"]
-        self._section_heading("Serial (RS232)")
-        table = self._table(SERIAL_COLS)
-        self.cb_plc_port, self.cb_plc_baud, self.cb_plc_fmt, self.btn_plc_test = self._device_row(
-            table, SERIAL_COLS, 0, "PLC",
+        self._section_heading("PLC — LS XGB (RS232, Modbus RTU 8N1)")
+        table = self._table(PLC_COLS)
+
+        def make_actions(parent):
+            f = tk.Frame(parent, bg=parent["bg"])
+            self.btn_plc_connect = self._button(f, "CONNECT", self.toggle_plc, bg=CONNECT_BG, fg="white")
+            self.btn_plc_connect.pack(side="left", padx=(0, 6))
+            self.btn_plc_test = self._button(f, "TEST", self.test_plc)
+            self.btn_plc_test.pack(side="left")
+            return f
+
+        self.cb_plc_port, self.cb_plc_baud, self.ent_plc_station, _actions, self.lbl_plc_status = self._device_row(
+            table, PLC_COLS, 0, "PLC",
             [
-                lambda p: self._combo(p, [], cfg["port"]),
-                lambda p: self._combo(p, plc_serial.BAUD_RATES, cfg["baudrate"]),
-                lambda p: self._combo(p, FORMATS, _fmt_from_cfg(cfg), width=7),
-                lambda p: self._test_button(p, self.test_plc),
+                lambda p: self._combo(p, [], cfg["port"], width=14),
+                lambda p: self._combo(p, plc_xgb.BAUD_RATES, cfg["baudrate"], width=11),
+                lambda p: self._entry(p, cfg["station_id"], width=7, digits_only=True),
+                make_actions,
+                lambda p: tk.Label(p, text="Not connected", bg=p["bg"], fg=theme.MUTED, font=(theme.FONT, 10)),
             ],
         )
+        self.ent_plc_station.config(justify="center")
 
+        # TEST reads these bit devices
         row = self._option_row()
-        self._label(row, "Flow Control").pack(side="left")
-        self.cb_plc_flow = self._combo(row, plc_serial.FLOW_CONTROL, cfg["flow_control"], width=10)
-        self.cb_plc_flow.pack(side="left", padx=(10, 25))
-        self._label(row, "Terminator").pack(side="left")
-        self.cb_plc_term = self._combo(row, list(plc_serial.TERMINATORS), cfg["terminator"], width=7)
-        self.cb_plc_term.pack(side="left", padx=(10, 25))
-        self._label(row, "Timeout (s)").pack(side="left")
-        self.ent_plc_timeout = self._entry(row, cfg["timeout"], width=6)
-        self.ent_plc_timeout.pack(side="left", padx=(10, 0))
-
-        row = self._option_row()
-        self._label(row, "Test Command").pack(side="left")
-        self.ent_plc_cmd = self._entry(row, cfg["test_command"], width=24)
-        self.ent_plc_cmd.pack(side="left", padx=(10, 12))
-        self._label(row, "Sent on TEST — leave blank to only check the port opens",
+        self._label(row, "Test Bits", font=(theme.FONT, 11, "bold"), width=18, anchor="w").pack(side="left")
+        self.ent_plc_bits = self._entry(row, cfg["test_bits"], width=30)
+        self.ent_plc_bits.pack(side="left", padx=(0, 12))
+        self._label(row, "XGB bit addresses read by TEST, e.g. P0000, P0001, M0010",
                     fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
 
+        # PLC register read (D devices)
+        row = self._option_row()
+        self._label(row, "PLC Register Read", font=(theme.FONT, 11, "bold"), width=18, anchor="w").pack(side="left")
+        self._label(row, "Address (e.g. D0001)", fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
+        self.ent_reg_addr = self._entry(row, cfg["reg_address"], width=10)
+        self.ent_reg_addr.pack(side="left", padx=(6, 18))
+        self._label(row, "Points", fg=theme.MUTED, font=(theme.FONT, 10)).pack(side="left")
+        self.ent_reg_points = self._entry(row, cfg["reg_points"], width=5, digits_only=True)
+        self.ent_reg_points.pack(side="left", padx=(6, 18))
+        self.btn_reg_read = self._button(row, "READ", self.read_registers, bg=theme.UPDATE, fg="white")
+        self.btn_reg_read.pack(side="left")
+
     def _plc_config(self):
+        station = self.ent_plc_station.get().strip()
+        if not station.isdigit():
+            raise ValueError("Station ID must be a number")
         try:
-            timeout = float(self.ent_plc_timeout.get())
+            points = int(self.ent_reg_points.get() or 1)
         except ValueError:
-            raise ValueError("Timeout must be a number")
-        cfg = {
+            raise ValueError("Points must be a number")
+        cfg = dict(self.settings["plc"])   # keeps bytesize/parity/stopbits/timeout
+        cfg.update({
             "port": self.cb_plc_port.get().strip(),
             "baudrate": int(self.cb_plc_baud.get()),
-            "flow_control": self.cb_plc_flow.get(),
-            "timeout": timeout,
-            "terminator": self.cb_plc_term.get(),
-            "test_command": self.ent_plc_cmd.get(),
-        }
-        cfg.update(_fmt_to_cfg(self.cb_plc_fmt.get()))
+            "station_id": int(station),
+            "test_bits": self.ent_plc_bits.get().strip(),
+            "reg_address": self.ent_reg_addr.get().strip().upper(),
+            "reg_points": points,
+        })
         return cfg
 
-    def test_plc(self):
-        btn = self.btn_plc_test
+    def _show_plc_state(self, error=None):
+        connected = self.plc.is_open
+        self.btn_plc_connect.config(text="DISCONNECT" if connected else "CONNECT",
+                                    bg=DISCONNECT_BG if connected else CONNECT_BG,
+                                    activebackground=DISCONNECT_BG if connected else CONNECT_BG,
+                                    state="normal")
+        self.btn_plc_test.config(state="normal" if connected else "disabled")
+        self.btn_reg_read.config(state="normal" if connected else "disabled")
+        for w in (self.cb_plc_port, self.cb_plc_baud):
+            w.config(state="disabled" if connected else "readonly")
+        self.ent_plc_station.config(state="disabled" if connected else "normal")
+        if connected:
+            self.lbl_plc_status.config(text=f"Connected on {self.plc.port}", fg=theme.PASS)
+        elif error:
+            self.lbl_plc_status.config(text="Connection failed", fg=theme.FAIL)
+        else:
+            self.lbl_plc_status.config(text="Not connected", fg=theme.MUTED)
+
+    def toggle_plc(self):
+        if self.plc.is_open:
+            self.plc.disconnect()
+            self.log("PLC disconnected.")
+            self._show_plc_state()
+            return
         try:
             cfg = self._plc_config()
         except ValueError as exc:
             self.log(f"PLC: {exc}")
             return
-        if not cfg["port"]:
-            self.log("PLC: No port selected.")
+        self.btn_plc_connect.config(text="CONNECTING...", bg=theme.BUSY, state="disabled")
+        self.lbl_plc_status.config(text="Connecting...", fg=theme.BUSY)
+
+        def run():
+            self.log(f"Connecting to PLC on {cfg['port']} ({cfg['baudrate']} 8N1, station {cfg['station_id']})...")
+            try:
+                self.plc.connect(cfg)
+                self.settings["plc"] = cfg
+                self.log(f"Connected to PLC on {cfg['port']}.")
+                self._ui(self._show_plc_state)
+            except Exception as exc:
+                self.log(f"PLC Error: {exc}")
+                self._ui(self._show_plc_state, error=True)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def test_plc(self):
+        try:
+            bits = plc_xgb.parse_bit_list(self.ent_plc_bits.get())
+        except ValueError as exc:
+            self.log(f"PLC: {exc}")
+            return
+        if not bits:
+            self.log("PLC: enter at least one bit address under Test Bits.")
             return
 
         def run():
-            self._set_btn(btn, "TESTING...", theme.BUSY, "black")
-            self.log(f"Testing PLC on {cfg['port']} ({cfg['baudrate']}, "
-                     f"{self.cb_plc_fmt.get()}, flow {cfg['flow_control']})...")
+            self.log("Reading bits:")
             try:
-                self.plc.connect(cfg)
-                try:
-                    cmd = cfg["test_command"]
-                    if cmd:
-                        reply = self.plc.send(cmd)
-                        if reply:
-                            self.log(f"PLC Success: '{cmd}' -> {reply}")
-                            self._set_btn(btn, "PASS", theme.PASS)
-                        else:
-                            self.log(f"PLC Warning: {cfg['port']} opened, but no reply to '{cmd}'.")
-                            self._set_btn(btn, "FAIL", theme.FAIL)
-                    else:
-                        self.log(f"PLC Success: {cfg['port']} opened.")
-                        self._set_btn(btn, "PASS", theme.PASS)
-                finally:
-                    self.plc.disconnect()
+                for addr, value in self.plc.read_bits(bits):
+                    text = "Error reading coil" if value == "error" else ("ON" if value else "OFF")
+                    self.log(f"  {addr} --> {text}")
             except Exception as exc:
                 self.log(f"PLC Error: {exc}")
-                self._set_btn(btn, "FAIL", theme.FAIL)
+                self._ui(self._after_plc_failure)
 
         threading.Thread(target=run, daemon=True).start()
+
+    def read_registers(self):
+        addr = self.ent_reg_addr.get().strip().upper()
+        try:
+            plc_xgb.register_address(addr)
+            points = int(self.ent_reg_points.get() or 1)
+        except ValueError as exc:
+            self.log(f"PLC: {exc}")
+            return
+
+        def run():
+            try:
+                start, regs = self.plc.read_registers(addr, points)
+            except Exception as exc:
+                self.log(f"PLC Error: {exc}")
+                self._ui(self._after_plc_failure)
+                return
+            self.log(f"Reading {points} holding register(s) from {addr}:")
+            for i, v in enumerate(regs):
+                self.log(f"  D{start + i:04d} = {v}  (0x{v:04X}, signed {v - 65536 if v >= 32768 else v})")
+            for i, big, swapped in plc_xgb.registers_as_floats(regs):
+                self.log(f"  D{start + i:04d}-D{start + i + 1:04d} as float: "
+                         f"{big:.6g} (high word first) / {swapped:.6g} (low word first)")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _after_plc_failure(self):
+        # A dropped port leaves pymodbus closed; reflect that on the row.
+        if not self.plc.is_open:
+            self._show_plc_state(error=True)
 
     # ------------------------------------------------------------------- DAQ
     def _build_daq_section(self):
@@ -249,11 +332,11 @@ class ComPortPage(tk.Frame):
          self.cb_daq_range, self.btn_daq_test) = self._device_row(
             table, DAQ_COLS, 0, "NI USB-6210",
             [
-                lambda p: self._combo(p, [], cfg["device"]),
+                lambda p: self._combo(p, [], cfg["device"], width=14),
                 lambda p: self._entry(p, ", ".join(cfg["channels"]), width=14),
                 lambda p: self._combo(p, ni_daq.TERMINAL_CONFIGS, cfg["terminal_config"], width=11),
                 lambda p: self._combo(p, list(ni_daq.VOLTAGE_RANGES), cfg["voltage_range"], width=9),
-                lambda p: self._test_button(p, self.test_daq),
+                lambda p: self._button(p, "TEST", self.test_daq),
             ],
         )
 
@@ -293,7 +376,7 @@ class ComPortPage(tk.Frame):
             return
 
         def run():
-            self._set_btn(btn, "TESTING...", theme.BUSY, "black")
+            self._ui(btn.config, text="TESTING...", bg=theme.BUSY, fg="black")
             self.log(f"Testing NI USB-6210 on {cfg['device'] or '(none)'} "
                      f"[{', '.join(cfg['channels'])}], {cfg['terminal_config']}, {cfg['voltage_range']}...")
             try:
@@ -303,10 +386,10 @@ class ComPortPage(tk.Frame):
                 finally:
                     self.daq.disconnect()
                 self.log("NI USB-6210 Success: " + "   ".join(f"{ch} = {v:+.4f} V" for ch, v in values.items()))
-                self._set_btn(btn, "PASS", theme.PASS)
+                self._ui(btn.config, text="PASS", bg=theme.PASS, fg="white")
             except Exception as exc:
                 self.log(f"NI USB-6210 Error: {exc}")
-                self._set_btn(btn, "FAIL", theme.FAIL)
+                self._ui(btn.config, text="FAIL", bg=theme.FAIL, fg="white")
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -319,18 +402,29 @@ class ComPortPage(tk.Frame):
                   command=self.refresh_hardware).pack(side="right", padx=(5, 0))
         tk.Button(bar, text="Save", bg=theme.SAVE, fg="white", font=(theme.FONT, 11, "bold"),
                   width=12, bd=0, pady=5, cursor="hand2", command=self.save).pack(side="right", padx=5)
+        tk.Button(bar, text="Clear Log", bg="#333", fg="white", font=(theme.FONT, 10, "bold"),
+                  width=10, bd=0, pady=5, cursor="hand2", command=self.clear_log).pack(side="left")
 
     def _build_log(self):
         frame = tk.Frame(self, bg=theme.PANEL, bd=1, relief="solid",
                          highlightbackground=theme.BORDER, highlightthickness=1)
         frame.pack(side="top", fill="both", expand=True, padx=20, pady=(10, 20))
-        self.log_text = tk.Text(frame, bg=theme.PANEL, fg="white", font=("Consolas", 11), bd=0, height=8)
+        sb = ttk.Scrollbar(frame, orient="vertical")
+        sb.pack(side="right", fill="y")
+        self.log_text = tk.Text(frame, bg=theme.PANEL, fg="white", font=("Consolas", 11), bd=0, height=8,
+                                yscrollcommand=sb.set)
         self.log_text.pack(fill="both", expand=True, padx=10, pady=10)
+        sb.config(command=self.log_text.yview)
+        self.log_text.config(state="disabled")
+
+    def clear_log(self):
+        self.log_text.config(state="normal")
+        self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
 
     def refresh_hardware(self, log=True):
         """Rescan COM ports and NI devices (the Update button)."""
-        ports = plc_serial.PLCSerial.list_ports()
+        ports = plc_xgb.XGBPlc.list_ports()
         port_names = [dev for dev, _ in ports]
         current = self.cb_plc_port.get()
         self.cb_plc_port.config(values=port_names or ([current] if current else []))
@@ -348,8 +442,7 @@ class ComPortPage(tk.Frame):
         if log:
             self.log("COM ports: " + (", ".join(f"{d} ({desc})" for d, desc in ports) or "none found"))
             self.log("NI devices: " + (", ".join(f"{n} ({p})" for n, p in devices) or "none found"))
-            for btn in (self.btn_plc_test, self.btn_daq_test):
-                btn.config(text="TEST", bg=theme.TEST_IDLE, fg="black")
+            self.btn_daq_test.config(text="TEST", bg=theme.TEST_IDLE, fg="black")
 
     def save(self):
         try:
