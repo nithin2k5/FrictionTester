@@ -20,7 +20,7 @@ import os
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 from . import theme
 from .plot import LoadStrokePlot
@@ -375,86 +375,160 @@ class TestConsolePage(tk.Frame):
             self.clamps.append(sp)
 
     # ------------------------------------------------------- side panel
-    def _group(self, parent, title):
-        """A titled box on the right-hand panel, like the LabVIEW group frames."""
-        f = tk.LabelFrame(parent, text=f" {title} ", bg=theme.PANEL, fg=theme.TITLE_FG, font=_font(9, True),
-                          bd=1, relief="solid", padx=6, pady=4)
-        f.pack(fill="x", pady=(0, 6))
-        return f
+    # Same card style as the COM Setting page: a title strip with an orange
+    # accent, a dark body, large coloured number tiles.
+    SIDE_W = 250
+    CARD = "#141922"
+    CARD_HEAD = "#1b212c"
+    TILE = "#0d1117"
 
-    def _counter(self, parent, row, col, value):
-        lbl = tk.Label(parent, text=str(value), bg=FIELD_BG, fg="#4fa3ff", font=_font(12, True), width=6,
-                       relief="solid", bd=1)
-        lbl.grid(row=row, column=col, padx=2, pady=1)
-        return lbl
+    def _side_card(self, parent, title, right=None):
+        """A card with a title strip; `right` builds an optional widget on the strip."""
+        card = tk.Frame(parent, bg=self.CARD, highlightbackground=theme.BORDER, highlightthickness=1)
+        card.pack(fill="x", pady=(0, 6))
+        head = tk.Frame(card, bg=self.CARD_HEAD)
+        head.pack(fill="x")
+        tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
+        tk.Label(head, text=title.upper(), bg=self.CARD_HEAD, fg="#c9d1dc", font=_font(8, True)).pack(
+            side="left", padx=8, pady=4)
+        if right:
+            right(head).pack(side="right", padx=6)
+        body = tk.Frame(card, bg=self.CARD)
+        body.pack(fill="x", padx=8, pady=6)
+        return body
+
+    def _link(self, parent, text, command, fg=theme.HEADER_FG):
+        """A small flat text button for secondary actions (reset, open)."""
+        return tk.Button(parent, text=text, command=command, bg=parent["bg"], fg=fg, activebackground=parent["bg"],
+                         activeforeground="white", bd=0, font=_font(8, True), cursor="hand2", padx=2, pady=0)
+
+    def _tile(self, parent, caption, value, color, size=18):
+        """A number tile: big value with a small caption under it. Returns the value label."""
+        t = tk.Frame(parent, bg=self.TILE, highlightbackground="#232a36", highlightthickness=1)
+        val = tk.Label(t, text=str(value), bg=self.TILE, fg=color, font=_font(size, True))
+        val.pack(pady=(2, 0))
+        tk.Label(t, text=caption, bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 3))
+        return t, val
 
     def _build_side_panel(self, parent):
-        side = tk.Frame(parent, bg=theme.BG, width=236)
+        side = tk.Frame(parent, bg=theme.BG, width=self.SIDE_W)
+        side.pack_propagate(False)
         c = self.counters
 
-        # Model Set: current model, model list, Model Change
-        g = self._group(side, "Model Set")
-        self._small_button(g, "✔ Model Change", self.model_change, width=18).pack(pady=(0, 4))
-        self.current_model = tk.Label(g, text=self.settings["test"]["select"].get("model") or "—", bg="white",
-                                      fg="#1a3fb0", font=_font(10, True), relief="solid", bd=1)
+        # ---- Model -----------------------------------------------------
+        body = self._side_card(side, "Model")
+        self.current_model = tk.Label(body, text=self.settings["test"]["select"].get("model") or "No model loaded",
+                                      bg=self.TILE, fg=theme.TITLE_FG, font=_font(12, True), anchor="w",
+                                      padx=8, pady=3, highlightbackground="#232a36", highlightthickness=1)
         self.current_model.pack(fill="x")
-        lb_frame = tk.Frame(g, bg=theme.PANEL)
-        lb_frame.pack(fill="x", pady=(4, 0))
-        self.model_list = tk.Listbox(lb_frame, height=6, bg=FIELD_BG, fg="white", font=_font(9),
-                                     selectbackground="#2a4a7a", relief="solid", bd=1, activestyle="none",
-                                     exportselection=False)
-        sb = tk.Scrollbar(lb_frame, orient="vertical", command=self.model_list.yview)
+        lb_frame = tk.Frame(body, bg=self.CARD)
+        lb_frame.pack(fill="x", pady=(5, 5))
+        self.model_list = tk.Listbox(lb_frame, height=3, bg=self.TILE, fg="#d6dbe4", font=_font(9),
+                                     selectbackground="#2a4a7a", selectforeground="white", relief="flat", bd=0,
+                                     highlightthickness=1, highlightbackground="#232a36", highlightcolor="#2a4a7a",
+                                     activestyle="none", exportselection=False)
+        sb = ttk.Scrollbar(lb_frame, orient="vertical", command=self.model_list.yview)
         self.model_list.config(yscrollcommand=sb.set)
         self.model_list.pack(side="left", fill="x", expand=True)
         sb.pack(side="right", fill="y")
+        self.model_list.bind("<Double-Button-1>", lambda _e: self.model_change())
         self._models = []
+        tk.Button(body, text="MODEL CHANGE", command=self.model_change, bg=theme.UPDATE, fg="white",
+                  activebackground="#1e88e5", activeforeground="white", bd=0, pady=4, font=_font(9, True),
+                  cursor="hand2").pack(fill="x")
 
-        # Saved to / Saved Number
-        tk.Label(side, text="Saved to", bg=theme.BG, fg="#4fa3ff", font=_font(9)).pack(anchor="w")
-        self.save_dir = tk.Entry(side, bg="white", fg="black", font=_font(9), relief="solid", bd=1)
-        self.save_dir.insert(0, self.settings["test"]["save_dir"])
-        self.save_dir.pack(fill="x", pady=(0, 4))
-        saved = tk.Frame(side, bg=theme.BG)
-        saved.pack(fill="x", pady=(0, 6))
-        tk.Label(saved, text="SELECT", bg=theme.BG, fg="#4fa3ff", font=_font(8)).grid(row=0, column=1)
-        tk.Label(saved, text="SHIFT", bg=theme.BG, fg="#4fa3ff", font=_font(8)).grid(row=0, column=2)
-        tk.Label(saved, text="Saved Number", bg=theme.BG, fg="#4fa3ff", font=_font(9)).grid(row=1, column=0, sticky="w")
-        self.lbl_saved = [self._counter(saved, 1, 1, c["saved_select"]), self._counter(saved, 1, 2, c["saved_shift"])]
-
-        # Progress Counter
-        g = self._group(side, "Progress Counter")
-        tk.Label(g, text="Target", bg=theme.PANEL, fg="#4fa3ff", font=_font(8)).grid(row=0, column=0)
-        tk.Label(g, text="Complete", bg=theme.PANEL, fg="#4fa3ff", font=_font(8)).grid(row=0, column=1)
-        self.target = tk.Spinbox(g, from_=0, to=999999, width=7, justify="center", font=_font(12, True),
-                                 bg=FIELD_BG, fg="#4fa3ff", buttonbackground="#333", relief="solid", bd=1,
+        # ---- Production: target / complete + progress bar ----------------
+        body = self._side_card(side, "Production")
+        row = tk.Frame(body, bg=self.CARD)
+        row.pack(fill="x")
+        row.columnconfigure((0, 1), weight=1, uniform="prod")
+        tgt = tk.Frame(row, bg=self.TILE, highlightbackground="#232a36", highlightthickness=1)
+        tgt.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        self.target = tk.Spinbox(tgt, from_=0, to=999999, width=6, justify="center", font=_font(16, True),
+                                 bg=self.TILE, fg="white", buttonbackground="#232a36", relief="flat", bd=0,
                                  insertbackground="white", command=self._save_counters)
         self.target.delete(0, "end")
         self.target.insert(0, str(c["target"]))
         self.target.bind("<FocusOut>", lambda _e: self._save_counters())
-        self.target.grid(row=1, column=0, padx=2)
-        self.lbl_complete = self._counter(g, 1, 1, c["complete"])
+        self.target.bind("<Return>", lambda _e: self._save_counters())
+        self.target.pack(pady=(2, 0))
+        tk.Label(tgt, text="TARGET", bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 3))
+        t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], "#4fa3ff", size=16)
+        t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        self.progress = tk.Canvas(body, height=8, bg=self.TILE, highlightthickness=0)
+        self.progress.pack(fill="x", pady=(6, 0))
+        self.progress.bind("<Configure>", lambda _e: self._draw_progress())
 
-        # O.K / N.G Counter: today and cumulative, each resettable
-        g = self._group(side, "O.K/N.G Counter")
-        tk.Label(g, text="A day", bg=theme.PANEL, fg="white", font=_font(8)).grid(row=0, column=1)
-        tk.Label(g, text="Cumulative", bg=theme.PANEL, fg="white", font=_font(8)).grid(row=0, column=2)
-        tk.Label(g, text="O.K", bg=theme.PANEL, fg="#4fa3ff", font=_font(9, True)).grid(row=1, column=0, sticky="w")
-        tk.Label(g, text="N.G", bg=theme.PANEL, fg=theme.FAIL, font=_font(9, True)).grid(row=2, column=0, sticky="w")
-        self.lbl_ok = [self._counter(g, 1, 1, c["ok_day"]), self._counter(g, 1, 2, c["ok_total"])]
-        self.lbl_ng = [self._counter(g, 2, 1, c["ng_day"]), self._counter(g, 2, 2, c["ng_total"])]
-        self._small_button(g, "✕ Del", lambda: self.reset_counts("day"), width=6).grid(row=3, column=1, pady=(3, 0))
-        self._small_button(g, "✕ Del", lambda: self.reset_counts("total"), width=6).grid(row=3, column=2, pady=(3, 0))
+        # ---- Results: O.K / N.G, today large, cumulative small -----------
+        def reset_links(head):
+            f = tk.Frame(head, bg=self.CARD_HEAD)
+            self._link(f, "Reset total", lambda: self.reset_counts("total")).pack(side="right")
+            self._link(f, "Reset today", lambda: self.reset_counts("day")).pack(side="right", padx=(0, 6))
+            return f
 
-        # OPEN / Test Run / Move Origin / Test Stop
-        btns = tk.Frame(side, bg=theme.BG)
-        btns.pack(fill="x", pady=(2, 0))
-        for r, c_, text, cmd, bg, fg in (
-                (0, 0, "📂 OPEN", self.open_saved, "#e0e0e0", "black"),
-                (0, 1, "▶ Test Run", lambda: self.plc_pulse("test_run", "Test run"), theme.PASS, "white"),
-                (1, 0, "↺ Move Origin", lambda: self.plc_pulse("move_origin", "Move origin"), "#e0e0e0", "black"),
-                (1, 1, "■ Test Stop", lambda: self.plc_pulse("test_stop", "Test stop"), theme.FAIL, "white")):
-            self._small_button(btns, text, cmd, bg=bg, fg=fg, width=12).grid(row=r, column=c_, padx=2, pady=2)
+        body = self._side_card(side, "Results", right=reset_links)
+        row = tk.Frame(body, bg=self.CARD)
+        row.pack(fill="x")
+        row.columnconfigure((0, 1), weight=1, uniform="res")
+        t, ok_day = self._tile(row, "O.K  TODAY", c["ok_day"], theme.PASS, size=20)
+        t.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        t, ng_day = self._tile(row, "N.G  TODAY", c["ng_day"], theme.FAIL, size=20)
+        t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        tot = tk.Frame(body, bg=self.CARD)
+        tot.pack(fill="x", pady=(6, 0))
+        tk.Label(tot, text="Cumulative  O.K / N.G", bg=self.CARD, fg=theme.MUTED, font=_font(8)).pack(side="left")
+        ok_total = tk.Label(tot, text=str(c["ok_total"]), bg=self.CARD, fg=theme.PASS, font=_font(10, True))
+        ok_total.pack(side="left", padx=(8, 0))
+        tk.Label(tot, text="/", bg=self.CARD, fg=theme.MUTED, font=_font(9)).pack(side="left", padx=3)
+        ng_total = tk.Label(tot, text=str(c["ng_total"]), bg=self.CARD, fg=theme.FAIL, font=_font(10, True))
+        ng_total.pack(side="left")
+        self.lbl_ok = [ok_day, ok_total]
+        self.lbl_ng = [ng_day, ng_total]
+
+        # ---- Saved data --------------------------------------------------
+        body = self._side_card(side, "Saved Data",
+                               right=lambda p: self._link(p, "📂 OPEN", self.open_saved, fg="#4fa3ff"))
+        self.save_dir = tk.Entry(body, bg=self.TILE, fg="#d6dbe4", insertbackground="white", font=_font(9),
+                                 relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36")
+        self.save_dir.insert(0, self.settings["test"]["save_dir"])
+        self.save_dir.bind("<FocusOut>", lambda _e: self._save_counters())
+        self.save_dir.pack(fill="x", ipady=3)
+        row = tk.Frame(body, bg=self.CARD)
+        row.pack(fill="x", pady=(6, 0))
+        row.columnconfigure((0, 1), weight=1, uniform="saved")
+        t, sel = self._tile(row, "SELECT SAVED", c["saved_select"], "white", size=13)
+        t.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        t, shf = self._tile(row, "SHIFT SAVED", c["saved_shift"], "white", size=13)
+        t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        self.lbl_saved = [sel, shf]
+
+        # ---- Test control ------------------------------------------------
+        ctl = tk.Frame(side, bg=theme.BG)
+        ctl.pack(fill="x", side="bottom")
+        ctl.columnconfigure((0, 1), weight=1, uniform="ctl")
+        for col, (text, cmd, bg, abg) in enumerate((
+                ("▶  TEST RUN", lambda: self.plc_pulse("test_run", "Test run"), theme.PASS, "#43a047"),
+                ("■  TEST STOP", lambda: self.plc_pulse("test_stop", "Test stop"), theme.FAIL, "#e53935"))):
+            tk.Button(ctl, text=text, command=cmd, bg=bg, fg="white", activebackground=abg, activeforeground="white",
+                      bd=0, pady=7, font=_font(10, True), cursor="hand2").grid(
+                row=0, column=col, sticky="ew", padx=(0, 3) if col == 0 else (3, 0))
+        tk.Button(ctl, text="↺  MOVE ORIGIN", command=lambda: self.plc_pulse("move_origin", "Move origin"),
+                  bg="#2a313d", fg="white", activebackground="#353d4b", activeforeground="white", bd=0, pady=5,
+                  font=_font(9, True), cursor="hand2").grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+
+        self.after(50, self._draw_progress)
         return side
+
+    def _draw_progress(self):
+        """Complete / Target as a bar; full and green once the target is reached."""
+        cv = self.progress
+        cv.delete("all")
+        w = cv.winfo_width()
+        target, done = self.counters.get("target", 0), self.counters.get("complete", 0)
+        if w <= 1 or target <= 0:
+            return
+        frac = min(done / target, 1.0)
+        cv.create_rectangle(0, 0, int(w * frac), 8, fill=theme.PASS if frac >= 1 else "#4fa3ff", width=0)
 
     # ----------------------------------------------------------- actions
     def save_conditions(self):
@@ -608,10 +682,12 @@ class TestConsolePage(tk.Frame):
                           (c["ok_day"], c["ok_total"], c["ng_day"], c["ng_total"],
                            c["saved_select"], c["saved_shift"], c["complete"])):
             lbl.config(text=str(v))
+        self._draw_progress()
 
     def _save_counters(self):
         target = self.target.get().strip()
         self.counters["target"] = int(target) if target.isdigit() else 0
+        self._draw_progress()
         self.settings["test"]["save_dir"] = self.save_dir.get().strip() or "data"
         save_settings(self.settings)
 
