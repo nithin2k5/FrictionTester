@@ -389,7 +389,7 @@ class TestConsolePage(tk.Frame):
     def _side_card(self, parent, title, right=None):
         """A card with a title strip; `right` builds an optional widget on the strip."""
         card = tk.Frame(parent, bg=self.CARD, highlightbackground=theme.BORDER, highlightthickness=1)
-        card.pack(fill="x", pady=(0, 6))
+        card.pack(fill="x", pady=(0, 5))
         head = tk.Frame(card, bg=self.CARD_HEAD)
         head.pack(fill="x")
         tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
@@ -497,28 +497,44 @@ class TestConsolePage(tk.Frame):
         self.save_dir.insert(0, self.settings["test"]["save_dir"])
         self.save_dir.bind("<FocusOut>", lambda _e: self._save_counters())
         self.save_dir.pack(fill="x", ipady=3)
+        # Saved counts on one compact line: "Saved   SELECT 23   SHIFT 23"
         row = tk.Frame(body, bg=self.CARD)
-        row.pack(fill="x", pady=(6, 0))
-        row.columnconfigure((0, 1), weight=1, uniform="saved")
-        t, sel = self._tile(row, "SELECT SAVED", c["saved_select"], "white", size=13)
-        t.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
-        t, shf = self._tile(row, "SHIFT SAVED", c["saved_shift"], "white", size=13)
-        t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
-        self.lbl_saved = [sel, shf]
+        row.pack(fill="x", pady=(5, 0))
+        tk.Label(row, text="Saved", bg=self.CARD, fg=theme.MUTED, font=_font(8)).pack(side="left")
+        self.lbl_saved = []
+        for name, value in (("SHIFT", c["saved_shift"]), ("SELECT", c["saved_select"])):
+            lbl = tk.Label(row, text=str(value), bg=self.CARD, fg="white", font=_font(11, True))
+            lbl.pack(side="right")
+            tk.Label(row, text=name, bg=self.CARD, fg=theme.MUTED, font=_font(8, True)).pack(
+                side="right", padx=(12, 4))
+            self.lbl_saved.insert(0, lbl)          # keep order: [SELECT, SHIFT]
+
+        # ---- Scan results (barcode scanner input, one per cable) ---------
+        body = self._side_card(side, "Scan Result")
+        body.columnconfigure(1, weight=1)
+        self.scan_entries = {}
+        for r, (key, label) in enumerate((("select", "SELECT"), ("shift", "SHIFT"))):
+            tk.Label(body, text=label, bg=self.CARD, fg=theme.MUTED, font=_font(8, True), width=7,
+                     anchor="w").grid(row=r, column=0, sticky="w", pady=2)
+            e = tk.Entry(body, bg=self.TILE, fg="white", insertbackground="white", font=_font(10),
+                         relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36",
+                         highlightcolor=theme.UPDATE)
+            e.grid(row=r, column=1, sticky="ew", pady=2, ipady=2)
+            self.scan_entries[key] = e
 
         # ---- Test control ------------------------------------------------
         ctl = tk.Frame(side, bg=theme.BG)
         ctl.pack(fill="x", side="bottom")
-        ctl.columnconfigure((0, 1), weight=1, uniform="ctl")
+        # One row: RUN | STOP | ORIGIN (RUN and STOP wider)
+        for col, weight in enumerate((4, 4, 3)):
+            ctl.columnconfigure(col, weight=weight, uniform="ctl")
         for col, (text, cmd, bg, abg) in enumerate((
-                ("▶  TEST RUN", lambda: self.plc_pulse("test_run", "Test run"), theme.PASS, "#43a047"),
-                ("■  TEST STOP", lambda: self.plc_pulse("test_stop", "Test stop"), theme.FAIL, "#e53935"))):
+                ("▶ RUN", lambda: self.plc_pulse("test_run", "Test run"), theme.PASS, "#43a047"),
+                ("■ STOP", lambda: self.plc_pulse("test_stop", "Test stop"), theme.FAIL, "#e53935"),
+                ("↺ ORIGIN", lambda: self.plc_pulse("move_origin", "Move origin"), "#2a313d", "#353d4b"))):
             tk.Button(ctl, text=text, command=cmd, bg=bg, fg="white", activebackground=abg, activeforeground="white",
-                      bd=0, pady=7, font=_font(10, True), cursor="hand2").grid(
-                row=0, column=col, sticky="ew", padx=(0, 3) if col == 0 else (3, 0))
-        tk.Button(ctl, text="↺  MOVE ORIGIN", command=lambda: self.plc_pulse("move_origin", "Move origin"),
-                  bg="#2a313d", fg="white", activebackground="#353d4b", activeforeground="white", bd=0, pady=5,
-                  font=_font(9, True), cursor="hand2").grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+                      bd=0, pady=5, font=_font(10 if col < 2 else 9, True), cursor="hand2").grid(
+                row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 3, 0))
 
         self.after(50, self._draw_progress)
         return side

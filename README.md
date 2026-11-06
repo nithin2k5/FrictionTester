@@ -34,7 +34,8 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
   - **Saved to** folder (default `data/`, opened by **OPEN**) and **Saved Number** per cable.
   - **Progress Counter** (Target / Complete) and **O.K/N.G Counter** (A day / Cumulative, each
     with **Del**). Day counts reset at the date change. `record_result()` updates them.
-  - **Test Run, Test Stop, Move Origin**.
+  - **Scan Result** — SELECT and SHIFT text boxes for the scanned barcodes.
+  - **Test Run, Test Stop, Move Origin** (RUN / STOP / ORIGIN).
 - **EXIT** closes the app (with confirmation).
 - The status box lists any device that isn't connected.
 
