@@ -17,6 +17,32 @@ VOLTAGE_RANGES = {"±10 V": 10.0, "±5 V": 5.0, "±1 V": 1.0, "±0.2 V": 0.2}
 MAX_AGGREGATE_RATE = 250_000.0
 
 
+def parse_channels(text):
+    """Parse 'ai0, ai2, ai4-ai7' (or '0,2,4-7') into ['ai0', 'ai2', 'ai4', ...]."""
+    channels = []
+    for part in text.replace(";", ",").split(","):
+        part = part.strip().lower().replace(" ", "")
+        if not part:
+            continue
+        try:
+            if "-" in part or ":" in part:
+                lo, hi = part.replace(":", "-").split("-", 1)
+                lo, hi = int(lo.removeprefix("ai")), int(hi.removeprefix("ai"))
+                nums = range(min(lo, hi), max(lo, hi) + 1)
+            else:
+                nums = [int(part.removeprefix("ai"))]
+        except ValueError:
+            raise ValueError(f"Invalid channel '{part}' (use e.g. ai0, ai2 or ai0-ai3)")
+        for n in nums:
+            if not 0 <= n <= 15:
+                raise ValueError(f"ai{n} does not exist on the USB-6210 (ai0–ai15)")
+            if f"ai{n}" not in channels:
+                channels.append(f"ai{n}")
+    if not channels:
+        raise ValueError("Enter at least one AI channel")
+    return channels
+
+
 class NIDaq:
     def __init__(self):
         self._task = None

@@ -1,34 +1,25 @@
 """FrictionTester entry point."""
 
 import tkinter as tk
-from tkinter import ttk
 
 from friction_tester.config import load_settings
 from friction_tester.devices import NIDaq, PLCSerial
-from friction_tester.ui import SettingsPage
+from friction_tester.ui import App
 
 
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Friction Tester")
-        self.minsize(900, 560)
+def main():
+    root = tk.Tk()
+    plc, daq = PLCSerial(), NIDaq()
+    App(root, load_settings(), plc, daq)
 
-        self.settings = load_settings()
-        self.plc = PLCSerial()
-        self.daq = NIDaq()
+    def on_close():
+        plc.disconnect()
+        daq.disconnect()
+        root.destroy()
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True)
-        notebook.add(SettingsPage(notebook, self.settings, self.plc, self.daq), text="Comm Settings")
-
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-
-    def on_close(self):
-        self.plc.disconnect()
-        self.daq.disconnect()
-        self.destroy()
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    root.mainloop()
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    main()

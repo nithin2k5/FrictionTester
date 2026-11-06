@@ -1,3 +1,4 @@
-from .settings_page import SettingsPage
+from .app import App
+from .comport_page import ComPortPage
 
-__all__ = ["SettingsPage"]
+__all__ = ["App", "ComPortPage"]
