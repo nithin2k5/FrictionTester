@@ -84,6 +84,33 @@ class NIDaq:
             # Driver runtime (NI-DAQmx) not installed or not reachable.
             return []
 
+    @staticmethod
+    def test_device(name):
+        """Self-test one device (no sensors needed) and return its details.
+
+        Raises if the driver is missing, the device isn't found, or the
+        NI-DAQmx self-test fails.
+        """
+        if nidaqmx is None:
+            raise RuntimeError("nidaqmx is not installed (pip install nidaqmx)")
+        if not name:
+            raise ValueError("Select a DAQ device")
+        try:
+            devices = {d.name: d for d in System.local().devices}
+        except Exception as exc:
+            raise RuntimeError(f"NI-DAQmx driver not reachable: {exc}")
+        dev = devices.get(name)
+        if dev is None:
+            found = ", ".join(devices) or "none"
+            raise LookupError(f"{name} not found (devices on this PC: {found})")
+        dev.self_test_device()     # raises DaqError if the hardware fails
+        return {
+            "name": dev.name,
+            "product": dev.product_type,
+            "serial": f"{dev.dev_serial_num:X}" if dev.dev_serial_num else "-",
+            "ai_channels": len(dev.ai_physical_chans),
+        }
+
     @property
     def is_open(self):
         return self._task is not None

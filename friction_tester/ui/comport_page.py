@@ -446,6 +446,8 @@ class ComPortPage(tk.Frame):
         self._label(top, "Device", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(8, 6))
         self.cb_daq_dev = self._combo(top, [], cfg["device"], width=10)
         self.cb_daq_dev.pack(side="left")
+        self.btn_daq_dev_test = self._button(top, "TEST DEVICE", self.test_daq_device, width=11)
+        self.btn_daq_dev_test.pack(side="left", padx=(6, 0))
         self._label(top, "Wiring", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(16, 6))
         self.cb_daq_term = self._combo(top, ni_daq.TERMINAL_CONFIGS, cfg["terminal_config"], width=10)
         self.cb_daq_term.pack(side="left")
@@ -459,6 +461,14 @@ class ComPortPage(tk.Frame):
         self.ent_daq_samples.pack(side="left")
         self.btn_daq_all = self._button(top, "TEST ALL", self.test_all_sensors, "info", width=9)
         self.btn_daq_all.pack(side="right", padx=(0, 4))
+
+        # Result of TEST DEVICE
+        dev_row = tk.Frame(body, bg=CARD_BG)
+        dev_row.pack(fill="x", pady=(0, 6))
+        self._label(dev_row, "Device status", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(8, 8))
+        self.daq_dev_status = StatusPill(dev_row)
+        self.daq_dev_status.pack(side="left")
+        self.daq_dev_status.set("idle", "Not tested")
 
         # One row per sensor
         cols = (("Sensor", 100), ("Channel", 70), ("Pins", 112), ("Range", 78), ("Scale /V", 66),
@@ -528,6 +538,28 @@ class ComPortPage(tk.Frame):
             "samples_per_channel": samples,
             "sensors": sensors,
         }
+
+    def test_daq_device(self):
+        """NI-DAQmx self-test of the selected device alone — no sensors involved."""
+        name = self.cb_daq_dev.get().strip()
+        self.btn_daq_dev_test.config(text="TESTING…", state="disabled")
+        self.daq_dev_status.set("busy", "Self-test running…")
+
+        def run():
+            self.log(f"NI DAQ: self-test of {name or '(no device selected)'}…")
+            try:
+                info = ni_daq.NIDaq.test_device(name)
+            except Exception as exc:
+                self.log(f"NI DAQ device FAIL: {exc}")
+                self._ui(self.daq_dev_status.set, "error", f"FAIL · {exc}")
+            else:
+                text = (f"PASS · {info['product']} · S/N {info['serial']} · "
+                        f"{info['ai_channels']} AI channels")
+                self.log(f"NI DAQ device {info['name']}: {text}")
+                self._ui(self.daq_dev_status.set, "ok", text)
+            self._ui(self.btn_daq_dev_test.config, text="TEST DEVICE", state="normal")
+
+        threading.Thread(target=run, daemon=True).start()
 
     def test_all_sensors(self):
         self.test_sensors(list(range(len(self.sensor_rows))))
