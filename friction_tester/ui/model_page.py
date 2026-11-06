@@ -1,8 +1,10 @@
 """Model Settings page — create, edit and delete rows of TBL_MODEL_MASTER.
 
-Top: the edit form — model details (Model, Part Number, Customer Name, ALC
-Code, PRN Template) beside Test Condition 1 and Test Condition 2, which have
-the same attributes. Below: the model list, searchable; click a row to edit it.
+Top: three equal boxes — Model Information (Model, Part Number, Customer
+Name, ALC Code, PRN Template), then the SELECT CABLE and SHIFT CABLE test
+conditions, laid out like the Test Console (Speed / Delay / Stroke beside
+Position 1-3, LOAD underneath). Below: the model list, searchable; click a
+row to edit it.
 
 PRN Template choices are the .prn label files in the prn_templates folder.
 
@@ -21,14 +23,15 @@ from .. import db
 
 CARD_BG = theme.PANEL
 HEAD_BG = "#171c25"
+SECTION_BG = "#141922"
 PRN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                        "prn_templates")
 
-# Model list columns: (key, heading, width). "C1_LOAD"/"C2_LOAD" are min ~ max.
+# Model list columns: (key, heading, width). SELECT / SHIFT show a condition summary.
 LIST_COLS = [("MM_MODEL", "Model", 150), ("MM_PART_NUMBER", "Part Number", 130),
              ("MM_CUSTOMER_NAME", "Customer", 130), ("MM_ALC_CODE", "ALC Code", 90),
-             ("MM_PRN_TEMPLATE", "PRN Template", 170),
-             ("C1", "Condition 1", 230), ("C2", "Condition 2", 230)]
+             ("MM_PRN_TEMPLATE", "PRN Template", 170)] + [
+    (key, name, 230) for key, name in db.TESTS]
 
 
 def prn_templates():
@@ -48,8 +51,8 @@ def _fmt(v):
     return str(v)
 
 
-def _condition_summary(row, n):
-    c = lambda attr: _fmt(row.get(db.cond_col(n, attr)))
+def _condition_summary(row, test):
+    c = lambda attr: _fmt(row.get(db.cond_col(test, attr)))
     if not any(c(a) for a, *_ in db.CONDITION_FIELDS):
         return ""
     return f"{c('SPEED')} mm/s · {c('STROKE')} mm · {c('LOAD_MIN')} ~ {c('LOAD_MAX')} kgf"
@@ -105,56 +108,81 @@ class ModelSettingsPage(tk.Frame):
         self._button(bar, "SAVE", self.save_model, theme.SAVE).pack(side="right", padx=(8, 0))
         self._button(bar, "NEW", self.new_model, "#4a505c").pack(side="right", padx=(8, 0))
 
-    def _build_form(self):
-        card, _ = self._card("Model Details")
-        body = tk.Frame(card, bg=CARD_BG)
-        body.pack(fill="x", padx=14, pady=10)
-        self.fields = {}
+    def _section(self, parent, title, subtitle):
+        """A bordered box with a title strip; returns (box, body)."""
+        box = tk.Frame(parent, bg=SECTION_BG, highlightbackground=theme.BORDER, highlightthickness=1)
+        head = tk.Frame(box, bg=HEAD_BG)
+        head.pack(fill="x")
+        tk.Frame(head, bg=theme.TITLE_FG, width=4).pack(side="left", fill="y")
+        self._label(head, title, size=11, bold=True).pack(side="left", padx=(10, 8), pady=6)
+        self._label(head, subtitle, fg=theme.MUTED, size=9).pack(side="left", pady=6)
+        body = tk.Frame(box, bg=SECTION_BG)
+        body.pack(fill="both", expand=True, padx=12, pady=(10, 12))
+        return box, body
 
-        # Model details
-        info = tk.Frame(body, bg=CARD_BG)
-        info.pack(side="left", anchor="n")
+    def _build_form(self):
+        """Model Information | SELECT CABLE | SHIFT CABLE, three equal boxes."""
+        top = tk.Frame(self, bg=theme.BG)
+        self.fields = {}
+        boxes = [self._build_info(top)] + [self._build_condition(top, key, name) for key, name in db.TESTS]
+        # With a shared uniform group, column widths follow the weights: the
+        # condition boxes hold two columns of fields, so they get more room.
+        for i, (box, weight) in enumerate(zip(boxes, (4, 5, 5))):
+            box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0 if i == len(boxes) - 1 else 6))
+            top.columnconfigure(i, weight=weight, uniform="form")
+        return top
+
+    def _build_info(self, parent):
+        box, body = self._section(parent, "Model Information", "")
+        body.columnconfigure(1, weight=1)
         for r, (col, label, _sql) in enumerate(db.HEADER_FIELDS):
-            self._label(info, label).grid(row=r, column=0, sticky="w", pady=3)
+            self._label(body, label).grid(row=r, column=0, sticky="w", pady=3)
             if col == "MM_PRN_TEMPLATE":
-                w = ttk.Combobox(info, font=(theme.FONT, 10), width=22, state="readonly")
+                w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly")
                 # Re-list the folder each time the drop-down opens, so new files show up.
                 w.config(postcommand=lambda w=w: w.config(values=[""] + prn_templates()))
             else:
-                w = self._entry(info, 24)
-            w.grid(row=r, column=1, sticky="w", padx=(10, 0), pady=3)
+                w = self._entry(body, 20)
+            w.grid(row=r, column=1, sticky="ew", padx=(12, 0), pady=3)
             self.fields[col] = w
+        return box
 
-        # Test Condition 1 and 2, same attributes
-        for n in db.CONDITIONS:
-            tk.Frame(body, bg=theme.BORDER, width=1).pack(side="left", fill="y", padx=22)
-            self._build_condition(body, n).pack(side="left", anchor="n")
-        return card
+    def _build_condition(self, parent, test, name):
+        """One test's condition, in the Test Console's layout:
 
-    def _build_condition(self, parent, n):
-        f = tk.Frame(parent, bg=CARD_BG)
-        self._label(f, f"- Test Condition {n} -", fg=theme.TITLE_FG, bold=True).grid(
-            row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
-        r = 1
-        for attr, label, unit, _sql in db.CONDITION_FIELDS:
-            if attr in ("LOAD_MIN", "LOAD_MAX"):
-                continue
-            self._label(f, label).grid(row=r, column=0, sticky="w", pady=2)
-            e = self._entry(f, 8, justify="center")
-            e.grid(row=r, column=1, sticky="w", padx=(10, 6), pady=2)
-            self._label(f, unit, fg=theme.MUTED, size=9).grid(row=r, column=2, sticky="w")
-            self.fields[db.cond_col(n, attr)] = e
-            r += 1
-        # LOAD min ~ max on one line
-        self._label(f, "LOAD").grid(row=r, column=0, sticky="w", pady=2)
-        load = tk.Frame(f, bg=CARD_BG)
-        load.grid(row=r, column=1, columnspan=3, sticky="w", padx=(10, 0), pady=2)
-        for attr, sep in (("LOAD_MIN", "~"), ("LOAD_MAX", "kgf")):
-            e = self._entry(load, 7, justify="center")
-            e.pack(side="left")
-            self._label(load, sep, fg=theme.MUTED, size=9).pack(side="left", padx=6)
-            self.fields[db.cond_col(n, attr)] = e
-        return f
+            Speed  [  ] mm/Sec    Position 1 [  ] mm
+            Delay  [  ] Sec       Position 2 [  ] mm
+            Stroke [  ] mm        Position 3 [  ] mm
+            LOAD   [  ]  ~  [  ] kgf
+        """
+        box, body = self._section(parent, name, "Test Condition")
+        left = (("SPEED", "Speed"), ("DELAY_TIME", "Delay"), ("STROKE", "Stroke"))
+        right = (("POSITION_1", "Position 1"), ("POSITION_2", "Position 2"), ("POSITION_3", "Position 3"))
+        units = {attr: unit for attr, _l, unit, _s in db.CONDITION_FIELDS}
+
+        def cell(row, col, attr, label):
+            self._label(body, label).grid(row=row, column=col, sticky="w", pady=3)
+            e = self._entry(body, 6, justify="center")
+            e.grid(row=row, column=col + 1, sticky="w", padx=(8, 4), pady=3)
+            self._label(body, units[attr], fg=theme.MUTED, size=9).grid(
+                row=row, column=col + 2, sticky="w", padx=(0, 12 if col == 0 else 0))
+            self.fields[db.cond_col(test, attr)] = e
+
+        for r, ((la, ll), (ra, rl)) in enumerate(zip(left, right)):
+            cell(r, 0, la, ll)
+            cell(r, 3, ra, rl)
+
+        # LOAD min ~ max, min under the left entries and max under the right ones
+        self._label(body, "LOAD", bold=True).grid(row=3, column=0, sticky="w", pady=(8, 3))
+        lo = self._entry(body, 6, justify="center")
+        lo.grid(row=3, column=1, sticky="w", padx=(8, 4), pady=(8, 3))
+        self._label(body, "~", fg=theme.MUTED).grid(row=3, column=3, sticky="e", pady=(8, 3))
+        hi = self._entry(body, 6, justify="center")
+        hi.grid(row=3, column=4, sticky="w", padx=(8, 4), pady=(8, 3))
+        self._label(body, "kgf", fg=theme.MUTED, size=9).grid(row=3, column=5, sticky="w", pady=(8, 3))
+        self.fields[db.cond_col(test, "LOAD_MIN")] = lo
+        self.fields[db.cond_col(test, "LOAD_MAX")] = hi
+        return box
 
     def _build_list(self):
         card, head = self._card("Models")
@@ -207,10 +235,10 @@ class ModelSettingsPage(tk.Frame):
                 row[col] = text or None
         if not row["MM_MODEL"]:
             raise ValueError("Model is required")
-        for n in db.CONDITIONS:
-            lo, hi = row[db.cond_col(n, "LOAD_MIN")], row[db.cond_col(n, "LOAD_MAX")]
+        for key, name in db.TESTS:
+            lo, hi = row[db.cond_col(key, "LOAD_MIN")], row[db.cond_col(key, "LOAD_MAX")]
             if lo is not None and hi is not None and lo > hi:
-                raise ValueError(f"Condition {n}: LOAD min is above LOAD max")
+                raise ValueError(f"{name}: LOAD min is above LOAD max")
         return row
 
     def new_model(self):
@@ -218,13 +246,13 @@ class ModelSettingsPage(tk.Frame):
         self.tree.selection_remove(self.tree.selection())
         for col in db.COLUMNS:
             self._set_field(col, None)
-        for n, key in zip(db.CONDITIONS, ("select", "shift")):
-            d = self.settings["test"][key]
+        for test in db.TEST_KEYS:
+            d = self.settings["test"][test.lower()]     # Test Console panel of the same name
             defaults = {"SPEED": d["speed"], "DELAY_TIME": d["delay"], "STROKE": d["stroke"],
                         "POSITION_1": d["positions"][0], "POSITION_2": d["positions"][1],
                         "POSITION_3": d["positions"][2], "LOAD_MIN": d["load_min"], "LOAD_MAX": d["load_max"]}
             for attr, value in defaults.items():
-                self._set_field(db.cond_col(n, attr), value)
+                self._set_field(db.cond_col(test, attr), value)
         self.fields["MM_MODEL"].focus_set()
 
     def _on_select(self):
@@ -269,8 +297,8 @@ class ModelSettingsPage(tk.Frame):
         self.tree.delete(*self.tree.get_children())
         self._rows = {}
         for i, r in enumerate(rows):
-            values = [_condition_summary(r, 1) if c == "C1" else
-                      _condition_summary(r, 2) if c == "C2" else _fmt(r.get(c)) for c, _, _ in LIST_COLS]
+            values = [_condition_summary(r, c) if c in db.TEST_KEYS else _fmt(r.get(c))
+                      for c, _, _ in LIST_COLS]
             iid = self.tree.insert("", "end", values=values, tags=("odd",) if i % 2 else ())
             self._rows[iid] = r
             if select and r["MM_MODEL"] == select:

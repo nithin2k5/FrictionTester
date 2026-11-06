@@ -7,9 +7,9 @@ start-up to create the database and tables.
 TBL_MODEL_MASTER holds one row per model:
 
     Model, Part Number, Customer Name, ALC Code, PRN Template,
-    then two test conditions with the same attributes —
-    Speed, Delay Time, Stroke, Position 1-3, LOAD (min ~ max) —
-    as MM_C1_<attr> and MM_C2_<attr>.
+    then the test conditions of the two tests, SELECT CABLE and SHIFT CABLE,
+    with the same attributes — Speed, Delay Time, Stroke, Position 1-3,
+    LOAD (min ~ max) — as MM_SELECT_<attr> and MM_SHIFT_<attr>.
 """
 
 from contextlib import contextmanager
@@ -37,8 +37,8 @@ HEADER_FIELDS = [
     ("MM_PRN_TEMPLATE", "PRN Template", "VARCHAR(255)"),
 ]
 
-# One test condition: (attribute, label, unit, SQL type). There are two of
-# them, stored as MM_C1_<attribute> and MM_C2_<attribute>.
+# One test's condition: (attribute, label, unit, SQL type), stored once per
+# test as MM_<TEST>_<attribute>.
 CONDITION_FIELDS = [
     ("SPEED", "Speed", "mm/Sec", "DECIMAL(10,2)"),
     ("DELAY_TIME", "Delay Time", "Sec", "DECIMAL(10,2)"),
@@ -49,29 +49,37 @@ CONDITION_FIELDS = [
     ("LOAD_MIN", "LOAD min", "kgf", "DECIMAL(10,3)"),
     ("LOAD_MAX", "LOAD max", "kgf", "DECIMAL(10,3)"),
 ]
-CONDITIONS = (1, 2)
+# The two tests: (key used in column names, display name)
+TESTS = (("SELECT", "SELECT CABLE"), ("SHIFT", "SHIFT CABLE"))
+TEST_KEYS = [key for key, _ in TESTS]
 
 
-def cond_col(n, attr):
-    """Column for one attribute of test condition n, e.g. cond_col(2, 'SPEED') -> MM_C2_SPEED."""
-    return f"MM_C{n}_{attr}"
+def cond_col(test, attr):
+    """Column for one condition attribute of a test, e.g. cond_col('SHIFT', 'SPEED') -> MM_SHIFT_SPEED."""
+    return f"MM_{test}_{attr}"
 
 
 # Every data column in table order: (column, label, unit, SQL type)
 FIELDS = [(c, label, "", sql) for c, label, sql in HEADER_FIELDS] + [
-    (cond_col(n, attr), f"Condition {n} {label}", unit, sql)
-    for n in CONDITIONS for attr, label, unit, sql in CONDITION_FIELDS
+    (cond_col(key, attr), f"{name} {label}", unit, sql)
+    for key, name in TESTS for attr, label, unit, sql in CONDITION_FIELDS
 ]
 COLUMNS = [f[0] for f in FIELDS]
 LABELS = {f[0]: f[1] for f in FIELDS}
-NUMERIC = {cond_col(n, attr) for n in CONDITIONS for attr, *_ in CONDITION_FIELDS}
+NUMERIC = {cond_col(key, attr) for key in TEST_KEYS for attr, *_ in CONDITION_FIELDS}
 
 SCHEMA = (f"CREATE TABLE IF NOT EXISTS {TABLE} (ID INT AUTO_INCREMENT PRIMARY KEY, "
           + ", ".join(f"{c} {sql}" for c, _l, _u, sql in FIELDS) + ")")
 
-# Columns from earlier versions. The single test condition (MM_SPEED, ...)
-# becomes condition 1 with its data kept; the rest are dropped.
-RENAMED_COLUMNS = {f"MM_{attr}": (cond_col(1, attr), sql) for attr, _l, _u, sql in CONDITION_FIELDS}
+# Columns from earlier versions, renamed with their data kept:
+#   MM_<attr>      (single condition)  -> MM_SELECT_<attr>
+#   MM_C1_<attr>   (condition 1)       -> MM_SELECT_<attr>
+#   MM_C2_<attr>   (condition 2)       -> MM_SHIFT_<attr>
+RENAMED_COLUMNS = {}
+for _attr, _l, _u, _sql in CONDITION_FIELDS:
+    RENAMED_COLUMNS[f"MM_{_attr}"] = (cond_col("SELECT", _attr), _sql)
+    RENAMED_COLUMNS[f"MM_C1_{_attr}"] = (cond_col("SELECT", _attr), _sql)
+    RENAMED_COLUMNS[f"MM_C2_{_attr}"] = (cond_col("SHIFT", _attr), _sql)
 RETIRED_COLUMNS = ["MM_TEST_CABLE", "MM_SAVED_TO", "MM_DATE", "MM_TEST_RESULT"]
 
 
