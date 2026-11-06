@@ -50,6 +50,22 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
 - **EXIT** closes the app (with confirmation).
 - The status box lists any device that isn't connected.
 
+### Test results table
+
+Each confirmed part is saved to MySQL table **`TBL_TEST_RESULTS`** (created automatically), one row
+per PLC test cycle: an AT part gives two rows (`TR_STAGE` = SELECT, SHIFT), an MT part one (BOTH).
+Rows of one part share `TR_PART_UID`.
+
+| Columns | Content |
+|---|---|
+| `TR_DATETIME`, `TR_MODEL`, `TR_MODEL_TYPE`, `TR_PART_NUMBER` | when and what was tested |
+| `TR_STAGE`, `TR_LABEL`, `TR_STAGE_RESULT` | the cycle, the label scanned for it, the PLC's overall verdict for that cycle |
+| `TR_CH1_FWD_1..3`, `TR_CH1_RET_1..3`, `TR_CH2_…` | PLC stored samples at positions 1–3, raw counts |
+| `TR_CH1_FINAL`, `TR_CH2_FINAL`, `TR_CH1_LIMIT_NG`, `TR_CH2_LIMIT_NG` | PLC final values (D01250 / D01253) and channel limit flags |
+| `TR_LOT_VALUE` | the part's lot: its first scanned label (SELECT label, or the MT label) |
+| `TR_LOT_RESULT` | the part's result: OK only if every cycle of the part is OK |
+| `TR_SOURCE`, `TR_DETAIL` | PLC or simulation; full JSON (extra windows, limits, PLC counters, evidence) |
+
 ### Loading a model
 
 Type or scan a model number into **MODEL NO** and press Enter (or pick it in the list and press

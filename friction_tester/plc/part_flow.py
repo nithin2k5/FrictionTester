@@ -91,7 +91,7 @@ class SharedCycleFlow:
         self.stage = None
 
     # ------------------------------------------------------------ operator actions
-    def run(self, model, model_type):
+    def run(self, model, model_type, part_number=""):
         if self.state != "idle":
             self.ui.message("A test is already in progress - press STOP to cancel it", "busy")
             return False
@@ -105,7 +105,7 @@ class SharedCycleFlow:
         if blocker:
             self.ui.message(blocker, "fail")
             return False
-        self.model, self.model_type = model, model_type
+        self.model, self.model_type, self.part_number = model, model_type, part_number
         self._new_part()
         return True
 
@@ -192,7 +192,8 @@ class SharedCycleFlow:
                                                      if stage in CABLES else "both"), ev)
         self.stages.append({"stage": stage, "verdict": verdict, "evidence": ev.data.get("evidence"),
                             "ok_count": ev.data.get("ok_count"), "ng_count": ev.data.get("ng_count"),
-                            "finals": (ev.data.get("measurements") or {}).get("finals")})
+                            "finals": (ev.data.get("measurements") or {}).get("finals"),
+                            "measurements": ev.data.get("measurements")})
         self.test_id = None
         if stage == "select":
             self._set("at_scan_shift")
@@ -202,7 +203,7 @@ class SharedCycleFlow:
         part_ok = all(s["verdict"] == "OK" for s in self.stages)
         record = {
             "time": datetime.datetime.now().isoformat(timespec="seconds"),
-            "model": self.model, "type": self.model_type,
+            "model": self.model, "type": self.model_type, "part_number": getattr(self, "part_number", ""),
             "label_select": self.labels.get("select", ""), "label_shift": self.labels.get("shift", ""),
             "verdict": "OK" if part_ok else "NG",
             "verdict_basis": "overall PLC verdict" + (" per stage" if self.model_type == "AT" else ""),

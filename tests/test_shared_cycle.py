@@ -325,3 +325,42 @@ def test_snapshot_reader_uses_central_map():
     assert (s.ok_count, s.ng_count, s.total_count) == (10, 2, 12)
     m = read_measurements(sim)
     assert m["finals"] == {1: 0, 2: 0}
+
+
+# ------------------------------------------------------------------ TBL_TEST_RESULTS rows
+def test_result_rows_at_two_stages_share_lot():
+    from friction_tester import db
+    r = Rig()
+    r.sim.queue_verdicts("OK", "NG")
+    r.flow.run("MODEL-AT", "AT", "43794-B4000")
+    r.flow.scan("select", "43794-B4000 L1")
+    r.until_state("at_scan_shift", limit=40)
+    r.flow.scan("shift", "43794-B4000 L2")
+    r.until_state("at_scan_select", limit=40)
+    rows = db.result_rows(r.ui.parts[0], "uid-1", "simulation")
+    assert [x["TR_STAGE"] for x in rows] == ["SELECT", "SHIFT"]
+    assert [x["TR_STAGE_RESULT"] for x in rows] == ["OK", "NG"]
+    assert {x["TR_LOT_RESULT"] for x in rows} == {"NG"}            # part NG because SHIFT stage NG
+    assert {x["TR_LOT_VALUE"] for x in rows} == {"43794-B4000 L1"}
+    assert [x["TR_LABEL"] for x in rows] == ["43794-B4000 L1", "43794-B4000 L2"]
+    assert rows[0]["TR_PART_NUMBER"] == "43794-B4000"
+    assert rows[1]["TR_CH1_FINAL"] == 720 and rows[1]["TR_CH1_LIMIT_NG"] == 1
+    assert rows[0]["TR_CH1_FWD_1"] > 0 and rows[0]["TR_CH1_RET_1"] < 0
+    assert set(db.RESULT_COLUMNS) <= set(rows[0]) and len(db.RESULT_COLUMNS) == 28
+
+
+def test_result_rows_mt_one_row():
+    from friction_tester import db
+    r = Rig()
+    r.flow.run("MODEL-MT", "MT", "43794-B4100")
+    r.flow.scan("select", "43794-B4100 L9")
+    r.until_state("mt_scan", limit=40)
+    rows = db.result_rows(r.ui.parts[0], "uid-2", "simulation")
+    assert len(rows) == 1 and rows[0]["TR_STAGE"] == "BOTH" and rows[0]["TR_LOT_RESULT"] == "OK"
+    assert rows[0]["TR_CH2_RET_3"] is not None
+
+
+def test_results_schema_matches_insert_columns():
+    from friction_tester import db
+    for c in db.RESULT_COLUMNS:
+        assert c in db.RESULTS_SCHEMA

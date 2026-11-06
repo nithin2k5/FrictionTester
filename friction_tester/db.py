@@ -125,6 +125,110 @@ def init_database():
     with cursor(commit=True) as cur:
         cur.execute(SCHEMA)
         _migrate(cur)
+        cur.execute(RESULTS_SCHEMA)
+
+
+# ------------------------------------------------------------- test results
+# One row per PLC test cycle (stage) of a completed part. An AT part gives
+# two rows (SELECT, SHIFT), an MT part one row (BOTH); the rows of one part
+# share TR_PART_UID, TR_LOT_VALUE and TR_LOT_RESULT.
+#
+# Values are the PLC's raw stored samples per channel (the channel -> cable
+# and forward/return -> pull/push mapping is configuration, not stored as
+# fact); TR_DETAIL keeps the full record as JSON (extra windows, limits,
+# channel limit flags, PLC counters, completion evidence, scale/unit).
+RESULTS_TABLE = "TBL_TEST_RESULTS"
+
+_CH_COLS = [f"TR_CH{ch}_{d}_{i}" for ch in (1, 2) for d in ("FWD", "RET") for i in (1, 2, 3)]
+RESULT_COLUMNS = (
+    ["TR_PART_UID", "TR_DATETIME", "TR_MODEL", "TR_MODEL_TYPE", "TR_PART_NUMBER",
+     "TR_STAGE", "TR_LABEL", "TR_STAGE_RESULT"]
+    + _CH_COLS
+    + ["TR_CH1_FINAL", "TR_CH2_FINAL", "TR_CH1_LIMIT_NG", "TR_CH2_LIMIT_NG",
+       "TR_LOT_VALUE", "TR_LOT_RESULT", "TR_SOURCE", "TR_DETAIL"]
+)
+
+RESULTS_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS {RESULTS_TABLE} (
+        ID INT AUTO_INCREMENT PRIMARY KEY,
+        TR_PART_UID VARCHAR(40) NOT NULL,
+        TR_DATETIME DATETIME NOT NULL,
+        TR_MODEL VARCHAR(100),
+        TR_MODEL_TYPE VARCHAR(10),
+        TR_PART_NUMBER VARCHAR(100),
+        TR_STAGE VARCHAR(10),
+        TR_LABEL VARCHAR(255),
+        TR_STAGE_RESULT VARCHAR(10),
+        {", ".join(f"{c} DECIMAL(14,3)" for c in _CH_COLS)},
+        TR_CH1_FINAL DECIMAL(14,3),
+        TR_CH2_FINAL DECIMAL(14,3),
+        TR_CH1_LIMIT_NG TINYINT(1),
+        TR_CH2_LIMIT_NG TINYINT(1),
+        TR_LOT_VALUE VARCHAR(255),
+        TR_LOT_RESULT VARCHAR(10),
+        TR_SOURCE VARCHAR(50),
+        TR_DETAIL JSON,
+        TR_CREATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_tr_part (TR_PART_UID),
+        KEY idx_tr_lot (TR_LOT_VALUE),
+        KEY idx_tr_datetime (TR_DATETIME)
+    )
+"""
+
+
+def result_rows(record, part_uid, source):
+    """TBL_TEST_RESULTS rows (dicts) for one completed part record from the part flow."""
+    import json
+    rows = []
+    for st in record["stages"]:
+        meas = st.get("measurements") or {}
+        samples = meas.get("samples") or {}
+        finals = meas.get("finals") or {}
+        flags = meas.get("channel_ng") or {}
+        stage = st["stage"].upper()
+        label = record.get("label_shift") if st["stage"] == "shift" else record.get("label_select")
+        row = {
+            "TR_PART_UID": part_uid,
+            "TR_DATETIME": record["time"].replace("T", " "),
+            "TR_MODEL": record.get("model"),
+            "TR_MODEL_TYPE": record.get("type"),
+            "TR_PART_NUMBER": record.get("part_number"),
+            "TR_STAGE": stage,
+            "TR_LABEL": label,
+            "TR_STAGE_RESULT": st.get("verdict"),
+            "TR_CH1_FINAL": finals.get(1), "TR_CH2_FINAL": finals.get(2),
+            "TR_CH1_LIMIT_NG": None if flags.get(1) is None else int(bool(flags.get(1))),
+            "TR_CH2_LIMIT_NG": None if flags.get(2) is None else int(bool(flags.get(2))),
+            "TR_LOT_VALUE": record.get("label_select") or record.get("label_shift"),
+            "TR_LOT_RESULT": record.get("verdict"),
+            "TR_SOURCE": source,
+        }
+        for ch in (1, 2):
+            for d, key in (("FWD", "forward"), ("RET", "return")):
+                for i in (1, 2, 3):
+                    row[f"TR_CH{ch}_{d}_{i}"] = samples.get(ch, {}).get(key, {}).get(f"P{i}")
+        detail = {k: v for k, v in st.items() if k != "measurements"}
+        detail["measurements"] = {
+            "samples": {str(ch): v for ch, v in samples.items()},
+            "finals": {str(k): v for k, v in finals.items()},
+            "limits": {str(k): v for k, v in (meas.get("limits") or {}).items()},
+            "channel_ng": {str(k): v for k, v in flags.items()},
+        }
+        detail["verdict_basis"] = record.get("verdict_basis")
+        row["TR_DETAIL"] = json.dumps(detail, default=str)
+        rows.append(row)
+    return rows
+
+
+def insert_test_results(rows):
+    """Insert the rows of one part in a single transaction."""
+    if not rows:
+        return 0
+    sql = (f"INSERT INTO {RESULTS_TABLE} ({', '.join(RESULT_COLUMNS)}) "
+           f"VALUES ({', '.join(['%s'] * len(RESULT_COLUMNS))})")
+    with cursor(commit=True) as cur:
+        cur.executemany(sql, [[r.get(c) for c in RESULT_COLUMNS] for r in rows])
+        return cur.rowcount
 
 
 def _migrate(cur):

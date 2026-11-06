@@ -592,6 +592,34 @@ class TestConsolePage(tk.Frame):
             self._append_result_row(record)
         except Exception as exc:
             self._set_status(f"Part counted, but the result file could not be written: {exc}", theme.FAIL, 10)
+        self._save_result_rows(record)
+
+    def _save_result_rows(self, record):
+        """Write the part's rows to TBL_TEST_RESULTS on a worker thread."""
+        import uuid
+        from .. import db
+        source = "simulation" if self.simulator is not None else "PLC shared cycle"
+        rows = db.result_rows(record, uuid.uuid4().hex, source)
+        result = {}
+
+        def worker():
+            try:
+                db.init_database()
+                result["n"], result["error"] = db.insert_test_results(rows), None
+            except Exception as exc:
+                result["n"], result["error"] = 0, exc
+
+        def collect():
+            if not self._alive:
+                return
+            if "n" not in result:
+                self.after(200, collect)
+            elif result["error"] is not None:
+                self._set_status(f"Part counted, but saving to {db.RESULTS_TABLE} failed: {result['error']}",
+                                 theme.FAIL, 10)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(200, collect)
 
     def _result_dir(self):
         path = self.save_dir.get().strip() or "data"
@@ -1153,7 +1181,7 @@ class TestConsolePage(tk.Frame):
             return
         if self.shared:
             t = self.settings["test"]
-            if self.flow.run(t["select"].get("model"), t.get("model_type", "")):
+            if self.flow.run(t["select"].get("model"), t.get("model_type", ""), t.get("part_number", "")):
                 for e in self.scan_entries.values():
                     e.delete(0, "end")
             return
