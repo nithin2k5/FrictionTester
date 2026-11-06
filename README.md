@@ -14,15 +14,20 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232) and an NI USB-
    python main.py
    ```
 
-## Comm Settings page
+## COM Setting page
 
-**PLC – RS232:** COM port (auto-detected, ⟳ to rescan), baud rate, data bits, parity, stop bits,
-flow control, terminator and timeout. *Connect* opens the port; *Send* writes a test command and
-shows the reply.
+The interface follows the FeederCable tester: a black header (logo, page title, clock), sidebar
+tiles, and a dark settings panel with one row per device. Each row's **TEST** button shows
+TESTING… → PASS / FAIL, and details go to the log box at the bottom.
 
-**NI USB-6210:** device (auto-detected, prefers a 6210), AI channels ai0–ai15, terminal config
-(Differential uses ai0–ai7), input range (±10 / ±5 / ±1 / ±0.2 V), sample rate (≤ 250 kS/s
-aggregate) and samples per channel. *Connect* creates and verifies the DAQmx task; *Read* acquires
-one block and shows the mean voltage per channel.
+**PLC – RS232:** COM port, baud rate, format (e.g. 8N1, 7E1), flow control, terminator and
+timeout. TEST opens the port and, if a *Test Command* is set, sends it and expects a reply.
 
-*Save Settings* writes `settings.json` next to `main.py` (git-ignored, machine-specific).
+**NI USB-6210:** NI device (prefers a 6210), AI channels (e.g. `ai0, ai2` or `ai0-ai3`), terminal
+config (Differential uses ai0–ai7), input range (±10 / ±5 / ±1 / ±0.2 V), sample rate (≤ 250 kS/s
+aggregate) and samples per channel. TEST acquires one block and logs the mean voltage per channel.
+
+**Update** rescans COM ports and NI devices. **Save** writes `settings.json` next to `main.py`
+(git-ignored, machine-specific).
+
+Other sidebar pages (Test Console, Settings, Report, Help) are placeholders for now.
