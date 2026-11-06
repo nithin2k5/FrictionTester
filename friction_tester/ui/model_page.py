@@ -42,10 +42,13 @@ def prn_templates():
         return []
 
 
+EMPTY = "-"   # shown for a value that hasn't been set; saved as NULL
+
+
 def _fmt(v):
-    """Display a DB value: drop trailing zeros from decimals, blank for None."""
-    if v is None:
-        return ""
+    """Display a DB value: drop trailing zeros from decimals, "-" for an empty value."""
+    if v is None or v == "":
+        return EMPTY
     if isinstance(v, (Decimal, float)):
         return f"{float(v):g}"
     return str(v)
@@ -53,8 +56,8 @@ def _fmt(v):
 
 def _condition_summary(row, test):
     c = lambda attr: _fmt(row.get(db.cond_col(test, attr)))
-    if not any(c(a) for a, *_ in db.CONDITION_FIELDS):
-        return ""
+    if all(row.get(db.cond_col(test, a)) is None for a, *_ in db.CONDITION_FIELDS):
+        return EMPTY
     return f"{c('SPEED')} mm/s · {c('STROKE')} mm · {c('LOAD_MIN')} ~ {c('LOAD_MAX')} kgf"
 
 
@@ -84,10 +87,23 @@ class ModelSettingsPage(tk.Frame):
                          activeforeground=fg, font=(theme.FONT, 10, "bold"), bd=0, padx=16, pady=5,
                          cursor="hand2", disabledforeground="#8a8f99")
 
-    def _entry(self, parent, width, justify="left"):
-        return tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify=justify,
-                        font=(theme.FONT, 11), width=width, bd=1, relief="solid",
-                        highlightbackground=theme.BORDER, highlightthickness=1)
+    def _entry(self, parent, width, justify="left", placeholder=True):
+        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify=justify,
+                     font=(theme.FONT, 11), width=width, bd=1, relief="solid",
+                     highlightbackground=theme.BORDER, highlightthickness=1)
+        if placeholder:
+            # Typing replaces the "-" (text is selected on focus); a box left
+            # empty shows "-" again.
+            def focus_in(_e):
+                e.after_idle(lambda: e.select_range(0, "end"))
+
+            def focus_out(_e):
+                if not e.get().strip():
+                    e.insert(0, EMPTY)
+
+            e.bind("<FocusIn>", focus_in, add="+")
+            e.bind("<FocusOut>", focus_out, add="+")
+        return e
 
     def _card(self, title, subtitle=""):
         card = tk.Frame(self, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
@@ -140,7 +156,7 @@ class ModelSettingsPage(tk.Frame):
             if col == "MM_PRN_TEMPLATE":
                 w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly")
                 # Re-list the folder each time the drop-down opens, so new files show up.
-                w.config(postcommand=lambda w=w: w.config(values=[""] + prn_templates()))
+                w.config(postcommand=lambda w=w: w.config(values=[EMPTY] + prn_templates()))
             else:
                 w = self._entry(body, 20)
             w.grid(row=r, column=1, sticky="ew", padx=(12, 0), pady=3)
@@ -186,7 +202,7 @@ class ModelSettingsPage(tk.Frame):
 
     def _build_list(self):
         card, head = self._card("Models")
-        self.search = self._entry(head, 22)
+        self.search = self._entry(head, 22, placeholder=False)
         self.search.config(font=(theme.FONT, 10))
         self.search.pack(side="right", padx=8)
         self.search.bind("<KeyRelease>", lambda _e: self._schedule_search())
@@ -223,6 +239,8 @@ class ModelSettingsPage(tk.Frame):
         row = {}
         for col in db.COLUMNS:
             text = self.fields[col].get().strip()
+            if text == EMPTY:
+                text = ""
             if col in db.NUMERIC:
                 if text == "":
                     row[col] = None
@@ -242,17 +260,10 @@ class ModelSettingsPage(tk.Frame):
         return row
 
     def new_model(self):
-        """Clear the form; both conditions start from the Test Console's defaults."""
+        """Clear the form: every field shows "-" until it is filled in."""
         self.tree.selection_remove(self.tree.selection())
         for col in db.COLUMNS:
             self._set_field(col, None)
-        for test in db.TEST_KEYS:
-            d = self.settings["test"][test.lower()]     # Test Console panel of the same name
-            defaults = {"SPEED": d["speed"], "DELAY_TIME": d["delay"], "STROKE": d["stroke"],
-                        "POSITION_1": d["positions"][0], "POSITION_2": d["positions"][1],
-                        "POSITION_3": d["positions"][2], "LOAD_MIN": d["load_min"], "LOAD_MAX": d["load_max"]}
-            for attr, value in defaults.items():
-                self._set_field(db.cond_col(test, attr), value)
         self.fields["MM_MODEL"].focus_set()
 
     def _on_select(self):

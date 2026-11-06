@@ -141,7 +141,9 @@ class CablePanel(tk.Frame):
         f = tk.Frame(self, bg=theme.PANEL)
         cfg = self.cfg
         self.ent = {}
-        cell = {"padx": 2, "pady": 1}
+        # Entry and value boxes stretch with their columns (weights set
+        # below), so the two tables fill the panel width with no gap.
+        cell = {"padx": 2, "pady": 1, "sticky": "ew"}
 
         def text(col, row, t, bold=False, fg="white", sticky="w", **kw):
             tk.Label(f, text=t, bg=theme.PANEL, fg=fg, font=_font(9 if bold else 8, bold)).grid(
@@ -190,6 +192,8 @@ class CablePanel(tk.Frame):
             text(col + 2, 4, "kgf", padx=(0, 3))
 
         # Same height for every data row, so the two tables share baselines
+        for col in (1, 4, 8, 11):          # condition entries and result values
+            f.columnconfigure(col, weight=1, uniform="boxes")
         f.rowconfigure(0, minsize=20)
         for r in range(1, 5):
             f.rowconfigure(r, minsize=26, uniform="rows")
