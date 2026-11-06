@@ -12,6 +12,9 @@ The indicator's ID Number (F-40) picks the mode:
 
 The data field is 8 characters including the sign; the decimal point is
 wherever the indicator's F-00 setting puts it, so the number is used as sent.
+
+The app has no ID setting: on connect it listens for stream frames, and if
+none arrive it uses command mode with ID = loadcell number (L1 = 01, L2 = 02).
 """
 
 import threading
@@ -84,13 +87,17 @@ class Loadcell:
         return self._ser is not None and self._ser.is_open
 
     def connect(self, cfg):
+        """Open the port and work out the indicator's mode.
+
+        There is no ID setting on the page (as in the EOL tester): if the
+        indicator is already streaming ST frames it is in stream mode,
+        otherwise it is polled in command mode with its loadcell number as
+        the ID (L1 -> ID01P, L2 -> ID02P).
+        """
         if serial is None:
             raise RuntimeError("pyserial is not installed (pip install pyserial)")
         if not cfg["port"]:
             raise ValueError("Select a COM port")
-        device_id = int(cfg["device_id"])
-        if not 0 <= device_id <= 99:
-            raise ValueError("Indicator ID must be 00 (stream) or 01–99")
         self.disconnect()
         self._ser = serial.Serial(
             port=cfg["port"], baudrate=int(cfg["baudrate"]),
@@ -98,7 +105,18 @@ class Loadcell:
             timeout=0.5, write_timeout=0.5,
         )
         self.port = cfg["port"]
-        self.device_id = device_id
+        self.device_id = STREAM_ID if self._is_streaming() else self.number
+
+    def _is_streaming(self):
+        """True if a stream-mode frame (ST,...) arrives within ~0.5 s."""
+        self._ser.reset_input_buffer()
+        self._ser.readline()                       # skip a possibly partial line
+        line = self._ser.readline().decode("ascii", errors="replace").strip()
+        return line.upper().startswith("ST,")
+
+    @property
+    def mode_text(self):
+        return "stream mode" if self.stream_mode else f"command mode, ID {self.device_id:02d}"
 
     def disconnect(self):
         if self._ser is not None:

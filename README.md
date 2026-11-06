@@ -44,11 +44,14 @@ the PLC answers (coil 0, three tries). TEST reads the *Test bits* (XGB bit addre
 `P0000`, `M0010`; coil = word × 16 + hex bit, so `M0067` → 103). *Register* + READ reads D
 registers (`D0001`, N points) and shows raw values plus 32-bit float in both word orders.
 
-**Loadcells L1 / L2 – KOMEIN AM-50LW indicators (RS232, 8N1, 2400–57600 baud).** ID is the
-indicator's ID Number (F-40):
+**Loadcells L1 / L2 – KOMEIN AM-50LW indicators (RS232, 8N1, 2400–57600 baud).** No station ID
+on the page (as in the EOL tester). CONNECT detects the mode:
 
-- `01–99` command mode: TEST sends `ID01P` and parses the reply `ID,01,+01234.5`; ZERO sends `ID01Z`.
-- `00` stream mode: TEST takes the next `ST,NT,+01234.5` frame (`ER` is reported as an error).
+- If the indicator is streaming (F-40 = `000`), TEST takes the next `ST,NT,+01234.5` frame
+  (`ER` is reported as an error); ZERO is unavailable.
+- Otherwise it is polled in command mode with the loadcell number as ID: TEST sends `ID01P` (L1) /
+  `ID02P` (L2) and parses `ID,01,+01234.5`; ZERO sends `ID01Z`. Set F-40 on the indicators to
+  `001` and `002` to match.
 
 **NI DAQ – NI USB-6210:** device (prefers a 6210), AI channels (e.g. `ai0, ai2` or `ai0-ai3`),
 terminal config (Differential uses ai0–ai7), range (±10 / ±5 / ±1 / ±0.2 V), sample rate

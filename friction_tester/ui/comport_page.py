@@ -330,7 +330,7 @@ class ComPortPage(tk.Frame):
 
     # ========================================================== loadcells
     def _build_loadcell_card(self, parent):
-        body = self._card(parent, "Loadcells", f"{loadcell.MODEL}  ·  RS232 8N1  ·  ID = F-40 (00 = stream)")
+        body = self._card(parent, "Loadcells", f"{loadcell.MODEL}  ·  RS232 8N1  ·  stream / command mode auto-detected")
         self._table_header(body, COLS)
         for i, lc in enumerate(self.loadcells):
             self._build_loadcell_row(body, i, lc)
@@ -349,12 +349,11 @@ class ComPortPage(tk.Frame):
             w["zero"].pack(side="left")
             return f
 
-        w["port"], w["baud"], w["id"], _a, w["status"] = self._row(
+        w["port"], w["baud"], _dash, _a, w["status"] = self._row(
             body, COLS, f"L{lc.number}", [
                 lambda p: self._combo(p, [], cfg["port"]),
                 lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=9),
-                lambda p: self._entry(p, f"{int(cfg['device_id']):02d}", width=5, digits_only=True,
-                                      justify="center"),
+                lambda p: self._label(p, "-", fg=theme.MUTED, width=5),   # no station ID
                 actions,
                 StatusPill,
             ])
@@ -362,10 +361,7 @@ class ComPortPage(tk.Frame):
 
     def _lc_config(self, i):
         w = self.lc_rows[i]
-        dev_id = w["id"].get().strip()
-        if not dev_id.isdigit() or int(dev_id) > 99:
-            raise ValueError("Indicator ID must be 00 (stream) or 01–99")
-        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get()), "device_id": int(dev_id)}
+        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get())}
 
     def _show_lc_state(self, i, error=None, text=None):
         lc, w = self.loadcells[i], self.lc_rows[i]
@@ -377,11 +373,10 @@ class ComPortPage(tk.Frame):
         w["zero"].config(state="normal" if connected and not lc.stream_mode else "disabled")
         for key in ("port", "baud"):
             w[key].config(state="disabled" if connected else "readonly")
-        w["id"].config(state="disabled" if connected else "normal")
         if text:
             w["status"].set("error" if error else "ok", text)
         elif connected:
-            w["status"].set("ok", f"Connected · {lc.port}")
+            w["status"].set("ok", f"Connected · {lc.port} · {'stream' if lc.stream_mode else f'ID{lc.device_id:02d}'}")
         elif error:
             w["status"].set("error", "Connection failed")
         else:
@@ -394,17 +389,23 @@ class ComPortPage(tk.Frame):
             self.log(f"{lc.name} disconnected.")
             self._show_lc_state(i)
             return
-        try:
-            cfg = self._lc_config(i)
-            lc.connect(cfg)
-        except Exception as exc:
-            self.log(f"{lc.name} error: {exc}")
-            self._show_lc_state(i, error=True)
-            return
-        self.settings["loadcells"][i] = cfg
-        mode = "stream mode" if lc.stream_mode else f"command mode, ID {lc.device_id:02d}"
-        self.log(f"{lc.name} connected on {cfg['port']} ({cfg['baudrate']} 8N1, {mode}).")
-        self._show_lc_state(i)
+        cfg = self._lc_config(i)
+        w = self.lc_rows[i]
+        w["connect"].config(text="CONNECTING…", bg=theme.BUSY, state="disabled")
+        w["status"].set("busy", "Connecting…")
+
+        def run():
+            try:
+                lc.connect(cfg)
+            except Exception as exc:
+                self.log(f"{lc.name} error: {exc}")
+                self._ui(self._show_lc_state, i, error=True)
+                return
+            self.settings["loadcells"][i] = cfg
+            self.log(f"{lc.name} connected on {cfg['port']} ({cfg['baudrate']} 8N1, {lc.mode_text}).")
+            self._ui(self._show_lc_state, i)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def test_loadcell(self, i):
         lc = self.loadcells[i]
