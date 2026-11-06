@@ -74,11 +74,7 @@ class CablePanel(tk.Frame):
         tk.Label(top, text=title, bg=theme.PANEL, fg="white", font=_font(16)).pack(side="left", expand=True)
         tk.Frame(self, bg=theme.BORDER, height=1).pack(fill="x", padx=10)
 
-        body = tk.Frame(self, bg=theme.PANEL)
-        body.pack(fill="x", padx=10, pady=6)
-        self._build_conditions(body).pack(side="left", fill="y")
-        tk.Frame(body, bg=theme.BORDER, width=1).pack(side="left", fill="y", padx=8)
-        self._build_results(body).pack(side="left", fill="y")
+        self._build_tables().pack(fill="x", padx=10, pady=6)
 
         self.plot = LoadStrokePlot(self)
         self.plot.add_series("PULL", PULL_COLOR)
@@ -96,8 +92,10 @@ class CablePanel(tk.Frame):
 
     # ----------------------------------------------------------- widgets
     def _value(self, parent, text, width=5, size=11):
+        # A 1px highlight ring like the entries', so result boxes and
+        # condition boxes are the same height and line up row for row.
         return tk.Label(parent, text=text, bg=FIELD_BG, fg=VALUE_FG, font=_font(size), width=width,
-                        relief="solid", bd=1, highlightthickness=0)
+                        relief="solid", bd=1, highlightthickness=1, highlightbackground=theme.BORDER)
 
     def _entry(self, parent, value, width=5, fmt="{:g}"):
         e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify="center",
@@ -112,49 +110,68 @@ class CablePanel(tk.Frame):
     def _small(self, parent, text, fg="white"):
         return tk.Label(parent, text=text, bg=theme.PANEL, fg=fg, font=_font(9))
 
-    def _build_conditions(self, parent):
-        f = tk.Frame(parent, bg=theme.PANEL)
-        self._caption(f, "TEST CONDITION").grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 3))
-        self._small(f, "Position", fg=theme.HEADER_FG).grid(row=0, column=4, columnspan=2, sticky="s")
+    def _build_tables(self):
+        """TEST CONDITION and TEST RESULTS in one grid, so their rows line up.
+
+        Columns:  0 label | 1 entry | 2 unit | 3 pos no. | 4 entry | 5 unit | 6 divider |
+                  7 PULLn | 8 value | 9 kgf | 10 PUSHn | 11 value | 12 kgf
+        Rows:     0 captions | 1 Speed / PULL1 | 2 Delay / PULL2 | 3 Stroke / PULL3 | 4 LOAD / Mean
+        """
+        f = tk.Frame(self, bg=theme.PANEL)
         cfg = self.cfg
         self.ent = {}
+        cell = {"padx": 2, "pady": 1}
+
+        def text(col, row, t, bold=False, fg="white", sticky="w", **kw):
+            tk.Label(f, text=t, bg=theme.PANEL, fg=fg, font=_font(10 if bold else 9, bold)).grid(
+                row=row, column=col, sticky=sticky, **kw)
+
+        # Captions
+        self._caption(f, "TEST CONDITION").grid(row=0, column=0, columnspan=3, sticky="w")
+        text(3, 0, "Position", fg=theme.HEADER_FG, sticky="", columnspan=3)
+        self._caption(f, "TEST RESULTS").grid(row=0, column=7, columnspan=6, sticky="w")
+
+        # Test conditions, rows 1-3
         for r, (key, label, unit) in enumerate((("speed", "Speed", "mm/s"), ("delay", "Delay", "s"),
                                                 ("stroke", "Stroke", "mm")), start=1):
-            self._small(f, label).grid(row=r, column=0, sticky="w")
+            text(0, r, label)
             self.ent[key] = self._entry(f, cfg[key])
-            self.ent[key].grid(row=r, column=1, padx=3, pady=1)
-            self._small(f, unit).grid(row=r, column=2, sticky="w", padx=(0, 8))
-            self._small(f, str(r)).grid(row=r, column=3, sticky="e")
+            self.ent[key].grid(row=r, column=1, **cell)
+            text(2, r, unit, padx=(0, 6))
+            text(3, r, str(r), sticky="e")
             self.ent[f"pos{r}"] = self._entry(f, cfg["positions"][r - 1])
-            self.ent[f"pos{r}"].grid(row=r, column=4, padx=3, pady=1)
-            self._small(f, "mm").grid(row=r, column=5, sticky="w")
+            self.ent[f"pos{r}"].grid(row=r, column=4, **cell)
+            text(5, r, "mm")
 
-        load = tk.Frame(f, bg=theme.PANEL)
-        load.grid(row=4, column=0, columnspan=6, sticky="w", pady=(5, 0))
-        tk.Label(load, text="LOAD", bg=theme.PANEL, fg="white", font=_font(10, True)).pack(side="left")
-        self.ent["load_min"] = self._entry(load, cfg["load_min"], fmt="{:.2f}")
-        self.ent["load_min"].pack(side="left", padx=4)
-        self._small(load, "~").pack(side="left")
-        self.ent["load_max"] = self._entry(load, cfg["load_max"], fmt="{:.2f}")
-        self.ent["load_max"].pack(side="left", padx=4)
-        self._small(load, "kgf").pack(side="left")
-        return f
+        # LOAD min ~ max, row 4, sharing the entry columns above
+        text(0, 4, "LOAD", bold=True)
+        self.ent["load_min"] = self._entry(f, cfg["load_min"], fmt="{:.2f}")
+        self.ent["load_min"].grid(row=4, column=1, **cell)
+        text(3, 4, "~", sticky="e")
+        self.ent["load_max"] = self._entry(f, cfg["load_max"], fmt="{:.2f}")
+        self.ent["load_max"].grid(row=4, column=4, **cell)
+        text(5, 4, "kgf")
 
-    def _build_results(self, parent):
-        f = tk.Frame(parent, bg=theme.PANEL)
-        self._caption(f, "TEST RESULTS").grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 3))
+        # Divider between the two tables
+        tk.Frame(f, bg=theme.BORDER, width=1).grid(row=0, column=6, rowspan=5, sticky="ns", padx=8)
+
+        # Test results, rows 1-3, then the means on row 4
         for i in range(1, 4):
-            for col, kind in ((0, "PULL"), (3, "PUSH")):
-                self._small(f, f"{kind}{i}").grid(row=i, column=col, sticky="w")
+            for col, kind in ((7, "PULL"), (10, "PUSH")):
+                text(col, i, f"{kind}{i}")
                 self.res[f"{kind.lower()}{i}"] = self._value(f, "0.00")
-                self.res[f"{kind.lower()}{i}"].grid(row=i, column=col + 1, padx=3, pady=1)
-                self._small(f, "kgf").grid(row=i, column=col + 2, sticky="w", padx=(0, 6))
-        for col, kind in ((0, "pull"), (3, "push")):
-            tk.Label(f, text="Mean", bg=theme.PANEL, fg="white", font=_font(10, True)).grid(
-                row=4, column=col, sticky="w", pady=(5, 0))
+                self.res[f"{kind.lower()}{i}"].grid(row=i, column=col + 1, **cell)
+                text(col + 2, i, "kgf", padx=(0, 6))
+        for col, kind in ((7, "pull"), (10, "push")):
+            text(col, 4, "Mean", bold=True)
             self.res[f"{kind}_mean"] = self._value(f, "0.00")
-            self.res[f"{kind}_mean"].grid(row=4, column=col + 1, padx=3, pady=(5, 0))
-            self._small(f, "kgf").grid(row=4, column=col + 2, sticky="w", pady=(5, 0))
+            self.res[f"{kind}_mean"].grid(row=4, column=col + 1, **cell)
+            text(col + 2, 4, "kgf", padx=(0, 6))
+
+        # Same height for every data row, so the two tables share baselines
+        f.rowconfigure(0, minsize=24)
+        for r in range(1, 5):
+            f.rowconfigure(r, minsize=29, uniform="rows")
         return f
 
     # ------------------------------------------------------------- data
