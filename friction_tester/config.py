@@ -49,6 +49,7 @@ DEFAULT_SETTINGS = {
             "start_shift": "", "done_shift": "",
         },
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
+        "part_number": "",         # part number of the loaded model; scanned labels must contain it
         # How the Test Console talks to the PLC (docs/plc_shared_cycle.md).
         #   "independent": per-cable start_<cable>/done_<cable> handshake above
         #   "shared_cycle": the ladder's one automatic cycle (M00029 / D05010)

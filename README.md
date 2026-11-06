@@ -50,6 +50,14 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
 - **EXIT** closes the app (with confirmation).
 - The status box lists any device that isn't connected.
 
+### Loading a model
+
+Type or scan a model number into **MODEL NO** and press Enter (or pick it in the list and press
+MODEL CHANGE). The app fetches that model from `TBL_MODEL_MASTER`: part number, Type and the SELECT /
+SHIFT test conditions. Unknown model numbers show a "Model not found" pop-up. Every scanned label
+must contain the loaded part number (spaces and hyphens ignored); a label for another part shows a
+"Wrong label" pop-up and no test starts. RUN also needs a part number and a target.
+
 ### Test flow (by model Type)
 
 Load a model with **Model Change** (its Type, MT or AT, comes from Model Settings), then press

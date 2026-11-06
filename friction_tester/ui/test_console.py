@@ -714,10 +714,21 @@ class TestConsolePage(tk.Frame):
         self.current_model = tk.Label(body, text=self.settings["test"]["select"].get("model") or "No model loaded",
                                       bg=self.TILE, fg=theme.TITLE_FG, font=_font(12, True), anchor="w",
                                       padx=8, pady=3, highlightbackground="#232a36", highlightthickness=1)
-        self.current_model.pack(fill="x")
+        # (the model name is shown in the MODEL NO box below; this label is kept for status text only)
+        # Model number box: type or scan a model number + Enter to fetch it from the database
+        mrow = tk.Frame(body, bg=self.CARD)
+        mrow.pack(fill="x")
+        tk.Label(mrow, text="MODEL NO", bg=self.CARD, fg=theme.MUTED, font=_font(8, True)).pack(side="left")
+        self.model_entry = tk.Entry(mrow, bg=self.TILE, fg="white", insertbackground="white", font=_font(10),
+                                    relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36",
+                                    highlightcolor=theme.UPDATE)
+        self.model_entry.pack(side="left", fill="x", expand=True, padx=(6, 0), ipady=2)
+        self.model_entry.bind("<Return>", lambda _e: self.fetch_model(self.model_entry.get()))
+        self.part_lbl = tk.Label(body, text="Part —", bg=self.CARD, fg="#c9d1dc", font=_font(9), anchor="w")
+        self.part_lbl.pack(fill="x", pady=(1, 0))
         lb_frame = tk.Frame(body, bg=self.CARD)
-        lb_frame.pack(fill="x", pady=(5, 5))
-        self.model_list = tk.Listbox(lb_frame, height=3, bg=self.TILE, fg="#d6dbe4", font=_font(9),
+        lb_frame.pack(fill="x", pady=(2, 3))
+        self.model_list = tk.Listbox(lb_frame, height=2, bg=self.TILE, fg="#d6dbe4", font=_font(9),
                                      selectbackground="#2a4a7a", selectforeground="white", relief="flat", bd=0,
                                      highlightthickness=1, highlightbackground="#232a36", highlightcolor="#2a4a7a",
                                      activestyle="none", exportselection=False)
@@ -728,7 +739,7 @@ class TestConsolePage(tk.Frame):
         self.model_list.bind("<Double-Button-1>", lambda _e: self.model_change())
         self._models = []
         tk.Button(body, text="MODEL CHANGE", command=self.model_change, bg=theme.UPDATE, fg="white",
-                  activebackground="#1e88e5", activeforeground="white", bd=0, pady=4, font=_font(9, True),
+                  activebackground="#1e88e5", activeforeground="white", bd=0, pady=2, font=_font(9, True),
                   cursor="hand2").pack(fill="x")
 
         # ---- Production: target / complete + progress bar ----------------
@@ -819,7 +830,7 @@ class TestConsolePage(tk.Frame):
             e = tk.Entry(body, bg=self.TILE, fg="white", insertbackground="white", font=_font(10),
                          relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36",
                          highlightcolor=theme.UPDATE)
-            e.grid(row=r, column=1, sticky="ew", pady=2, ipady=2)
+            e.grid(row=r, column=1, sticky="ew", pady=1, ipady=1)
             # A barcode scanner types the label and ends with Enter.
             e.bind("<Return>", lambda _e, k=key: self.on_scan(k))
             self.scan_entries[key] = e
@@ -990,7 +1001,45 @@ class TestConsolePage(tk.Frame):
         if not sel or sel[0] >= len(self._models):
             self._set_status("Model Change: select a model in the list first", theme.BUSY)
             return
-        row = self._models[sel[0]]
+        self.fetch_model(self._models[sel[0]]["MM_MODEL"])
+
+    def fetch_model(self, model):
+        """Fetch a model's part and specifications from TBL_MODEL_MASTER, then load them."""
+        model = (model or "").strip()
+        if not model:
+            return
+        if self._flow != "idle":
+            self._set_status("Model Change: press STOP first — a test is in progress", theme.BUSY)
+            return
+        result = {}
+
+        def worker():
+            try:
+                from .. import db
+                result["row"], result["error"] = db.get_model(model), None
+            except Exception as exc:
+                result["row"], result["error"] = None, exc
+
+        def collect():
+            if not self._alive:
+                return
+            if "row" not in result:
+                self.after(100, collect)
+                return
+            if result["error"] is not None:
+                messagebox.showerror("Model", f"Could not read the model database:\n{result['error']}", parent=self)
+            elif result["row"] is None:
+                messagebox.showerror("Model not found",
+                                     f"Model {model} is not in Model Settings.\nCheck the model number.", parent=self)
+            else:
+                self._apply_model(result["row"])
+
+        self._set_status(f"Fetching model {model}…", theme.UPDATE)
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(100, collect)
+
+    def _apply_model(self, row):
+        """Load a fetched model: part number, type and both cables' specifications."""
 
         def num(v):
             return None if v is None else float(v)
@@ -1004,6 +1053,7 @@ class TestConsolePage(tk.Frame):
             panel.reset_results()
         model_type = (row.get("MM_TYPE") or "").strip().upper()
         self.settings["test"]["model_type"] = model_type
+        self.settings["test"]["part_number"] = (row.get("MM_PART_NUMBER") or "").strip()
         self._show_current_model()
         save_settings(self.settings)
         self._set_status(f"Model changed to {row['MM_MODEL']}" + (f" ({model_type})" if model_type else ""),
@@ -1013,6 +1063,17 @@ class TestConsolePage(tk.Frame):
         t = self.settings["test"]
         model, mtype = t["select"].get("model"), t.get("model_type", "")
         self.current_model.config(text=(f"{model}  ·  {mtype}" if mtype else model) if model else "No model loaded")
+        part = t.get("part_number", "")
+        self.part_lbl.config(text=(f"Part  {part}" if part else "Part —") + (f"   ·   Type  {mtype}" if mtype else ""))
+        self.model_entry.delete(0, "end")
+        if model:
+            self.model_entry.insert(0, model)
+
+    def _label_matches_part(self, label):
+        """A scanned label must contain the loaded model's part number (spaces/hyphens ignored)."""
+        norm = lambda x: "".join(ch for ch in x.upper() if ch.isalnum())
+        part = self.settings["test"].get("part_number", "")
+        return bool(part) and norm(part) in norm(label)
 
     # ------------------------------------------------------- test flow
     # AT: scan SELECT label -> SELECT test -> scan SHIFT label -> SHIFT test.
@@ -1086,6 +1147,10 @@ class TestConsolePage(tk.Frame):
         """RUN: arm the flow for the loaded model's type."""
         if self._flow == "idle" and not self._target_is_set():
             return
+        if self._flow == "idle" and not self.settings["test"].get("part_number"):
+            messagebox.showwarning("Part not set", "The loaded model has no Part Number.\n\n"
+                                   "Set it in Model Settings, then load the model again.", parent=self)
+            return
         if self.shared:
             t = self.settings["test"]
             if self.flow.run(t["select"].get("model"), t.get("model_type", "")):
@@ -1133,6 +1198,14 @@ class TestConsolePage(tk.Frame):
         """A label was scanned (or typed + Enter) into the SELECT or SHIFT box."""
         label = self.scan_entries[key].get().strip()
         if not label:
+            return
+        if self._flow in ("at_scan_select", "at_scan_shift", "mt_scan") and not self._label_matches_part(label):
+            part = self.settings["test"].get("part_number", "") or "(none set)"
+            messagebox.showerror("Wrong label",
+                                 f"The scanned label does not match the loaded part.\n\n"
+                                 f"Expected part: {part}\nScanned: {label}", parent=self)
+            self.scan_entries[key].delete(0, "end")
+            self._set_status(f"Label rejected: expected part {part}", theme.FAIL, hold=6)
             return
         if self.shared:
             if self._flow == "mt_scan":
