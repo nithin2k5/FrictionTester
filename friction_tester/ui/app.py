@@ -1,10 +1,12 @@
 """Main window: black header with logo/title/clock, sidebar tiles, content area."""
 
 import datetime
+import threading
 import tkinter as tk
 
 from . import theme
 from .comport_page import ComPortPage
+from .test_console import TestConsolePage
 
 NAV_IDLE = ("#111", "white", "#444")        # bg, fg, border
 NAV_ACTIVE = ("#d4d4d4", "black", "#f0f0f0")
@@ -13,6 +15,7 @@ NAV_ACTIVE = ("#d4d4d4", "black", "#f0f0f0")
 class App:
     # (icon, caption, page key, header title)
     PAGES = [
+        ("🏠", "Test Console", "test_console", "FRICTION TEST MACHINE"),
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
     ]
 
@@ -35,7 +38,26 @@ class App:
 
         self._build_header()
         self._build_body()
-        self.load_page("comport_settings")
+        self.load_page("test_console")
+        threading.Thread(target=self._autoconnect, daemon=True).start()
+
+    def _autoconnect(self):
+        """Connect every device that has a saved COM port, in the background.
+
+        Failures are left for the pages to show (Test Console lists anything
+        not connected; COM Setting shows each row's state).
+        """
+        s = self.settings
+        jobs = []
+        if s["plc"]["port"]:
+            jobs.append((self.plc, s["plc"]))
+        jobs += [(dev, cfg) for dev, cfg in zip(self.loadcells, s["loadcells"]) if cfg["port"]]
+        jobs += [(dev, cfg) for dev, cfg in zip(self.servos, s["servos"]) if cfg["port"]]
+        for dev, cfg in jobs:
+            try:
+                dev.connect(cfg)
+            except Exception:
+                pass
 
     # ---------------------------------------------------------------- header
     def _build_header(self):
@@ -104,3 +126,6 @@ class App:
         if page_name == "comport_settings":
             ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells, self.servos).pack(
                 fill="both", expand=True, padx=20, pady=20)
+        elif page_name == "test_console":
+            TestConsolePage(self.content, self.settings, self.plc, self.loadcells, self.servos).pack(
+                fill="both", expand=True, padx=12, pady=10)

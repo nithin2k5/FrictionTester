@@ -7,3 +7,6 @@ venv/
 
 # Machine-specific connection settings
 settings.json
+
+# Test Console screen saves
+screenshots/

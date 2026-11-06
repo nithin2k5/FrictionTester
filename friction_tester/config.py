@@ -32,6 +32,16 @@ DEFAULT_SETTINGS = {
         {"port": "", "baudrate": 38400, "axis": 0},
         {"port": "", "baudrate": 38400, "axis": 1},
     ],
+    # Test Console conditions per cable, plus the PLC bits for its sensor
+    # lamps (XGB addresses — adjust to the machine's I/O list).
+    "test": {
+        "select": {"speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
+                   "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
+                   "front_sensor": "P0000", "rear_sensor": "P0001"},
+        "shift": {"speed": 50.0, "delay": 5.0, "stroke": 50.0, "positions": [-20.0, 0.0, 20.0],
+                  "load_min": 0.30, "load_max": 0.60, "clamp_count": 0,
+                  "front_sensor": "P0002", "rear_sensor": "P0003"},
+    },
     "daq": {
         "device": "",
         "channels": ["ai0"],

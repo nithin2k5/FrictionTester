@@ -14,6 +14,23 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232) and an NI USB-
    python main.py
    ```
 
+## Test Console
+
+Opens at startup; saved devices are connected automatically in the background.
+Laid out like the LabVIEW *Friction Test Machine* measurement screen:
+
+- **SELECT CABLE** (Servo 1 + Loadcell 01) and **SHIFT CABLE** (Servo 2 + Loadcell 02), each with
+  TEST CONDITION (speed, delay, stroke, positions 1–3, LOAD min ~ max), TEST RESULTS (PULL1–3,
+  PUSH1–3, means, Max, OK/NG — OK when every |reading| is within the LOAD range), a Load vs
+  Stroke graph (zoom / Fit / pan) and live LOAD, STROKE, SPEED.
+- **Screen Save** writes a PNG of the panel to `screenshots/`.
+- Bottom bar per cable: SERVO ON/OFF, ALM RST, Front/Rear sensor lamps (PLC bits set in
+  `settings.json` → `test.<cable>.front_sensor / rear_sensor`), clamp counter.
+- The status box lists any device that isn't connected.
+
+The automatic test sequence (moving the actuator and recording PULL/PUSH) is not implemented yet;
+`CablePanel.show_results()` and `CablePanel.plot` are where it will report.
+
 ## COM Setting page
 
 The interface follows the FeederCable tester: a black header (logo, page title, clock), sidebar
