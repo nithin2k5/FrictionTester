@@ -66,6 +66,12 @@ Rows of one part share `TR_PART_UID`.
 | `TR_LOT_RESULT` | the part's result: OK only if every cycle of the part is OK |
 | `TR_SOURCE`, `TR_DETAIL` | PLC or simulation; full JSON (extra windows, limits, PLC counters, evidence) |
 
+### Report page
+
+**Report** in the sidebar shows `TBL_TEST_RESULTS`: filter by date range, model, label / lot and
+lot result (OK / NG), see the part summary (parts, OK, NG, yield, PLC cycles), click a row for its
+channel readings, and **EXPORT CSV** to save the filtered rows.
+
 ### Loading a model
 
 Type or scan a model number into **MODEL NO** and press Enter (or pick it in the list and press

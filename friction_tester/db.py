@@ -290,3 +290,35 @@ def delete_model(model):
     with cursor(commit=True) as cur:
         cur.execute(f"DELETE FROM {TABLE} WHERE MM_MODEL = %s", (model,))
         return cur.rowcount
+
+
+def list_test_results(date_from=None, date_to=None, model="", text="", lot_result="", limit=2000):
+    """TBL_TEST_RESULTS rows (newest first) for the Report page.
+
+    date_from / date_to: datetime.date, inclusive. text matches the label or
+    lot value. lot_result: "" (all), "OK" or "NG".
+    """
+    import datetime as _dt
+    where, args = [], []
+    if date_from:
+        where.append("TR_DATETIME >= %s")
+        args.append(_dt.datetime.combine(date_from, _dt.time.min))
+    if date_to:
+        where.append("TR_DATETIME < %s")
+        args.append(_dt.datetime.combine(date_to + _dt.timedelta(days=1), _dt.time.min))
+    if model:
+        where.append("TR_MODEL LIKE %s")
+        args.append(f"%{model}%")
+    if text:
+        where.append("(TR_LABEL LIKE %s OR TR_LOT_VALUE LIKE %s)")
+        args += [f"%{text}%", f"%{text}%"]
+    if lot_result in ("OK", "NG"):
+        where.append("TR_LOT_RESULT = %s")
+        args.append(lot_result)
+    sql = (f"SELECT ID, {', '.join(c for c in RESULT_COLUMNS if c != 'TR_DETAIL')} FROM {RESULTS_TABLE}"
+           + (" WHERE " + " AND ".join(where) if where else "")
+           + " ORDER BY TR_DATETIME DESC, ID DESC LIMIT %s")
+    args.append(int(limit))
+    with cursor(dictionary=True) as cur:
+        cur.execute(sql, args)
+        return cur.fetchall()

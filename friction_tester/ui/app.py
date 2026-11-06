@@ -8,6 +8,7 @@ from . import theme
 from .comport_page import ComPortPage
 from .login import LoginScreen
 from .model_page import ModelSettingsPage
+from .report_page import ReportPage
 from .test_console import TestConsolePage
 
 NAV_IDLE = ("#111", "white", "#444")        # bg, fg, border
@@ -19,6 +20,7 @@ class App:
     PAGES = [
         ("🏠", "Test Console", "test_console", "FRICTION TEST MACHINE"),
         ("⚙", "Model\nSettings", "model_settings", "Model Settings"),
+        ("📋", "Report", "report", "Test Results"),
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
     ]
 
@@ -149,6 +151,8 @@ class App:
         if page_name == "comport_settings":
             ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
                 fill="both", expand=True, padx=16, pady=12)
+        elif page_name == "report":
+            ReportPage(self.content, self.settings).pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "model_settings":
             ModelSettingsPage(self.content, self.settings).pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
