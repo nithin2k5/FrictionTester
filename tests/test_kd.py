@@ -201,7 +201,7 @@ def test_only_home_and_move_bits_are_writable():
 
 def test_settings_migrate_pc_interface_to_kd():
     new = migrate({"settings_version": 4, "test": {"integration": {"mode": "pc_interface"}}})
-    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 5
+    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 6
     other = migrate({"settings_version": 4, "test": {"integration": {"mode": "shared_cycle"}}})
     assert other["test"]["integration"]["mode"] == "shared_cycle"
 
@@ -249,3 +249,18 @@ def test_auto_cycle_snapshot_reads_through_the_cnet_areas():
     tables = {c[0] for c in plc.calls}
     assert tables == {"input_registers", "coils", "discrete_inputs"}       # FC04, FC01 (M), FC02 (P)
     assert ("input_registers", 5010, 1) in plc.calls
+
+
+def test_settings_v6_fills_at_procedure_channels_and_directions_only_when_empty():
+    empty = {"settings_version": 5, "test": {"integration": {"mode": "kd", "shared": {
+        "at_cable_selection": "", "channel_cable": {"1": "", "2": ""},
+        "direction_role": {"forward": "", "return": ""}}}}}
+    sh = migrate(empty)["test"]["integration"]["shared"]
+    assert sh["at_cable_selection"] == "operator_fixture"
+    assert sh["channel_cable"] == {"1": "select", "2": "shift"}
+    assert sh["direction_role"] == {"forward": "push", "return": "pull"}
+    kept = {"settings_version": 5, "test": {"integration": {"shared": {
+        "at_cable_selection": "operator_fixture", "channel_cable": {"1": "shift", "2": "select"},
+        "direction_role": {"forward": "pull", "return": "push"}}}}}
+    sh = migrate(kept)["test"]["integration"]["shared"]
+    assert sh["channel_cable"] == {"1": "shift", "2": "select"} and sh["direction_role"]["forward"] == "pull"

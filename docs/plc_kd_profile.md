@@ -42,6 +42,11 @@ labelled "Driver Homing" / "Driver Alarm" in this printout but "part presence" i
 unresolved. Settings for the cycle (cable per channel, direction roles, scaling, start timeout) are in
 `test.integration.shared`; the start write uses the same gate as ORIGIN.
 
+Set (settings v6): `at_cable_selection = "operator_fixture"` - AT parts are tested one cable at a
+time, one PLC cycle per cable (user, 2026-11-07); `channel_cable` 1 = select, 2 = shift and
+`direction_role` forward = push, return = pull, from the printout labels (D00030 "Select Load Cell",
+D00130 "Shift Load Cell", step 50 samples "PULL1-3"). Confirm both on the machine.
+
 ## Status D00500-D00510
 
 | Bit | Meaning | Bit | Meaning |

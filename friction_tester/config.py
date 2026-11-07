@@ -9,7 +9,7 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # settings.json layout version. 2 = machine profile "PRINTING PROGRAM OLD"
 # (plc.pdf, PC word interface) is this machine's integration.
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
-SETTINGS_VERSION = 5
+SETTINGS_VERSION = 6
 
 DEFAULT_SETTINGS = {
     "settings_version": SETTINGS_VERSION,
@@ -97,10 +97,14 @@ DEFAULT_SETTINGS = {
                     },
                 },
                 # Machine facts the ladder does not establish - set when confirmed:
-                "at_cable_selection": "",            # "" or "operator_fixture"
+                # AT: the operator loads one cable at a time, one PLC cycle per cable
+                # (confirmed by the user 2026-11-07).
+                "at_cable_selection": "operator_fixture",   # "" or "operator_fixture"
                 "mt_one_cycle_tests_both": False,
-                "channel_cable": {"1": "", "2": ""},  # "select" / "shift"
-                "direction_role": {"forward": "", "return": ""},  # "pull" / "push"
+                # From the printout labels (plc kd.pdf / plc Auto.pdf): D00030 "Select Load
+                # Cell", D00130 "Shift Load Cell"; step 50 samples "PULL1-3" -> return = pull.
+                "channel_cable": {"1": "select", "2": "shift"},
+                "direction_role": {"forward": "push", "return": "pull"},
                 "force_scale": 0.0, "force_unit": "",       # 0 = show raw PLC counts
                 "position_scale": 0.0, "position_unit": "",
             },
@@ -285,6 +289,26 @@ def migrate(loaded):
             integ["mode"] = "kd"
             notes.append("integration.mode pc_interface -> kd (client's updated reference program plc kd.pdf)")
         loaded["settings_version"] = 5
+        version = 5
+    if version < 6:
+        shared = ((loaded.get("test") or {}).get("integration") or {}).get("shared")
+        if isinstance(shared, dict):
+            filled = []
+            if not shared.get("at_cable_selection"):
+                shared["at_cable_selection"] = "operator_fixture"
+                filled.append("at_cable_selection=operator_fixture")
+            cc = shared.get("channel_cable")
+            if not isinstance(cc, dict) or not any(cc.values()):
+                shared["channel_cable"] = {"1": "select", "2": "shift"}
+                filled.append("channel_cable 1=select 2=shift")
+            dr = shared.get("direction_role")
+            if not isinstance(dr, dict) or not any(dr.values()):
+                shared["direction_role"] = {"forward": "push", "return": "pull"}
+                filled.append("direction_role forward=push return=pull")
+            if filled:
+                notes.append("integration.shared: " + ", ".join(filled) +
+                             " (AT one cable at a time; channels/directions from the plc Auto.pdf labels)")
+        loaded["settings_version"] = 6
     if notes:
         loaded["migrated"] = notes
     return loaded

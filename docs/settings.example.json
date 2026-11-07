@@ -1,5 +1,5 @@
 {
-  "settings_version": 5,
+  "settings_version": 6,
   "plc": {
     "port": "",
     "baudrate": 9600,
@@ -103,15 +103,15 @@
             }
           }
         },
-        "at_cable_selection": "",
+        "at_cable_selection": "operator_fixture",
         "mt_one_cycle_tests_both": false,
         "channel_cable": {
-          "1": "",
-          "2": ""
+          "1": "select",
+          "2": "shift"
         },
         "direction_role": {
-          "forward": "",
-          "return": ""
+          "forward": "push",
+          "return": "pull"
         },
         "force_scale": 0.0,
         "force_unit": "",
