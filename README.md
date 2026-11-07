@@ -175,6 +175,12 @@ on the page (as in the EOL tester). CONNECT detects the mode:
   `ID02P` (L2) and parses `ID,01,+01234.5`; ZERO sends `ID01Z`. Set F-40 on the indicators to
   `001` and `002` to match.
 
+If a COM port is refused ("Access is denied"), another program has it open — another copy of this
+app, the FeederCable / EOL tester software, a serial terminal or the indicator's PC tool. Close it and
+press CONNECT again; if nothing else is open, replug the USB-serial adapter. The saved loadcells are
+connected at startup in the background; the COM Setting rows show that connection once it finishes,
+and pressing CONNECT meanwhile waits for it instead of opening the port a second time.
+
 **NI DAQ – NI USB-6210 analog inputs.** Device (prefers a 6210), wiring mode, sample rate and
 samples per reading, then one row per sensor: **Loadcell 1, Loadcell 2, LVDT 1, LVDT 2**. Each row
 picks a channel and shows the screw-terminal pins it uses (Differential: `ai0` → `AI0+ / AI8−`,

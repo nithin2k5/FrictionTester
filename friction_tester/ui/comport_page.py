@@ -74,6 +74,7 @@ class ComPortPage(tk.Frame):
         self._show_plc_state()
         for i in range(len(self.loadcells)):
             self._show_lc_state(i)
+        self.after(1000, self._watch_loadcells)
         if not plc_xgb.XGBPlc.available():
             self.log("pymodbus is not installed — run: pip install pymodbus")
         if not ni_daq.NIDaq.available():
@@ -365,6 +366,8 @@ class ComPortPage(tk.Frame):
     def _show_lc_state(self, i, error=None, text=None):
         lc, w = self.loadcells[i], self.lc_rows[i]
         connected = lc.is_open
+        w["shown"] = connected
+        w["busy"] = False
         bg = theme.FAIL if connected else theme.PASS
         w["connect"].config(text="DISCONNECT" if connected else "CONNECT", bg=bg, activebackground=bg,
                             state="normal")
@@ -381,15 +384,26 @@ class ComPortPage(tk.Frame):
         else:
             w["status"].set("idle", "Not connected")
 
+    def _watch_loadcells(self):
+        """Pick up connections made in the background (startup auto-connect)."""
+        if not self.winfo_exists():
+            return
+        for i, lc in enumerate(self.loadcells):
+            w = self.lc_rows[i]
+            if not w.get("busy") and w.get("shown") != lc.is_open:
+                self._show_lc_state(i)
+        self.after(1000, self._watch_loadcells)
+
     def toggle_loadcell(self, i):
         lc = self.loadcells[i]
-        if lc.is_open:
+        if self.lc_rows[i].get("shown"):          # act on what the button shows
             lc.disconnect()
             self.log(f"{lc.name} disconnected.")
             self._show_lc_state(i)
             return
         cfg = self._lc_config(i)
         w = self.lc_rows[i]
+        w["busy"] = True
         w["connect"].config(text="CONNECTING…", bg=theme.BUSY, state="disabled")
         w["status"].set("busy", "Connecting…")
 

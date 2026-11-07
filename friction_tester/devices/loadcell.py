@@ -60,6 +60,30 @@ def parse_frame(line, expected_id=None):
         raise IndicatorError(f"Bad data field {data!r} in {line!r}")
 
 
+def open_port(port, baudrate, tries=3, wait=0.7):
+    """Open an 8N1 port. "Access is denied" is retried a few times (Windows can
+    hold a just-closed port for a moment), then reported in plain words."""
+    for attempt in range(tries):
+        try:
+            return serial.Serial(port=port, baudrate=baudrate, bytesize=8, parity="N", stopbits=1,
+                                 timeout=0.5, write_timeout=0.5)
+        except serial.SerialException as exc:
+            denied = "access is denied" in str(exc).lower() or "permissionerror" in str(exc).lower()
+            if not denied:
+                raise
+            if attempt == tries - 1:
+                raise PortBusyError(
+                    f"{port} is in use by another program (another copy of this app, FeederCable / "
+                    f"EOL tester software, a serial terminal or the indicator's PC tool). Close it and "
+                    f"press CONNECT again. If nothing else is open, unplug and replug the USB-serial "
+                    f"adapter.") from exc
+            time.sleep(wait)
+
+
+class PortBusyError(Exception):
+    pass
+
+
 class Loadcell:
     """One AM-50LW indicator."""
 
@@ -68,7 +92,8 @@ class Loadcell:
         self.port = ""
         self.device_id = 1
         self._ser = None
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()         # one command/reply at a time
+        self._conn_lock = threading.Lock()    # one connect/disconnect at a time
 
     @property
     def name(self):
@@ -98,14 +123,22 @@ class Loadcell:
             raise RuntimeError("pyserial is not installed (pip install pyserial)")
         if not cfg["port"]:
             raise ValueError("Select a COM port")
-        self.disconnect()
-        self._ser = serial.Serial(
-            port=cfg["port"], baudrate=int(cfg["baudrate"]),
-            bytesize=8, parity="N", stopbits=1,
-            timeout=0.5, write_timeout=0.5,
-        )
-        self.port = cfg["port"]
-        self.device_id = STREAM_ID if self._is_streaming() else self.number
+        # One open at a time: the startup auto-connect and the COM Setting
+        # CONNECT button use the same object. A second caller waits here and
+        # then finds the port already open instead of opening it twice
+        # (which Windows refuses with "Access is denied").
+        with self._conn_lock:
+            if (self.is_open and self.port == cfg["port"]
+                    and self._ser.baudrate == int(cfg["baudrate"])):
+                return
+            self._close()
+            self._ser = open_port(cfg["port"], int(cfg["baudrate"]))
+            self.port = cfg["port"]
+            try:
+                self.device_id = STREAM_ID if self._is_streaming() else self.number
+            except Exception:
+                self._close()
+                raise
 
     def _is_streaming(self):
         """True if a stream-mode frame (ST,...) arrives within ~0.5 s."""
@@ -119,6 +152,10 @@ class Loadcell:
         return "stream mode" if self.stream_mode else f"command mode, ID {self.device_id:02d}"
 
     def disconnect(self):
+        with self._conn_lock:
+            self._close()
+
+    def _close(self):
         if self._ser is not None:
             try:
                 self._ser.close()
