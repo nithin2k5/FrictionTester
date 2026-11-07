@@ -7,8 +7,10 @@ character encoding; meanings come from the English comments and the logic.
 Whether this program is the one installed on the PLC is NOT confirmed.
 
 One positioning axis (X, positioning module slot 2, axis 0). Both load cells
-come from the analog module (slot 1). The PLC has no PULL/PUSH sequence: the
-PC drives moves (M00030-M00034) and homing (M00050).
+come from the analog module (slot 1). The automatic test cycle is the
+companion block "plc Auto.pdf" (same project): start P00002 or M00029, step
+word D05010 - followed by plc.shared_cycle / plc.part_flow. This module covers
+the manual side: homing (M00050) and position moves (M00030-M00034).
 
 Homing [p3-4, steps 209-236], state word D05000:
     M00050 AND D05000 = 0      -> D05000 := 10
@@ -106,7 +108,9 @@ UNRESOLVED = [
     "P00000 / P00004 contact type (NO/NC) and wiring.",
     "Load-cell scaling (D00010/D00110 factors) and the meaning of value+100 (D00040/D00140).",
     "Who writes D00900-D00950 (position load values copied to D01200..): PC or HMI?",
-    "Test sequence (AT/MT): which moves, order, dwell and which load values form PULL/PUSH results.",
+    "Auto cycle (plc Auto.pdf): ch1/ch2 = SELECT/SHIFT, which limit is upper/lower (D00782/D00784, "
+    "D00786/D00788), ageing M02000, and P0000A/P0000B - 'Driver Homing' / 'Driver Alarm' in the Auto "
+    "printout but part presence in the I/O list.",
     "Recipe numbering D00080 1..20 versus the app's model list.",
 ]
 

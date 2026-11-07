@@ -28,9 +28,10 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
 ## PLC profile: plc kd.pdf (client's updated reference)
 
 `test.integration.mode = "kd"` (the default) follows the client's reference program `plc kd.pdf`
-(NEW NLF MC KOREA MODIFY 09_06_25.xgwx, one X axis): ORIGIN = M00050 with the PLC's homing state
-D05000, moves M00030–M00034, status D00500–D00510. RUN is refused in this mode until the test
-sequence is defined; writes stay off until the PLC's Cnet Modbus areas are verified. Details and open
+(NEW NLF MC KOREA MODIFY 09_06_25.xgwx, one X axis) and its automatic cycle `plc Auto.pdf`:
+ORIGIN = M00050 with the PLC's homing state D05000; RUN = software start M00029, the PLC runs the
+test (step D05010) and the app takes the verdict M0000C/M0000D and results. Writes stay off until
+the PLC's Cnet Modbus areas are verified. Details and open
 items: [docs/plc_kd_profile.md](docs/plc_kd_profile.md); read-only check: `python tools/plc_diag.py`.
 
 ## PLC profile: PRINTING PROGRAM OLD

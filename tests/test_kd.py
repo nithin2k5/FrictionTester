@@ -204,3 +204,48 @@ def test_settings_migrate_pc_interface_to_kd():
     assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 5
     other = migrate({"settings_version": 4, "test": {"integration": {"mode": "shared_cycle"}}})
     assert other["test"]["integration"]["mode"] == "shared_cycle"
+
+
+def test_home_state_unreadable_keeps_status_and_refuses_origin():
+    r = Rig()
+    real = r.sim.read_words
+
+    def no_d05000(address, count):
+        if address == "D05000":
+            from friction_tester.plc.modbus_errors import PlcExceptionResponse
+            raise PlcExceptionResponse(4, 5000, 1, 1, 2)
+        return real(address, count)
+    r.sim.read_words = no_d05000
+    r.step()
+    assert r.ctl.link_state == "ok" and r.ctl.snap.home_state is None
+    r.ctl.submit("home")
+    r.step()
+    assert "D05000 not readable" in r.messages()[-1] and "exception 02" in r.messages()[-1]
+    assert r.sim.writes == []
+
+
+def test_auto_cycle_snapshot_reads_through_the_cnet_areas():
+    """plc Auto.pdf cycle (shared_cycle reader) planned on the candidate Cnet areas."""
+    from friction_tester.plc.shared_cycle import read_snapshot
+
+    class Plc:
+        is_open = True
+
+        def __init__(self):
+            self.calls = []
+
+        def read_table(self, table, off, n):
+            self.calls.append((table, off, n))
+            if table in ("coils", "discrete_inputs"):
+                return [False] * n
+            return [7 if off == 5010 else 0] * n                  # D05010 step 7... any value
+
+    cfg = {"schema": "xgb_cnet_areas", "verified": True, "cnet_areas": {
+        "bit_read": {"plc_base": "P00000"}, "bit_write": {"plc_base": "M00000"},
+        "word_read": {"plc_base": "D00000"}, "word_write": {"plc_base": "D00000"}}}
+    plc = Plc()
+    snap = read_snapshot(ModbusPlcBackend(plc, CnetAreaMap(cfg)))
+    assert snap.step == 7
+    tables = {c[0] for c in plc.calls}
+    assert tables == {"input_registers", "coils", "discrete_inputs"}       # FC04, FC01 (M), FC02 (P)
+    assert ("input_registers", 5010, 1) in plc.calls

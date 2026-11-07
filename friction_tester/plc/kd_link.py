@@ -1,8 +1,8 @@
 """PLC access for the plc kd.pdf profile.
 
-KdLink.read() takes one snapshot: the axis status block D00500-D00510 and the
-homing state D05000 are required (a failure raises and the controller treats
-the status as gone); command-bit readback (M00020..M00063, FC01 through the
+KdLink.read() takes one snapshot: the axis status block D00500-D00510 is
+required (a failure raises and the controller treats the status as gone); the
+homing state D05000 (None + home_error when unreadable), command-bit readback (M00020..M00063, FC01 through the
 bit-write area), the interlock inputs and the load cells are best effort and
 come back as None when they cannot be read.
 
@@ -26,7 +26,8 @@ class KdWriteBlocked(Exception):
 class KdSnapshot:
     time: float
     status: list                                   # D00500..D00510
-    home_state: int                                # D05000
+    home_state: object                             # D05000, None when it could not be read
+    home_error: str = ""
     bits: dict = field(default_factory=dict)       # {"M00050": bool} or {} when not readable
     bits_error: str = ""
     inputs: dict = field(default_factory=dict)     # {"P00000": bool}
@@ -51,10 +52,11 @@ class KdSnapshot:
 
 
 class KdLink:
-    def __init__(self, backend, log, owner_confirmed=False):
+    def __init__(self, backend, log, owner_confirmed=False, read_loads=True):
         self.backend = backend
         self.log = log
         self.owner_confirmed = owner_confirmed
+        self.read_loads = read_loads
         self._lock = threading.Lock()
 
     def read(self, now=None):
@@ -62,9 +64,11 @@ class KdLink:
         status = self.backend.read_words(start, count)
         if len(status) < count:
             raise RuntimeError(f"short read: {len(status)} of {count} words")
-        home_state = int(self.backend.read_words(kp.HOME_STATE, 1)[0])
-        snap = KdSnapshot(time=time.monotonic() if now is None else now, status=list(status),
-                          home_state=home_state)
+        snap = KdSnapshot(time=time.monotonic() if now is None else now, status=list(status), home_state=None)
+        try:
+            snap.home_state = int(self.backend.read_words(kp.HOME_STATE, 1)[0])
+        except Exception as exc:
+            snap.home_error = str(exc)
         try:
             snap.bits = dict(self.backend.read_bits(kp.COMMAND_BITS))
         except Exception as exc:
@@ -74,7 +78,7 @@ class KdLink:
         except Exception:
             snap.inputs = {}
         loads = {}
-        for cable, addr in kp.LOADS.items():
+        for cable, addr in (kp.LOADS.items() if self.read_loads else ()):
             try:
                 lo, hi = self.backend.read_words(addr, 2)
                 loads[cable] = kp.dint(lo, hi)

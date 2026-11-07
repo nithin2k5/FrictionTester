@@ -25,8 +25,22 @@ Mode `test.integration.mode = "kd"` (settings version 5 switches `pc_interface` 
 | p10-12, 579-845 | Recipe: D00080 = 1..20, M00062 load D02000+100(n-1) -> D00700 (99 words), M00063 save |
 | p12, 860 | Servo ON P00020 = always ON |
 
-One positioning axis (X). The PLC has **no PULL/PUSH sequence**: test motion has to be sequenced by
-the PC using the moves below.
+One positioning axis (X). The **automatic test cycle runs in the PLC**: it is the companion block
+`plc Auto.pdf` of the same project (see below). kd.pdf is the manual / support side.
+
+## Automatic cycle (plc Auto.pdf) - followed by the shared-cycle code
+
+`plc Auto.pdf` (12 pages, same footer) is the cycle the app's `shared_cycle` code was traced from
+(`docs/plc_shared_cycle.md`, PAGE 1.pdf = kd.pdf + Auto.pdf). In mode `kd` the Test Console runs that
+code on the Cnet mapping: RUN pulses **M00029** (software start; physical start P00002), the step word
+**D05010** is followed (0 -> 10 -> [20/30 ageing if M02000] -> 40 forward stroke sampling positions
+1-3 -> 41/42 -> 50 return stroke -> 51/52 repeat until D05110 = D00781 -> 60 to 0 -> 70 judge ->
+80 verdict), the verdict bits M0000C (NG) / M0000D (OK) and the OK/NG counters D00150/D00152 are
+the completion evidence, finals D01250 / D01253 against D00782..D00788. A stop/interlock (P00000,
+P00004, P00008, P0000A, P0000B, D00500.4) sends the step to 0 without a verdict. P0000A / P0000B are
+labelled "Driver Homing" / "Driver Alarm" in this printout but "part presence" in the I/O list -
+unresolved. Settings for the cycle (cable per channel, direction roles, scaling, start timeout) are in
+`test.integration.shared`; the start write uses the same gate as ORIGIN.
 
 ## Status D00500-D00510
 
@@ -65,16 +79,17 @@ homing; sets the bit, releases it once the axis is busy, done on busy OFF + posi
 
 ## Not driven by the app
 
-Jog (needs a held request), recipe load/save (numbering vs the model list unknown), D00900-D00950
-(writer unknown), servo (always ON), alarm reset (none from the PC). RUN is refused in this mode
-until the test sequence is defined.
+Jog (needs a held request), recipe load/save (numbering vs the model list unknown), servo (always
+ON), alarm reset (none from the PC; drive reset P00003). D00900-D00950 are written by the Auto
+cycle's sampling windows.
 
 ## Communication requirements
 
 * Status: a word area based at D (FC04 word read or FC03 word write) covering D00500-D00510,
   D05000, D00030/D00130.
-* ORIGIN / moves: coil writes (FC05) to M00050 / M00030-M00034 -> the **bit-write area must be based
-  at M00000** (M00050 = coil 80). With any other base the mapping refuses the write - it is never
+* ORIGIN / cycle start / moves: coil writes (FC05) to M00050 / M00029 / M00030-M00034 -> the
+  **bit-write area must be based at M00000** (M00050 = coil 80, M00029 = coil 41).
+* Cycle: D05010, D05110, D00150-D00154, D00781, D00900.., D01250.. through a D-based word area. With any other base the mapping refuses the write - it is never
   sent to a P output.
 * Writes need `machine_profile.mapping.verified` (after the XG5000 read-back),
   `kd_profile.live_writes_enabled` and `kd_profile.command_owner_confirmed` (no HMI drives the same

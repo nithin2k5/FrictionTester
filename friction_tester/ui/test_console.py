@@ -401,7 +401,9 @@ class TestConsolePage(tk.Frame):
         self.loadcells = loadcells
         self.daq = daq
         self.integration = copy.deepcopy(settings["test"]["integration"])
-        self.shared = self.integration["mode"] == "shared_cycle"
+        # "kd" = client reference (plc kd.pdf + plc Auto.pdf): the PLC runs the test cycle
+        # (M00029 / D05010, followed like shared_cycle) and ORIGIN is M00050 (kd controller).
+        self.shared = self.integration["mode"] in ("shared_cycle", "kd")
         self.pc = self.integration["mode"] == "pc_interface"     # plc.pdf profile
         self.kd = self.integration["mode"] == "kd"               # plc kd.pdf profile (client reference)
         self.ctl = None
@@ -447,12 +449,12 @@ class TestConsolePage(tk.Frame):
         self._log_buttons(self)
         self.after(200, self._poll)
         self._load_model_list()
-        if self.shared:
+        if self.kd:
+            self._start_kd()
+        elif self.shared:
             self._start_shared_cycle()
         elif self.pc:
             self._start_pc_interface()
-        elif self.kd:
-            self._start_kd()
         else:
             for n, p in enumerate(self.panels):
                 p.set_source(f"Source: serial loadcell L{n + 1} (live LOAD) · results: start/done handshake")
@@ -493,11 +495,20 @@ class TestConsolePage(tk.Frame):
         self.plc_strip.pack(side="left", fill="x", expand=True)
         self.plc_mode = tk.Label(strip, text="", bg="#10141b", fg=theme.MUTED, font=_font(8, True), padx=8)
         self.plc_mode.pack(side="right")
+        if self.kd:                              # second line: X axis / homing (plc kd.pdf)
+            axis = tk.Frame(parent, bg="#10141b", highlightbackground=theme.BORDER, highlightthickness=1)
+            axis.pack(fill="x", pady=(0, 4))
+            tk.Label(axis, text="AXIS", bg="#10141b", fg=theme.MUTED, font=_font(9, True), padx=8).pack(side="left")
+            self.plc_axis = tk.Label(axis, text="Connecting…", bg="#10141b", fg="#c9d1dc", font=_font(9),
+                                     anchor="w")
+            self.plc_axis.pack(side="left", fill="x", expand=True)
 
-    def _start_shared_cycle(self):
+    def _start_shared_cycle(self, backend=None):
         shared = self.integration["shared"]
-        mapping = ModbusMapping(shared.get("mapping"))
-        backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(shared.get("live_start_enabled")))
+        if backend is None:
+            mapping = ModbusMapping(shared.get("mapping"))
+            backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(shared.get("live_start_enabled")))
+        mapping = backend.mapping
         mapping_text = "map " + ("verified" if mapping.verified else "UNVERIFIED")
         self.backend = backend
         writes = lambda: bool(getattr(backend, "can_write", False))
@@ -505,7 +516,8 @@ class TestConsolePage(tk.Frame):
         self.monitor = SharedCycleMonitor(backend, tracker, can_write=writes,
                                           interval=float(shared.get("poll_interval", 0.25)))
         self.flow = SharedCycleFlow(shared, self, self.monitor, writes, skip_scan=self._skip_scan())
-        self.plc_mode.config(text=f"{mapping_text} · live start {'ON' if writes() else 'OFF'}",
+        what = "writes" if self.kd else "live start"
+        self.plc_mode.config(text=f"{mapping_text} · {what} {'ON' if writes() else 'OFF'}",
                              fg=theme.MUTED if writes() else theme.FAIL)
         assign = panel_assignments(shared, "MT", "both")
         roles = shared.get("direction_role") or {}
@@ -518,7 +530,8 @@ class TestConsolePage(tk.Frame):
                 p.set_result_labels("FWD", "RET", unit, "Final")
         for panel_idx, ch, mapped in assign:
             self.panels[panel_idx].set_source(
-                f"Source: PLC Channel {ch}" + ("" if mapped else " — cable not mapped") + " · shared cycle")
+                f"Source: PLC Channel {ch}" + ("" if mapped else " — cable not mapped") +
+                (" · PLC auto cycle (plc Auto.pdf)" if self.kd else " · shared cycle"))
         self._live_assign = assign
         self.monitor.start()
         self.after(100, self._drain_monitor)
@@ -632,17 +645,21 @@ class TestConsolePage(tk.Frame):
         from ..plc import kd_profile as kp
         kd_cfg = self.settings["test"].get("kd_profile") or {}
         mapping = make_mapping(self.settings["test"]["machine_profile"].get("mapping"))
-        backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(kd_cfg.get("live_writes_enabled")))
+        owner = bool(kd_cfg.get("command_owner_confirmed"))
+        # One backend for homing (M00050) and the cycle start (M00029); its writes also need ownership.
+        backend = ModbusPlcBackend(self.plc, mapping,
+                                   allow_writes=bool(kd_cfg.get("live_writes_enabled")) and owner)
         self.pc_log = EventLog(self._result_dir())
         self.pc_log.log("MAPPING", mapping.describe())
-        link = KdLink(backend, self.pc_log, owner_confirmed=bool(kd_cfg.get("command_owner_confirmed")))
+        link = KdLink(backend, self.pc_log, owner_confirmed=owner, read_loads=False)
         self.pc_log.log("START", kp.PROFILE_TITLE, writes=link.write_blocker() or "enabled",
                         unresolved=len(kp.UNRESOLVED))
-        self.ctl = KdController(link, copy.deepcopy(kd_cfg), self.pc_log)
-        for n, p in enumerate(self.panels):
-            p.set_source(f"Source: {kp.PROFILE_TITLE} · load D{30 if n == 0 else 130:05d} (raw)")
+        cfg = copy.deepcopy(kd_cfg)
+        cfg["poll_interval"] = max(float(cfg.get("poll_interval") or 0.5), 0.5)   # the cycle monitor polls too
+        self.ctl = KdController(link, cfg, self.pc_log)
         self.ctl.start()
         self.after(100, self._drain_kd)
+        self._start_shared_cycle(backend=backend)
 
     def _drain_kd(self):
         """UI thread: apply what the kd controller thread produced."""
@@ -669,8 +686,7 @@ class TestConsolePage(tk.Frame):
         if snap is None:
             label = summary.get("link_label") or "PLC status not available"
             why = summary.get("link_error")
-            self.plc_badge.config(fg=theme.FAIL)
-            self.plc_strip.config(text=f"{label} - no motion" + (f"   |   {why}" if why else ""))
+            self.plc_axis.config(text=f"{label} - no motion" + (f"   |   {why}" if why else ""))
         else:
             flags = [("BUSY", snap.st("busy")), ("ERR", snap.st("error")), ("HOMED", snap.st("homed")),
                      ("POS-OK", snap.st("pos_complete")), ("LIM+", snap.st("upper_limit")),
@@ -678,17 +694,13 @@ class TestConsolePage(tk.Frame):
             x = "X: " + (" ".join(n for n, v in flags if v) or "-") + f"  pos {snap.position}"
             if snap.st("error"):
                 x += f"  err {snap.error_code}"
-            home = f"home step D05000={snap.home_state}" + (
+            hs = snap.home_state if snap.home_state is not None else "n/a"
+            home = f"home step D05000={hs}" + (
                 f" M00050={int(bool(snap.cmd('M00050')))}" if snap.bits else " (M bits not readable)")
             raw = " ".join(f"{a} {int(bool(v))}" for a, v in snap.inputs.items()) or "P inputs n/a"
-            loads = " ".join(f"{c[:2].upper()} {v}" for c, v in snap.loads.items() if v is not None)
             fault = f"   |   FAULT: {summary['fault']}" if summary.get("fault") else ""
             op = f"   |   {summary['op'][0]}: {summary['op'][1]}" if summary.get("op") else ""
-            self.plc_badge.config(fg=theme.FAIL if summary.get("fault") else
-                                  (theme.UPDATE if summary.get("op") else theme.PASS))
-            self.plc_strip.config(text=f"{x}   |   {home}   |   raw {raw}   |   load {loads}{op}{fault}")
-        self.plc_mode.config(text="plc kd · " + ("writes OFF" if summary.get("write_blocker") else "writes on"),
-                             fg=theme.BUSY if summary.get("write_blocker") else theme.PASS)
+            self.plc_axis.config(text=f"{x}   |   {home}   |   raw {raw}{op}{fault}")
 
     def _retry_saves(self):
         if not self._alive:
@@ -837,8 +849,8 @@ class TestConsolePage(tk.Frame):
         """Write the part's rows to TBL_TEST_RESULTS on a worker thread."""
         import uuid
         from .. import db
-        source = "PLC shared cycle" if self.shared else ("PLC pc interface" if self.pc else
-                                                          ("PLC kd" if self.kd else "PLC"))
+        source = "PLC kd auto cycle" if self.kd else ("PLC shared cycle" if self.shared else
+                                                       ("PLC pc interface" if self.pc else "PLC"))
         rows = db.result_rows(record, uuid.uuid4().hex, source)
         result = {}
 
@@ -1502,11 +1514,6 @@ class TestConsolePage(tk.Frame):
 
     def start_flow(self):
         """RUN: arm the flow for the loaded model's type."""
-        if self.kd:
-            self._set_status("RUN: the test sequence for plc kd.pdf is not defined yet (the PLC has no PULL/PUSH "
-                             "logic; moves M00030-M00034 must be sequenced by the PC) - ORIGIN only for now",
-                             theme.BUSY, 8)
-            return
         if self._flow == "idle" and not self._target_is_set():
             return
         if self._flow == "idle" and not self._skip_scan() and not self.settings["test"].get("part_number"):
@@ -1569,8 +1576,10 @@ class TestConsolePage(tk.Frame):
         """STOP: cancel the flow and tell the machine to stop (if configured)."""
         if self.shared:
             self.flow.stop()             # app flow only - no stop command is sent to the PLC
+            if self.kd:
+                self.ctl.submit("stop")  # cancels an ORIGIN request the PLC has not taken yet
             return
-        if self.pc or self.kd:
+        if self.pc:
             self.ctl.submit("stop")      # releases requests; neither PLC program has a PC stop command
             return
         if self._flow == "idle":

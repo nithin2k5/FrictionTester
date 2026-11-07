@@ -1,4 +1,6 @@
 """Controller for the plc kd.pdf profile: ORIGIN (homing) and position moves.
+(The automatic test cycle - plc Auto.pdf, M00029 / D05010 - runs in the PLC and
+is followed by plc.shared_cycle / plc.part_flow; this controller only homes.)
 
 Runs on its own thread; the UI only submits commands and drains events
 ("message", "fault", "snapshot"), so no Tk call happens here.
@@ -85,6 +87,8 @@ class HomeOp(KdOp):
         super().__init__(kp.HOME_REQUEST, "ORIGIN", timeouts)
 
     def precheck(self, snap):
+        if snap.home_state is None:
+            raise KdWriteBlocked(f"homing state D05000 not readable - {snap.home_error}")
         super().precheck(snap)
         if snap.home_state != 0:
             raise KdWriteBlocked(f"homing sequence already active (D05000 = {snap.home_state})")
@@ -92,7 +96,7 @@ class HomeOp(KdOp):
     def step(self, snap, now):
         """Returns bit writes [(address, value)]."""
         if self.state == "requested":
-            if snap.home_state != 0:
+            if snap.home_state not in (0, None):
                 self.evidence.append(f"D05000 = {snap.home_state}")
                 self._set("homing", now)
                 return []
@@ -269,7 +273,7 @@ class KdController:
     def _release_pending(self, snap):
         for address in list(self.pending_release):
             # M00050 is only cleared while the sequence has not started (D05000 = 0)
-            if address == kp.HOME_REQUEST and snap.home_state != 0:
+            if address == kp.HOME_REQUEST and snap.home_state != 0:      # also None: unknown, leave it
                 self.pending_release.discard(address)
                 continue
             if snap.cmd(address) is False:
