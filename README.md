@@ -40,6 +40,9 @@ and `command_owner_confirmed` are all true. PULL/PUSH completion needs native M 
 MT needs `mt_parallel_verified`; results stay INCOMPLETE until `measurement.judge`, `force_sign` and
 `limit_bounds` are set. Until then the Test Console monitors and explains what is missing.
 
+- **Machine test**: on the machine PC run `python tools/enable_machine_test.py` (backs up
+  `settings.json`, turns PLC writes, native M reads and commissioning evaluation rules on; MT and alarm
+  reset stay off). `--show` prints the values, `--disable` turns writes off again.
 - **Cable routine**: fixture checks (configurable) → home if not referenced → measurement-start
   positioning → PULL / PUSH with force acquisition → evaluation.
 - **AT**: RUN → SELECT label → SELECT routine → SHIFT label → SHIFT routine → one part. **MT**: one label →
