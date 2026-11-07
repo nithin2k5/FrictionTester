@@ -10,6 +10,10 @@ import datetime
 import os
 import threading
 
+from ..console_log import channel
+
+_term = channel("PLC")
+
 
 class EventLog:
     def __init__(self, folder="data", keep=300, clock=datetime.datetime.now):
@@ -22,6 +26,7 @@ class EventLog:
         now = self.clock()
         extra = " ".join(f"{k}={v}" for k, v in fields.items())
         line = f"{now.isoformat(timespec='milliseconds')} {kind:<14} {message}{(' ' + extra) if extra else ''}"
+        _term.info(f"{kind:<14} {message}{(' ' + extra) if extra else ''}")
         with self._lock:
             self.lines.append(line)
             if self.folder:

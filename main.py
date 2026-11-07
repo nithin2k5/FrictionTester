@@ -7,13 +7,14 @@ import sys
 import tkinter as tk
 from tkinter import messagebox
 
-from friction_tester import single_instance
+from friction_tester import console_log, single_instance
 from friction_tester.config import load_settings
 from friction_tester.devices import Loadcell, NIDaq, XGBPlc
 from friction_tester.ui import App
 
 
 def main():
+    console_log.setup()
     if not single_instance.acquire():
         r = tk.Tk()
         r.withdraw()

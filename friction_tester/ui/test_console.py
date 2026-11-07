@@ -27,6 +27,7 @@ import csv
 import queue as _queue
 
 from . import theme
+from ..console_log import channel
 from .plot import LoadStrokePlot
 from ..config import save_settings
 from ..plc.modbus_map import ModbusMapping, ModbusPlcBackend
@@ -60,6 +61,10 @@ def evaluate(pulls, pushes, load_min, load_max):
 
 def _font(size, bold=False):
     return (theme.FONT, size, "bold") if bold else (theme.FONT, size)
+
+
+_ui = channel("UI")
+_status = channel("STATUS")
 
 
 class CablePanel(tk.Frame):
@@ -436,6 +441,7 @@ class TestConsolePage(tk.Frame):
         self._show_current_model()
 
         self.bind("<Destroy>", self._on_destroy)
+        self._log_buttons(self)
         self.after(200, self._poll)
         self._load_model_list()
         if self.shared:
@@ -1125,6 +1131,7 @@ class TestConsolePage(tk.Frame):
 
     def plc_pulse(self, command, label):
         """Momentary command: set the bit, hold 0.3 s, clear it."""
+        _ui.info(f"{label} -> {command}")
         if self.pc:
             homes = {"move_origin": "all", "origin_select": "select", "origin_shift": "shift"}
             resets = {"alarm_reset_select": "select", "alarm_reset_shift": "shift"}
@@ -1153,6 +1160,7 @@ class TestConsolePage(tk.Frame):
 
     def toggle_servo(self, key, n):
         """Servo ON/OFF: a maintained PLC bit."""
+        _ui.info(f"servo toggle -> {key}")
         if self.pc:
             self._set_status("Servo ON/OFF: not assigned in this PLC program (servo ON follows the PLC's own "
                              "start-up logic) - see docs/plc_pc_interface.md", theme.BUSY, 6)
@@ -1489,6 +1497,7 @@ class TestConsolePage(tk.Frame):
         label = self.scan_entries[key].get().strip()
         if not label:
             return
+        _ui.info(f"scan {key.upper()}: {label!r}")
         if self._flow in ("at_scan_select", "at_scan_shift", "mt_scan") and not self._label_matches_part(label, key):
             part = self.settings["test"].get("part_number", "") or "(none set)"
             messagebox.showerror("Wrong label",
@@ -1770,8 +1779,28 @@ class TestConsolePage(tk.Frame):
             if self.monitor:
                 self.monitor.stop()
 
+    def _log_buttons(self, widget):
+        """Print every button press on this page to the terminal."""
+        for w in widget.winfo_children():
+            if isinstance(w, tk.Button):
+                w.bind("<ButtonRelease-1>", self._log_click, add="+")
+            self._log_buttons(w)
+
+    def _log_click(self, event):
+        w = event.widget
+        try:
+            # Tk only runs the command if the pointer is still on an enabled button.
+            if str(w["state"]) == "disabled" or w.winfo_containing(event.x_root, event.y_root) is not w:
+                return
+            _ui.info(f"button {w['text'].strip()!r}")
+        except Exception:
+            pass
+
     def _set_status(self, text, color="white", hold=3):
         """Show an action's message; polling won't overwrite it for `hold` seconds."""
+        if text and text != getattr(self, "_last_status", None):
+            _status.info(text)
+        self._last_status = text
         self.status.config(text=text, fg=color)
         self._hold_until = time.monotonic() + hold
 
