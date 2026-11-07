@@ -3,9 +3,9 @@
     python tools/scan_registers.py            PLC COM settings from settings.json
     python tools/scan_registers.py COM10      other port (same baud/parity/station)
 
-Close the app first: it holds the COM port. Takes about a minute.
+Close the app first: it holds the COM port. Takes about two minutes.
 
-1. Reads every holding register 0..65535 in aligned blocks of 16 and prints
+1. Reads every holding and input register 0..65535 in aligned blocks of 16 and prints
    the readable ranges (the XGB map has one block per device area, with gaps).
 2. Searches for 1,000,000 stored as a 32-bit value (words 16960, 15 in either
    order). plc.pdf sets D02000 and D02100 to it, so two hits 100 apart give
@@ -44,23 +44,32 @@ def main(argv):
         sys.exit(f"Could not open {cfg['port']} (is the app still running?)")
     print(f"{cfg['port']} {cfg['baudrate']} {cfg['bytesize']}{cfg['parity']}{cfg['stopbits']} station {station}")
 
-    regs = {}
+    tables = {"holding_registers": client.read_holding_registers, "input_registers": client.read_input_registers}
+    found = {name: {} for name in tables}
     try:
-        for start in range(0, 65536, BLOCK):
-            if start % 4096 == 0:
-                print(f"  scanning {start:5d}..{start + 4095:5d}", flush=True)
-            try:
-                r = client.read_holding_registers(start, count=BLOCK, device_id=station)
-            except Exception as exc:
-                print(f"  no answer at {start}: {exc}")
-                continue
-            if not r.isError():
-                for i, v in enumerate(r.registers[:BLOCK]):
-                    regs[start + i] = v
+        for name, read in tables.items():
+            print(f"\n{name}:")
+            regs = found[name]
+            for start in range(0, 65536, BLOCK):
+                if start % 8192 == 0:
+                    print(f"  scanning {start:5d}..{start + 8191:5d}", flush=True)
+                try:
+                    r = read(start, count=BLOCK, device_id=station)
+                except Exception as exc:
+                    print(f"  no answer at {start}: {exc}")
+                    continue
+                if not r.isError():
+                    for i, v in enumerate(r.registers[:BLOCK]):
+                        regs[start + i] = v
     finally:
         client.close()
+    for name, regs in found.items():
+        report(name, regs)
 
-    print("\n== readable holding-register ranges")
+
+def report(name, regs):
+    print(f"\n==================== {name}")
+    print("== readable ranges")
     addrs = sorted(regs)
     ranges = []
     for a in addrs:
@@ -70,6 +79,8 @@ def main(argv):
             ranges.append([a, a])
     for lo, hi in ranges:
         print(f"   {lo:5d}..{hi:5d}  (0x{lo:04X}..0x{hi:04X}, {hi - lo + 1} words)")
+    if not ranges:
+        print("   none")
 
     print("\n== 1,000,000 as a 32-bit value (D02000 / D02100 per plc.pdf)")
     hits = []
@@ -81,14 +92,13 @@ def main(argv):
             hits.append((a, "high word first"))
     for a, order in hits:
         print(f"   register {a} (0x{a:04X}), {order}")
-    pairs = [(a, b) for a, _ in hits for b, _ in hits if b - a == 100]
-    for a, _b in pairs:
-        base = a - 2000
-        d4000 = base + 4000
-        print(f"   -> D02000 = {a}, D02100 = {a + 100}: D base = {base}; D04000 = register {d4000}, "
-              f"D04100 = register {d4000 + 100} ({'readable' if d4000 in regs else 'NOT readable'})")
+    for a, _ in hits:
+        if any(b - a == 100 for b, _o in hits):
+            base = a - 2000
+            print(f"   -> D02000 = {a}, D02100 = {a + 100}: D base = {base}; D04000 = register {base + 4000} "
+                  f"({'readable' if base + 4000 in regs else 'NOT readable'})")
     if not hits:
-        print("   not found (D02000/D02100 may not hold 1,000,000 right now)")
+        print("   not found")
 
     print("\n== non-zero registers")
     nz = [(a, regs[a]) for a in addrs if regs[a]]
