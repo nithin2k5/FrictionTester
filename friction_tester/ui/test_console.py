@@ -487,7 +487,7 @@ class TestConsolePage(tk.Frame):
         tracker = CycleTracker(start_timeout=float(shared.get("start_timeout", 10.0)))
         self.monitor = SharedCycleMonitor(backend, tracker, can_write=writes,
                                           interval=float(shared.get("poll_interval", 0.25)))
-        self.flow = SharedCycleFlow(shared, self, self.monitor, writes)
+        self.flow = SharedCycleFlow(shared, self, self.monitor, writes, skip_scan=self._skip_scan())
         mode = "SIMULATION · " if self.simulator is not None else ""
         self.plc_mode.config(text=f"{mode}{mapping_text} · live start {'ON' if writes() else 'OFF'}",
                              fg=theme.BUSY if self.simulator is not None else
@@ -1152,9 +1152,13 @@ class TestConsolePage(tk.Frame):
     def _set_flow(self, state):
         self._flow = state
         text, color = self.FLOW_TEXT[state]
+        if self._skip_scan() and state == "at_scan_shift":
+            text = "AT · Press RUN for SHIFT"
         self.flow_lbl.config(text=text, fg=color)
         # Outline the box the operator should scan into next
         expect = {"at_scan_select": "select", "at_scan_shift": "shift", "mt_scan": "select"}.get(state)
+        if self._skip_scan():
+            expect = None
         for key, e in self.scan_entries.items():
             e.config(highlightbackground=theme.TITLE_FG if key == expect else "#232a36",
                      highlightthickness=2 if key == expect else 1)
@@ -1206,7 +1210,7 @@ class TestConsolePage(tk.Frame):
         """RUN: arm the flow for the loaded model's type."""
         if self._flow == "idle" and not self._target_is_set():
             return
-        if self._flow == "idle" and not self.settings["test"].get("part_number"):
+        if self._flow == "idle" and not self._skip_scan() and not self.settings["test"].get("part_number"):
             messagebox.showwarning("Part not set", "The loaded model has no Part Number.\n\n"
                                    "Set it in Model Settings, then load the model again.", parent=self)
             return
@@ -1215,6 +1219,10 @@ class TestConsolePage(tk.Frame):
             if self.flow.run(t["select"].get("model"), t.get("model_type", ""), t.get("part_number", "")):
                 for e in self.scan_entries.values():
                     e.delete(0, "end")
+            return
+        if self._skip_scan() and self._flow == "at_scan_shift":
+            self._set_flow("at_run_shift")         # skip scan: RUN starts the SHIFT stage
+            self._start_cable_tests([1])
             return
         if self._flow != "idle":
             self._set_status("A test is already in progress — press STOP to cancel it", theme.BUSY)
@@ -1231,9 +1239,21 @@ class TestConsolePage(tk.Frame):
         self._stop_event.clear()
         for e in self.scan_entries.values():
             e.delete(0, "end")
+        if self._skip_scan():
+            if mtype == "MT":
+                self._set_flow("mt_run")
+                self._start_cable_tests([0, 1])
+            else:
+                self._set_flow("at_run_select")
+                self._start_cable_tests([0])
+            return
         self._set_flow(self._first_scan_state())
         self._set_status(f"{model} ({mtype}): scan the {'label' if mtype == 'MT' else 'SELECT label'}",
                          theme.PASS)
+
+    def _skip_scan(self):
+        """Temporary: RUN starts the test without label scans (test.skip_scan)."""
+        return bool(self.settings["test"].get("skip_scan"))
 
     def stop_flow(self):
         """STOP: cancel the flow and tell the machine to stop (if configured)."""
@@ -1449,14 +1469,19 @@ class TestConsolePage(tk.Frame):
             panel.judge.config(text="DONE", fg=theme.MUTED)
         if self._flow == "at_run_select":
             self._set_flow("at_scan_shift")
-            self._set_status("SELECT CABLE done — scan the SHIFT label", theme.PASS)
+            self._set_status("SELECT CABLE done — " + ("press RUN for the SHIFT stage" if self._skip_scan()
+                                                         else "scan the SHIFT label"), theme.PASS)
         elif self._pending:
             return                              # MT: waiting for the other cable
         else:
             for e in self.scan_entries.values():
                 e.delete(0, "end")
-            self._set_flow(self._first_scan_state())
-            self._set_status("Part complete — scan the next label", theme.PASS)
+            if self._skip_scan():
+                self._set_flow("idle")          # next part only on the next RUN
+                self._set_status("Part complete — press RUN for the next part", theme.PASS)
+            else:
+                self._set_flow(self._first_scan_state())
+                self._set_status("Part complete — scan the next label", theme.PASS)
 
     def _abort_flow(self, message):
         self._stop_event.set()

@@ -52,6 +52,10 @@ DEFAULT_SETTINGS = {
             "start_select": "", "done_select": "",
             "start_shift": "", "done_shift": "",
         },
+        # TEMPORARY: true = RUN starts the test without scanning labels (no
+        # label / part-number check; AT: press RUN again for the SHIFT stage).
+        # Set false to bring back the scan flow.
+        "skip_scan": True,
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
         "part_number": "",         # part number of the loaded model; scanned labels must contain it
         # How the Test Console talks to the PLC (docs/plc_shared_cycle.md).

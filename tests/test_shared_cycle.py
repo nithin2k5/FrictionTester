@@ -57,14 +57,15 @@ class FakeUI:
 class Rig:
     """Simulator + tracker + monitor + flow, driven synchronously by a fake clock."""
 
-    def __init__(self, cfg=None, writes=True, **sim_kw):
+    def __init__(self, cfg=None, writes=True, skip_scan=False, **sim_kw):
         self.clock = Clock()
         self.sim = SharedCycleSimulator(clock=self.clock, speed=4.0, **sim_kw)
         self.tracker = CycleTracker(start_timeout=5.0, clock=self.clock)
         self.writes = writes
         self.monitor = SharedCycleMonitor(self.sim, self.tracker, can_write=lambda: self.writes, clock=self.clock)
         self.ui = FakeUI()
-        self.flow = SharedCycleFlow(dict(CONFIRMED, **(cfg or {})), self.ui, self.monitor, lambda: self.writes)
+        self.flow = SharedCycleFlow(dict(CONFIRMED, **(cfg or {})), self.ui, self.monitor, lambda: self.writes,
+                                    skip_scan=skip_scan)
         self.events = []
         self.poll()                      # first poll: baseline on connection
 
@@ -364,3 +365,31 @@ def test_results_schema_matches_insert_columns():
     from friction_tester import db
     for c in db.RESULT_COLUMNS:
         assert c in db.RESULTS_SCHEMA
+
+
+# ------------------------------------------------------------------ skip scan (temporary)
+def test_skip_scan_mt_run_starts_one_cycle_and_waits_for_next_run():
+    r = Rig(skip_scan=True)
+    assert r.flow.run("MODEL-MT", "MT")
+    assert r.flow.state == "mt_run"                   # no scan state
+    r.until_state("idle", limit=40)
+    assert len([w for w in r.sim.start_writes if w[1]]) == 1
+    assert len(r.ui.parts) == 1 and r.ui.parts[0]["label_select"] == ""
+    assert "Press RUN for the next part" in r.ui.last
+    r.run(10)
+    assert r.sim.cycles_started == 1                  # never starts the next part by itself
+
+
+def test_skip_scan_at_second_run_starts_shift():
+    r = Rig(skip_scan=True)
+    r.flow.run("MODEL-AT", "AT")
+    assert r.flow.state == "at_run_select"
+    r.until_state("at_scan_shift", limit=40)
+    assert "press RUN for the SHIFT stage" in r.ui.last
+    r.run(10)
+    assert r.sim.cycles_started == 1                  # SHIFT waits for RUN
+    assert r.flow.run("MODEL-AT", "AT")
+    assert r.flow.state == "at_run_shift"
+    r.until_state("idle", limit=40)
+    assert r.sim.cycles_started == 2 and len(r.ui.parts) == 1
+    assert [st["stage"] for st in r.ui.parts[0]["stages"]] == ["select", "shift"]

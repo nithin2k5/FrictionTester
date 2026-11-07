@@ -109,6 +109,12 @@ Load a model with **Model Change** (its Type, MT or AT, comes from Model Setting
 - **MT** — scan **one** label → SELECT and SHIFT CABLE tests run **at the same time** → part
   complete when both finish (the label is recorded in both boxes).
 
+**Temporary — scanning is skipped** (`test.skip_scan = true`, the default for now): RUN starts the
+test straight away, with no label and no part-number check. MT: RUN → one cycle for both cables →
+part complete. AT: RUN → SELECT stage, then RUN again → SHIFT stage → part complete. The next part
+always waits for RUN; nothing starts by itself. Results are saved with an empty label. Set
+`"skip_scan": false` in `settings.json` (`test`) to bring the scan flow below back.
+
 After a part completes the flow waits for the next part's first scan. Scans in the wrong box or
 while a test is running are refused with a message. **STOP** cancels the flow (and pulses
 `test_stop` if set). Model Change is blocked while a flow is active.

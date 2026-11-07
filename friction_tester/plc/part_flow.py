@@ -77,8 +77,11 @@ class SharedCycleFlow:
     show_cycle(stage, assignments, event), clear_panels(indices), part_done(record).
     `monitor` provides request_start(test_id) and cancel()."""
 
-    def __init__(self, cfg, ui, monitor, writes_available):
+    def __init__(self, cfg, ui, monitor, writes_available, skip_scan=False):
         self.cfg = cfg
+        # skip_scan (temporary): RUN starts each stage directly - no labels.
+        # AT: RUN starts SELECT, RUN again starts SHIFT. Never auto-starts.
+        self.skip_scan = skip_scan
         self.ui = ui
         self.monitor = monitor
         self.writes_available = writes_available   # callable -> bool
@@ -92,6 +95,9 @@ class SharedCycleFlow:
 
     # ------------------------------------------------------------ operator actions
     def run(self, model, model_type, part_number=""):
+        if self.skip_scan and self.state == "at_scan_shift":
+            self._start_stage("shift", "at_run_shift")
+            return True
         if self.state != "idle":
             self.ui.message("A test is already in progress - press STOP to cancel it", "busy")
             return False
@@ -106,7 +112,12 @@ class SharedCycleFlow:
             self.ui.message(blocker, "fail")
             return False
         self.model, self.model_type, self.part_number = model, model_type, part_number
-        self._new_part()
+        self._new_part(announce=not self.skip_scan)
+        if self.skip_scan:
+            if model_type == "MT":
+                self._start_stage("both", "mt_run")
+            else:
+                self._start_stage("select", "at_run_select")
         return True
 
     def _new_part(self, announce=True):
@@ -197,7 +208,8 @@ class SharedCycleFlow:
         self.test_id = None
         if stage == "select":
             self._set("at_scan_shift")
-            self.ui.message(f"SELECT stage: overall PLC verdict {verdict} - scan the SHIFT label",
+            nxt = "press RUN for the SHIFT stage" if self.skip_scan else "scan the SHIFT label"
+            self.ui.message(f"SELECT stage: overall PLC verdict {verdict} - {nxt}",
                             "pass" if verdict == "OK" else "fail")
             return
         part_ok = all(s["verdict"] == "OK" for s in self.stages)
@@ -211,8 +223,13 @@ class SharedCycleFlow:
             "cables": ["select", "shift"],
         }
         self.ui.part_done(record)
-        self._new_part(announce=False)
-        self.ui.message(f"Part complete - {record['verdict']} ({record['verdict_basis']}). Scan the next label",
+        if self.skip_scan:
+            self._set("idle")                      # next part only on the next RUN
+            nxt = "Press RUN for the next part"
+        else:
+            self._new_part(announce=False)
+            nxt = "Scan the next label"
+        self.ui.message(f"Part complete - {record['verdict']} ({record['verdict_basis']}). {nxt}",
                         "pass" if part_ok else "fail")
 
     def _abort(self, message):
