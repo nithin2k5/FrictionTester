@@ -405,14 +405,16 @@ class PcController:
             self.pending_release.add((op.idx, op.n))
 
     def _can_move(self):
-        blocker = self.link.write_blocker()
-        if blocker:
-            return blocker
+        # Link/register problems first: they are the root cause, and enabling
+        # writes would not get past them.
         if not self.connected or self.snap is None:
             return self._not_connected()
         age = self._status_age()
         if age is not None and age > float(self.timeouts.get("freshness", 1.0)):
             return f"PLC status is stale ({age:.1f} s old) - no motion until a fresh poll succeeds"
+        blocker = self.link.write_blocker()
+        if blocker:
+            return blocker
         if self.stale:
             return "PC request bits left ON in the PLC - inspect the machine and press STOP to release them"
         return None

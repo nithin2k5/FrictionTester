@@ -284,3 +284,16 @@ def test_migration_converts_old_mapping_and_resets_verified():
     assert new["settings_version"] == 4 and m["schema"] == "xgb_cnet_areas" and m["verified"] is False
     assert m["cnet_areas"]["word_read"]["plc_base"] == "D00000"
     assert any("Cnet-area schema" in n for n in new["migrated"])
+
+
+def test_register_error_is_reported_before_writes_off():
+    r = Rig(verified=False)                                         # writes off
+
+    def refuse(address, count):
+        raise PlcExceptionResponse(4, 4000, 21, 1, 2)
+    r.sim.read_words = refuse
+    r.step()
+    r.ctl.submit("home", "shift")
+    r.step()
+    msg = r.messages()[-1]
+    assert "registers are not readable" in msg and "exception 02" in msg and "writes are off" not in msg
