@@ -638,7 +638,9 @@ class TestConsolePage(tk.Frame):
         badge = {"confirmed": theme.PASS, "writing": theme.UPDATE, "pending": theme.BUSY}.get(p["state"], theme.FAIL)
         if snap is None:
             self.plc_badge.config(fg=theme.FAIL)
-            self.plc_strip.config(text="PLC not reachable - no operation can be confirmed")
+            why = summary.get("link_error")
+            self.plc_strip.config(text="PLC not reachable - no operation can be confirmed"
+                                       + (f"   |   {why}" if why else ""))
         else:
             parts = []
             for axis in pp.AXES:

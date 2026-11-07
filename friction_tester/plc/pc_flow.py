@@ -221,6 +221,7 @@ class PcController:
         self.events = queue.Queue()
         self.commands = queue.Queue()
         self.connected = False
+        self.link_error = None          # why the last read/attach failed (None = fine)
         self.snap = None
         self.stale = []
         self.pending_release = set()
@@ -291,6 +292,7 @@ class PcController:
             snap = None
             if self.connected:
                 self.log.log("DISCONNECT", str(exc))
+            self._link_failed(f"poll: {exc}")
         self._connection(snap, now)
         self.snap = snap
         self._check_params(snap, now)
@@ -322,9 +324,12 @@ class PcController:
             try:
                 stale = self.link.attach()
             except Exception as exc:
-                self.log.log("ATTACH-FAIL", str(exc))
+                self._link_failed(f"attach (read {pp.CMD_WORDS[0]}..): {exc}")
                 return
             self.connected = True
+            if self.link_error:
+                self.log.log("LINK-OK", "PLC reads work again", was=self.link_error)
+            self.link_error = None
             ours = [s for s in stale if pp.MOTION_BITS[s] in self.pending_release]
             self.stale = [s for s in stale if s not in ours]
             if self.stale:
@@ -340,6 +345,14 @@ class PcController:
                 self.pending_release.clear()
             except Exception as exc:
                 self.log.log("RELEASE-FAIL", str(exc))
+
+    def _link_failed(self, why):
+        if why != self.link_error:                # log each new reason once, not every poll
+            self.log.log("LINK-FAIL", why)
+        self.link_error = why
+
+    def _not_connected(self):
+        return f"PLC not connected ({self.link_error})" if self.link_error else "PLC not connected"
 
     def _apply(self, changes, op):
         if not changes:
@@ -362,7 +375,7 @@ class PcController:
         if blocker:
             return blocker
         if not self.connected or self.snap is None:
-            return "PLC not connected"
+            return self._not_connected()
         if self.stale:
             return "PC request bits left ON in the PLC - inspect the machine and press STOP to release them"
         return None
@@ -514,7 +527,7 @@ class PcController:
 
     def _recovery_blocker(self):
         if not self.connected or self.snap is None:
-            return "PLC not connected"
+            return self._not_connected()
         for axis in pp.AXES:
             if self.snap.st(axis, "pull_active") or self.snap.st(axis, "push_active"):
                 return f"{pp.AXIS_NAME[axis]} sequence still active"
@@ -616,7 +629,7 @@ class PcController:
             if r.plan is None:
                 try:
                     if snap is None:
-                        raise OpBlocked("PLC not connected")
+                        raise OpBlocked(self._not_connected())
                     r.build_plan(snap)
                 except OpBlocked as exc:
                     self._fail_routine(r, str(exc))
@@ -761,7 +774,7 @@ class PcController:
     # ------------------------------------------------------------ display
     def status_summary(self):
         return {
-            "connected": self.connected, "flow": self.flow, "params": dict(self.params),
+            "connected": self.connected, "link_error": self.link_error, "flow": self.flow, "params": dict(self.params),
             "ops": {a: (op.name, op.state) for a, op in self.manual.items()},
             "routines": {a: (r.op.name if r.op else "", r.op.state if r.op else r.state)
                          for a, r in self.routines.items()},
