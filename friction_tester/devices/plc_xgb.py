@@ -77,7 +77,9 @@ class XGBPlc:
     def __init__(self):
         self._client = None
         self._station = 1
-        self._lock = threading.Lock()   # one Modbus transaction at a time
+        self._lock = threading.Lock()        # one Modbus transaction at a time
+        self._conn_lock = threading.Lock()   # one connect/disconnect at a time
+        self._cfg = None
         self.port = ""
 
     @staticmethod
@@ -104,8 +106,23 @@ class XGBPlc:
         if not 0 <= station <= 247:
             raise ValueError("Station ID must be 0–247")
 
-        self.disconnect()
-        ports.check_free(cfg["port"], "the PLC")
+        # One open at a time: the startup auto-connect and the COM Setting
+        # CONNECT button use the same object. A second caller waits here and
+        # then finds the port already open instead of opening it twice
+        # (which Windows refuses with "Access is denied").
+        with self._conn_lock:
+            if self.is_open and self._cfg == self._key(cfg):
+                return
+            self._disconnect()
+            ports.check_free(cfg["port"], "the PLC")
+            self._open(cfg, station)
+
+    @staticmethod
+    def _key(cfg):
+        return (cfg["port"].strip().upper(), int(cfg["baudrate"]), int(cfg["bytesize"]), cfg["parity"],
+                int(cfg["stopbits"]), int(cfg["station_id"]))
+
+    def _open(self, cfg, station):
         client = ModbusSerialClient(
             port=cfg["port"],
             baudrate=int(cfg["baudrate"]),
@@ -115,25 +132,38 @@ class XGBPlc:
             timeout=float(cfg["timeout"]),
         )
         last_error = "no response"
+        busy = False
         for attempt in range(CONNECT_RETRIES):
             try:
                 if client.connect():
+                    busy = False
                     resp = client.read_coils(0, count=1, device_id=station)
                     if not resp.isError():
                         self._client, self._station, self.port = client, station, cfg["port"]
+                        self._cfg = self._key(cfg)
                         ports.claim(self.port, "the PLC")
                         return
                     last_error = str(resp)
                 else:
+                    # pymodbus only says "could not open": ask Windows why.
+                    client.close()
+                    busy = ports.probe_busy(cfg["port"])
                     last_error = f"could not open {cfg['port']}"
             except Exception as exc:
+                busy = ports.is_access_denied(exc)
                 last_error = str(exc)
             if attempt < CONNECT_RETRIES - 1:
                 time.sleep(1)
         client.close()
+        if busy:
+            raise ports.busy_error(cfg["port"])
         raise ConnectionError(f"PLC did not respond after {CONNECT_RETRIES} attempts: {last_error}")
 
     def disconnect(self):
+        with self._conn_lock:
+            self._disconnect()
+
+    def _disconnect(self):
         if self._client is None:
             return
         # Let a Modbus transaction in progress finish (≤ 2 s) before closing.
@@ -143,7 +173,7 @@ class XGBPlc:
                 try:
                     self._client.close()
                 finally:
-                    self._client = None
+                    self._client, self._cfg = None, None
                     ports.release(self.port, "the PLC")
         finally:
             if got:

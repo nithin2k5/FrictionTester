@@ -62,6 +62,9 @@ def parse_frame(line, expected_id=None):
         raise IndicatorError(f"Bad data field {data!r} in {line!r}")
 
 
+PortBusyError = ports.PortBusyError
+
+
 def open_port(port, baudrate, tries=3, wait=0.7):
     """Open an 8N1 port. "Access is denied" is retried a few times (Windows can
     hold a just-closed port for a moment), then reported in plain words."""
@@ -70,20 +73,11 @@ def open_port(port, baudrate, tries=3, wait=0.7):
             return serial.Serial(port=port, baudrate=baudrate, bytesize=8, parity="N", stopbits=1,
                                  timeout=0.5, write_timeout=0.5)
         except serial.SerialException as exc:
-            denied = "access is denied" in str(exc).lower() or "permissionerror" in str(exc).lower()
-            if not denied:
+            if not ports.is_access_denied(exc):
                 raise
             if attempt == tries - 1:
-                raise PortBusyError(
-                    f"Windows refused {port} (Access is denied): the port is already open somewhere. "
-                    f"Most often an earlier FrictionTester is still running in the background — check "
-                    f"Task Manager → Details for python.exe / pythonw.exe and end it, then press CONNECT. "
-                    f"Otherwise replug the USB-serial adapter or restart the PC.") from exc
+                raise ports.busy_error(port) from exc
             time.sleep(wait)
-
-
-class PortBusyError(Exception):
-    pass
 
 
 class Loadcell:

@@ -74,7 +74,7 @@ class ComPortPage(tk.Frame):
         self._show_plc_state()
         for i in range(len(self.loadcells)):
             self._show_lc_state(i)
-        self.after(1000, self._watch_loadcells)
+        self.after(1000, self._watch_devices)
         if not plc_xgb.XGBPlc.available():
             self.log("pymodbus is not installed — run: pip install pymodbus")
         if not ni_daq.NIDaq.available():
@@ -235,6 +235,7 @@ class ComPortPage(tk.Frame):
 
     def _show_plc_state(self, error=None):
         connected = self.plc.is_open
+        self._plc_shown, self._plc_busy = connected, False
         self.btn_plc_connect.config(text="DISCONNECT" if connected else "CONNECT",
                                     bg=theme.FAIL if connected else theme.PASS,
                                     activebackground=theme.FAIL if connected else theme.PASS, state="normal")
@@ -251,7 +252,7 @@ class ComPortPage(tk.Frame):
             self.plc_status.set("idle", "Not connected")
 
     def toggle_plc(self):
-        if self.plc.is_open:
+        if getattr(self, "_plc_shown", False):          # act on what the button shows
             self.plc.disconnect()
             self.log("PLC disconnected.")
             self._show_plc_state()
@@ -261,6 +262,7 @@ class ComPortPage(tk.Frame):
         except ValueError as exc:
             self.log(f"PLC: {exc}")
             return
+        self._plc_busy = True
         self.btn_plc_connect.config(text="CONNECTING…", bg=theme.BUSY, state="disabled")
         self.plc_status.set("busy", "Connecting…")
 
@@ -384,15 +386,17 @@ class ComPortPage(tk.Frame):
         else:
             w["status"].set("idle", "Not connected")
 
-    def _watch_loadcells(self):
+    def _watch_devices(self):
         """Pick up connections made in the background (startup auto-connect)."""
         if not self.winfo_exists():
             return
+        if not getattr(self, "_plc_busy", False) and getattr(self, "_plc_shown", None) != self.plc.is_open:
+            self._show_plc_state()
         for i, lc in enumerate(self.loadcells):
             w = self.lc_rows[i]
             if not w.get("busy") and w.get("shown") != lc.is_open:
                 self._show_lc_state(i)
-        self.after(1000, self._watch_loadcells)
+        self.after(1000, self._watch_devices)
 
     def toggle_loadcell(self, i):
         lc = self.loadcells[i]
