@@ -133,3 +133,13 @@ class ModbusPlcBackend:
         if table != "coils":
             raise MappingError(f"{address} maps to {table}, which cannot be written")
         self.plc.write_coil_raw(num, value)
+
+    def write_words(self, address, values):
+        """Write consecutive D words (only with a verified mapping and writes enabled)."""
+        if not self.can_write:
+            raise PermissionError("PLC writes are disabled: the Modbus mapping is not verified "
+                                  "or live writes are not enabled")
+        table, start = self.mapping.locate(address)
+        if table != "holding_registers":
+            raise MappingError(f"{address} maps to {table}, which cannot be written")
+        self.plc.write_registers_raw(start, values)

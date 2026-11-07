@@ -1,5 +1,9 @@
 # Shared PLC cycle integration
 
+> **Not this machine's program.** The friction tester runs *PRINTING PROGRAM OLD* (`plc.pdf`);
+> see [plc_pc_interface.md](plc_pc_interface.md). This page documents a different ladder and is kept
+> for the `shared_cycle` mode only.
+
 Source: XG5000 ladder printout "NEW NLF MC KOREA MODIFY 09_06_25" (17 pages, printed 2026-11-06).
 Code: `friction_tester/plc/` (address map, Modbus mapping, tracker, part flow; the ladder simulator
 for the automated tests is `tests/plc_simulator.py`),

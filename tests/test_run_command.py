@@ -1,5 +1,7 @@
-"""RUN through test.commands.test_run (M00029) in independent mode, against the
-ladder simulator: one pulse per machine cycle, gated by the verified mapping."""
+"""RUN through test.commands.test_run in "independent" mode (set explicitly to
+M00029 here - that address belongs to the other ladder, not this machine's
+plc.pdf profile), against the shared-cycle simulator: one pulse per machine
+cycle, gated by the verified mapping."""
 
 import os
 import sys
@@ -11,7 +13,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from friction_tester.config import TEMPORARY_COMMANDS, load_settings  # noqa: E402
+from friction_tester.config import load_settings, migrate  # noqa: E402
 from plc_simulator import SharedCycleSimulator  # noqa: E402
 from friction_tester.ui import test_console  # noqa: E402
 
@@ -83,16 +85,18 @@ class Blocked:
 
 def settings(verified=True, live=True):
     s = load_settings(path="does-not-exist.json")
+    s["test"]["commands"]["test_run"] = "M00029"      # set explicitly (independent mode, other ladder)
     sh = s["test"]["integration"]["shared"]
     sh["mapping"]["verified"], sh["live_start_enabled"] = verified, live
     return s
 
 
-def test_temporary_run_address_is_m00029():
-    assert TEMPORARY_COMMANDS == {"test_run": "M00029"}
+def test_no_m00029_default_and_old_settings_migrated():
     s = load_settings(path="does-not-exist.json")
-    assert s["test"]["commands"]["test_run"] == "M00029"
-    assert s["test"]["commands"]["move_origin"] == ""
+    assert s["test"]["commands"]["test_run"] == "" and s["test"]["integration"]["mode"] == "pc_interface"
+    old = migrate({"test": {"integration": {"mode": "independent"}, "commands": {"test_run": "M00029"}}})
+    assert old["test"]["commands"]["test_run"] == "" and old["test"]["integration"]["mode"] == "pc_interface"
+    assert old["settings_version"] == 2 and len(old["migrated"]) == 2
 
 
 def test_unverified_mapping_writes_nothing():

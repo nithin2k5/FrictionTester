@@ -60,14 +60,43 @@ def cond_col(test, attr):
     return f"MM_{test}_{attr}"
 
 
+# PLC parameter words per test, sent to D04200-D04213 (plc.pdf profile). Raw
+# 16-bit words as the PLC receives them - the ladder scales them x100 (x10 for
+# the measurement start) into positioning counts; units are machine calibration.
+# (attribute, label, profile key)
+PLC_PARAM_FIELDS = [
+    ("PLC_JOG_LOW", "Low jog speed", "jog_low"),
+    ("PLC_JOG_HIGH", "High jog speed", "jog_high"),
+    ("PLC_SPEED", "Operating speed", "speed"),
+    ("PLC_PULL_TRAVEL", "PULL travel", "pull_travel"),
+    ("PLC_LIMIT_LEFT", "Left limit", "limit_left"),
+    ("PLC_LIMIT_RIGHT", "Right limit", "limit_right"),
+    ("PLC_MEAS_START", "Measurement start", "meas_start"),
+]
+
 # Every data column in table order: (column, label, unit, SQL type)
 FIELDS = [(c, label, "", sql) for c, label, sql in HEADER_FIELDS] + [
     (cond_col(key, attr), f"{name} {label}", unit, sql)
     for key, name in TESTS for attr, label, unit, sql in CONDITION_FIELDS
+] + [
+    (cond_col(key, attr), f"{name} PLC {label}", "word", "INT")
+    for key, name in TESTS for attr, label, _k in PLC_PARAM_FIELDS
 ]
 COLUMNS = [f[0] for f in FIELDS]
 LABELS = {f[0]: f[1] for f in FIELDS}
 NUMERIC = {cond_col(key, attr) for key in TEST_KEYS for attr, *_ in CONDITION_FIELDS}
+PLC_INT = {cond_col(key, attr) for key in TEST_KEYS for attr, *_ in PLC_PARAM_FIELDS}
+
+
+def plc_params_from_row(row):
+    """The 14 parameter words of a model in D04200 order (int or None)."""
+    from .plc import pc_profile as pp
+    attr_of = {k: attr for attr, _l, k in PLC_PARAM_FIELDS}
+    out = []
+    for axis, key, *_r in pp.PARAMS:
+        v = (row or {}).get(cond_col(axis.upper(), attr_of[key]))
+        out.append(None if v is None else int(v))
+    return out
 
 SCHEMA = (f"CREATE TABLE IF NOT EXISTS {TABLE} (ID INT AUTO_INCREMENT PRIMARY KEY, "
           + ", ".join(f"{c} {sql}" for c, _l, _u, sql in FIELDS) + ")")
@@ -178,9 +207,47 @@ RESULTS_SCHEMA = f"""
 """
 
 
+def _pc_result_rows(record, part_uid, source):
+    """Rows for the plc.pdf profile: one per cable. CH1 holds that cable's own
+    values (FWD = PULL 1-3, RET = PUSH 1-3, FINAL = largest value judged,
+    LIMIT_NG = 1 when the cable is NG); CH2 is unused."""
+    import json
+    rows = []
+    for st in record["stages"]:
+        res = st.get("result") or {}
+        row = {
+            "TR_PART_UID": part_uid,
+            "TR_DATETIME": record["time"].replace("T", " "),
+            "TR_MODEL": record.get("model"), "TR_MODEL_TYPE": record.get("type"),
+            "TR_PART_NUMBER": record.get("part_number"),
+            "TR_STAGE": st["stage"].upper(),
+            "TR_LABEL": record.get("label_shift") if st["stage"] == "shift" else record.get("label_select"),
+            "TR_STAGE_RESULT": st.get("verdict"),
+            "TR_CH1_FINAL": res.get("max"), "TR_CH2_FINAL": None,
+            "TR_CH1_LIMIT_NG": None if res.get("ok") is None else int(not res["ok"]),
+            "TR_CH2_LIMIT_NG": None,
+            "TR_LOT_VALUE": record.get("label_select") or record.get("label_shift"),
+            "TR_LOT_RESULT": record.get("verdict"),
+            "TR_SOURCE": source,
+        }
+        for ch in (1, 2):
+            for d in ("FWD", "RET"):
+                for i in (1, 2, 3):
+                    row[f"TR_CH{ch}_{d}_{i}"] = None
+        for d, key in (("FWD", "pull"), ("RET", "push")):
+            for i, v in enumerate((res.get(key) or [])[:3]):
+                row[f"TR_CH1_{d}_{i + 1}"] = v
+        row["TR_DETAIL"] = json.dumps({"profile": record.get("profile"), "part_id": record.get("part_id"),
+                                       "verdict_basis": record.get("verdict_basis"), "result": res}, default=str)
+        rows.append(row)
+    return rows
+
+
 def result_rows(record, part_uid, source):
     """TBL_TEST_RESULTS rows (dicts) for one completed part record from the part flow."""
     import json
+    if record.get("profile") == "printing_program_old_pc_words":
+        return _pc_result_rows(record, part_uid, source)
     rows = []
     for st in record["stages"]:
         meas = st.get("measurements") or {}

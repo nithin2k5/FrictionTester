@@ -25,14 +25,41 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
    ```
    Safe to re-run: existing data is kept and older tables are migrated.
 
-## Shared PLC cycle
+## PLC profile (this machine): PRINTING PROGRAM OLD
 
-`test.integration.mode = "shared_cycle"` connects the Test Console to the machine ladder's single
-automatic cycle (M00029 start pulse, step D05010, verdict M0000D/M0000C, counters D00150/D00152,
-stored samples and finals D01250/D01253). The ladder trace, register map, completion rules and the
-commissioning items still needed are in [docs/plc_shared_cycle.md](docs/plc_shared_cycle.md).
-Live writes stay off until the Modbus mapping is verified; the default mode (`independent`) keeps the
-per-cable start/done handshake below.
+`test.integration.mode = "pc_interface"` (the default) drives this machine's XG5000 program
+(`plc.pdf`, *PRINTING PROGRAM OLD*) through its PC word interface: commands D04100–D04102, echoes
+D04000–D04002, status D04003–D04005, model parameters D04200–D04213 (echo D04007–D04020). Each cable
+test is: measurement-start positioning → PULL → PUSH (force sampled during each stroke from the
+serial loadcells or the NI DAQ) → the app's OK/NG judgement against the model's LOAD limits.
+The address map, handshakes, commissioning table and the unresolved machine items are in
+[docs/plc_pc_interface.md](docs/plc_pc_interface.md).
+
+**Nothing is written to the PLC** until all three are set in `settings.json` → `test.machine_profile`:
+`mapping.verified` (D-area Modbus mapping checked), `live_writes_enabled`, and
+`command_owner_confirmed` (no other program writes D04100–D04102). Until then the Test Console
+monitors the status words and shows "params: not confirmed · writes OFF".
+
+- **Model parameters**: Model Settings → *PLC Parameters* (7 raw words per cable). Model Change sends
+  them when both axes are idle; RUN is allowed only after the PLC echoes the full set back.
+- **RUN / scans**: AT = scan SELECT → SELECT test → scan SHIFT → SHIFT test → one part; MT = one scan →
+  both cables together → one part (`test.skip_scan` still starts tests without scanning).
+- **STOP** releases the app's requests. This PLC program has **no PC stop command**: a stroke that has
+  started finishes by itself — use the machine's emergency stop to stop motion.
+- **ORIGIN / Move Origin** run the home handshake (both axes / one axis). Servo and alarm-reset
+  buttons are not assigned in this program.
+- A machine-operation failure leaves the part **incomplete** (not counted or saved); missing or
+  out-of-limit force values make the cable **NG**. Each finished part is counted and saved once.
+- Log: `<Saved to>/plc_events_YYYYMMDD.log` (requests, echoes, state changes, timeouts, saves).
+
+Settings saved by an earlier version are migrated on load (kept, with the mode switched to
+`pc_interface` and the old program's M00029 run address removed; see `"migrated"` in the settings).
+
+### Other ladder (not this machine): shared cycle
+
+`"shared_cycle"` belongs to a different program ("NEW NLF MC KOREA": M00029 start, step D05010,
+verdict M0000C/M0000D) — see [docs/plc_shared_cycle.md](docs/plc_shared_cycle.md). `"independent"`
+keeps the generic per-cable start/done handshake.
 
 ## Test Console
 
@@ -74,6 +101,10 @@ devices too.
 Each confirmed part is saved to MySQL table **`TBL_TEST_RESULTS`** (created automatically), one row
 per PLC test cycle: an AT part gives two rows (`TR_STAGE` = SELECT, SHIFT), an MT part one (BOTH).
 Rows of one part share `TR_PART_UID`.
+
+In the *PRINTING PROGRAM OLD* profile each row is one cable: `TR_CH1_FWD_1..3` = PULL 1–3,
+`TR_CH1_RET_1..3` = PUSH 1–3, `TR_CH1_FINAL` = largest judged value, `TR_CH1_LIMIT_NG` = 1 when the
+cable is NG (CH2 unused); `TR_DETAIL` holds the judgement, problems and sample counts.
 
 | Columns | Content |
 |---|---|

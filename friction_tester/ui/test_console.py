@@ -32,6 +32,7 @@ from ..config import save_settings
 from ..plc.modbus_map import ModbusMapping, ModbusPlcBackend
 from ..plc.part_flow import SharedCycleFlow, panel_assignments
 from ..plc.shared_cycle import STEP_NAMES, CycleTracker, SharedCycleMonitor, read_snapshot
+from ..plc import pc_profile as pp
 
 NO_DATA = "—"      # shown for a value that was not measured (a measured zero shows 0)
 
@@ -327,6 +328,26 @@ class CablePanel(tk.Frame):
         if meas is None:
             self.set_source(f"Source: {who} · overall PLC verdict - stored samples could not be read")
 
+    def show_pc_result(self, res, source_text):
+        """PULL1-3 / PUSH1-3, means, max and OK/NG of a plc.pdf-profile cable test."""
+        def fmt(v):
+            return NO_DATA if v is None else f"{v:.2f}"
+
+        for d in ("pull", "push"):
+            vals = list(res.get(d) or [])
+            for i in range(3):
+                self.res[f"{d}{i + 1}"].config(text=fmt(vals[i]) if i < len(vals) else NO_DATA)
+            present = [v for v in vals if v is not None]
+            self.res[f"{d}_mean"].config(text=fmt(sum(present) / len(present)) if present else NO_DATA)
+        self.res["max"].config(text=fmt(res.get("max")))
+        ok = res.get("ok")
+        self.judge.config(text="OK" if ok else "NG", fg=theme.PASS if ok else theme.FAIL)
+        self.last_ok = None              # counted per part by the controller
+        problems = res.get("problems") or []
+        counts = res.get("sample_counts") or {}
+        self.set_source(f"{source_text} · judge: {res.get('judge')} · samples PULL {counts.get('pull', 0)} / "
+                        f"PUSH {counts.get('push', 0)}" + (f"\n{'; '.join(problems)}" if problems else ""))
+
     def set_live_values(self, load, stroke, load_unit, stroke_unit):
         for key, val, unit in (("load", load, load_unit), ("stroke", stroke, stroke_unit)):
             if val is None:
@@ -365,13 +386,17 @@ class CablePanel(tk.Frame):
 class TestConsolePage(tk.Frame):
     SIDES = (("select", "SELECT CABLE", "SL"), ("shift", "SHIFT CABLE", "SH"))
 
-    def __init__(self, master, settings, plc, loadcells):
+    def __init__(self, master, settings, plc, loadcells, daq=None):
         super().__init__(master, bg=theme.BG)
         self.settings = settings
         self.plc = plc
         self.loadcells = loadcells
+        self.daq = daq
         self.integration = copy.deepcopy(settings["test"]["integration"])
         self.shared = self.integration["mode"] == "shared_cycle"
+        self.pc = self.integration["mode"] == "pc_interface"     # plc.pdf profile (this machine)
+        self.ctl = None
+        self.sampler = None
         self.monitor = None
         self.flow = None
         self._polling = False
@@ -393,7 +418,7 @@ class TestConsolePage(tk.Frame):
 
         left = tk.Frame(body, bg=theme.BG)
         left.grid(row=0, column=0, sticky="nsew")
-        if self.shared:
+        if self.shared or self.pc:
             self._build_plc_strip(left)      # left column only, so the side panel keeps its height
         panels = tk.Frame(left, bg=theme.BG)
         panels.pack(fill="both", expand=True, pady=(0, 6))
@@ -414,6 +439,8 @@ class TestConsolePage(tk.Frame):
         self._load_model_list()
         if self.shared:
             self._start_shared_cycle()
+        elif self.pc:
+            self._start_pc_interface()
         else:
             for n, p in enumerate(self.panels):
                 p.set_source(f"Source: serial loadcell L{n + 1} (live LOAD) · results: start/done handshake")
@@ -483,6 +510,103 @@ class TestConsolePage(tk.Frame):
         self._live_assign = assign
         self.monitor.start()
         self.after(100, self._drain_monitor)
+
+    # ============================================ plc.pdf PC-interface profile
+    def _start_pc_interface(self):
+        from ..plc.event_log import EventLog
+        from ..plc.pc_flow import PcController
+        from ..plc.pc_link import PcLink
+        from ..plc.pc_measure import Sampler
+        mp = self.settings["test"]["machine_profile"]
+        mapping = ModbusMapping(mp.get("mapping"))
+        backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(mp.get("live_writes_enabled")))
+        self.pc_log = EventLog(self._result_dir())
+        link = PcLink(backend, self.pc_log, owner_confirmed=bool(mp.get("command_owner_confirmed")),
+                      internal_enabled=bool(mp.get("internal_bits_enabled")) and mapping.verified)
+        self.sampler = Sampler(self.loadcells, self.daq, self.settings)
+        cfg = {"timeouts": mp.get("timeouts") or {}, "measurement": mp.get("measurement") or {}}
+        self.ctl = PcController(link, cfg, self.pc_log, self.sampler,
+                                interval=float(mp.get("poll_interval", 0.1)), skip_scan=self._skip_scan())
+        self.pc_log.log("START", pp.PROFILE_TITLE, version=mp.get("version"),
+                        mapping=mapping.describe(), writes=link.write_blocker() or "enabled")
+        m = mp.get("measurement") or {}
+        for (key, _t, _s), panel in zip(self.SIDES, self.panels):
+            if m.get("force_source", "serial") == "serial":
+                src = f"serial loadcell L{(m.get('loadcell') or {}).get(key, '?')}"
+            else:
+                src = f"NI DAQ {(m.get('daq_force') or {}).get(key, '?')}"
+            stroke = (m.get("stroke") or {}).get(key) or "not configured"
+            panel.set_source(f"Source: {src} · stroke {stroke} · {pp.PROFILE_TITLE}")
+            panel.set_result_labels("PULL", "PUSH", "", "Max")
+        values = self.settings["test"].get("plc_params")
+        if values and self.settings["test"]["select"].get("model"):
+            self.ctl.submit("params", self.settings["test"]["select"]["model"], list(values))
+        self.ctl.start()
+        self.after(100, self._drain_pc)
+
+    def _pc_info(self):
+        t = self.settings["test"]
+        conds = {key: panel.read_conditions() for (key, _t, _s), panel in zip(self.SIDES, self.panels)}
+        return {"model": t["select"].get("model"), "type": t.get("model_type", ""),
+                "part_number": t.get("part_number", ""), "conditions": conds}
+
+    def _drain_pc(self):
+        """UI thread: apply what the controller thread produced (it never touches Tk)."""
+        if not self._alive or self.ctl is None:
+            return
+        last = None
+        while True:
+            try:
+                ev = self.ctl.events.get_nowait()
+            except _queue.Empty:
+                break
+            kind = ev[0]
+            if kind == "snapshot":
+                last = ev
+            elif kind == "message":
+                self.message(ev[1], ev[2])
+            elif kind == "flow":
+                self._set_flow(ev[1])
+            elif kind == "axis_started":
+                n = [k for k, _t, _s in self.SIDES].index(ev[1])
+                self.panels[n].reset_results()
+                self.panels[n].judge.config(text="TEST", fg=theme.BUSY)
+            elif kind == "axis_result":
+                n = [k for k, _t, _s in self.SIDES].index(ev[1])
+                self.panels[n].show_pc_result(ev[2], f"Source: {pp.PROFILE_TITLE}")
+            elif kind == "part_done":
+                self.record_part(ev[1])
+        if last is not None:
+            self._show_pc_status(last[1], last[2])
+        self.after(100, self._drain_pc)
+
+    def _show_pc_status(self, snap, summary):
+        p = summary["params"]
+        badge = {"confirmed": theme.PASS, "writing": theme.UPDATE, "pending": theme.BUSY}.get(p["state"], theme.FAIL)
+        if snap is None:
+            self.plc_badge.config(fg=theme.FAIL)
+            self.plc_strip.config(text="PLC not reachable - no operation can be confirmed")
+        else:
+            parts = []
+            for axis in pp.AXES:
+                st = lambda n: snap.st(axis, n)
+                flags = [("SV", st("servo_on")), ("ALM-OK", st("alarm_normal")), ("PERMIT", st("permitted")),
+                         ("PULL", st("pull_active")), ("PUSH", st("push_active")), ("@START", st("at_meas_start")),
+                         ("@PULL", st("at_pull")), ("CLAMP", st("clamp_on")), ("ERR", st("axis_error"))]
+                on = " ".join(name for name, v in flags if v)
+                parts.append(f"{pp.AXIS_NAME[axis]}: {on or '-'} · product raw {int(bool(st('product_raw')))}")
+            estop = f"E-stop U{int(bool(snap.common('estop_upper')))} L{int(bool(snap.common('estop_lower')))}"
+            self.plc_badge.config(fg=theme.UPDATE if self.ctl.busy() else theme.PASS)
+            self.plc_strip.config(text="   |   ".join(parts) + f"   |   {estop}")
+        blocker = summary.get("write_blocker")
+        self.plc_mode.config(text=(f"params: {p['state'].replace('_', ' ')}"
+                                   + (" · writes OFF" if blocker else "")), fg=badge)
+        if self.sampler is not None:
+            active = self.sampler.active_axes()
+            for (key, _t, _s), panel in zip(self.SIDES, self.panels):
+                if key in active and key in self.sampler.latest:
+                    load, stroke = self.sampler.latest[key]
+                    panel.set_live_values(load, stroke, "", "")
 
     def _drain_monitor(self):
         """UI thread: take what the monitor thread produced (it never touches Tk)."""
@@ -575,7 +699,7 @@ class TestConsolePage(tk.Frame):
         """Write the part's rows to TBL_TEST_RESULTS on a worker thread."""
         import uuid
         from .. import db
-        source = "PLC shared cycle" if self.shared else "PLC"
+        source = "PLC shared cycle" if self.shared else ("PLC pc interface" if self.pc else "PLC")
         rows = db.result_rows(record, uuid.uuid4().hex, source)
         result = {}
 
@@ -919,6 +1043,11 @@ class TestConsolePage(tk.Frame):
         self._stop_event.set()
         self._pending.clear()
         threads = [t for t in (getattr(self, "_poll_thread", None),) if t]
+        if self.ctl is not None:
+            self.ctl.submit("stop")
+            self.ctl.stop_thread()       # its loop releases any request bit on the way out
+            if self.ctl._thread:
+                threads.append(self.ctl._thread)
         if self.monitor:
             self.monitor.cancel()
             self.monitor.stop()
@@ -941,6 +1070,14 @@ class TestConsolePage(tk.Frame):
 
     def plc_pulse(self, command, label):
         """Momentary command: set the bit, hold 0.3 s, clear it."""
+        if self.pc:
+            homes = {"move_origin": "all", "origin_select": "select", "origin_shift": "shift"}
+            if command in homes:
+                self.ctl.submit("home", homes[command])
+            else:
+                self._set_status(f"{label}: not assigned in this PLC program (plc.pdf) - see the unresolved "
+                                 "list in docs/plc_pc_interface.md", theme.BUSY, 6)
+            return
         addr = self._command_address(command, label)
         if not addr:
             return
@@ -958,6 +1095,10 @@ class TestConsolePage(tk.Frame):
 
     def toggle_servo(self, key, n):
         """Servo ON/OFF: a maintained PLC bit."""
+        if self.pc:
+            self._set_status("Servo ON/OFF: not assigned in this PLC program (servo ON follows the PLC's own "
+                             "start-up logic) - see docs/plc_pc_interface.md", theme.BUSY, 6)
+            return
         label = f"{self.SIDES[n][1]} servo"
         addr = self._command_address(f"servo_{key}", label)
         if not addr:
@@ -1086,6 +1227,11 @@ class TestConsolePage(tk.Frame):
                     "load_min": g("LOAD_MIN"), "load_max": g("LOAD_MAX")}
             panel.load_conditions(row["MM_MODEL"], cond)
             panel.reset_results()
+        from .. import db
+        values = db.plc_params_from_row(row)
+        self.settings["test"]["plc_params"] = values
+        if self.pc and self.ctl is not None:
+            self.ctl.submit("params", row["MM_MODEL"], values)
         model_type = (row.get("MM_TYPE") or "").strip().upper()
         self.settings["test"]["model_type"] = model_type
         self.settings["test"]["part_number"] = (row.get("MM_PART_NUMBER") or "").strip()
@@ -1196,6 +1342,12 @@ class TestConsolePage(tk.Frame):
                 for e in self.scan_entries.values():
                     e.delete(0, "end")
             return
+        if self.pc:
+            if self._flow == "idle":
+                for e in self.scan_entries.values():
+                    e.delete(0, "end")
+            self.ctl.submit("run", self._pc_info())
+            return
         if self._skip_scan() and self._flow == "at_scan_shift":
             self._set_flow("at_run_shift")         # skip scan: RUN starts the SHIFT stage
             self._start_cable_tests([1])
@@ -1236,6 +1388,9 @@ class TestConsolePage(tk.Frame):
         if self.shared:
             self.flow.stop()             # app flow only - no stop command is sent to the PLC
             return
+        if self.pc:
+            self.ctl.submit("stop")      # releases requests; this PLC program has no stop command
+            return
         if self._flow == "idle":
             self.plc_pulse("test_stop", "Test stop")
             return
@@ -1262,13 +1417,16 @@ class TestConsolePage(tk.Frame):
             self.scan_entries[key].delete(0, "end")
             self._set_status(f"Label rejected: expected part {part}", theme.FAIL, hold=6)
             return
-        if self.shared:
+        if self.shared or self.pc:
             if self._flow == "mt_scan":
                 for e in self.scan_entries.values():
                     if e.get().strip() != label:
                         e.delete(0, "end")
                         e.insert(0, label)
-            self.flow.scan(key, label)
+            if self.pc:
+                self.ctl.submit("scan", key, label)
+            else:
+                self.flow.scan(key, label)
             return
         state = self._flow
         if state == "at_scan_select" and key == "select":
@@ -1555,7 +1713,8 @@ class TestConsolePage(tk.Frame):
             for i, (key, _t, _s) in enumerate(self.SIDES):
                 side = {"load": None, "lamps": {}}
                 lc = self.loadcells[i]
-                if lc.is_open:
+                capturing = self.sampler is not None and key in self.sampler.active_axes()
+                if lc.is_open and not capturing:
                     try:
                         side["load"] = lc.read()[2]
                     except Exception:

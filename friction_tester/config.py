@@ -6,7 +6,12 @@ from pathlib import Path
 
 SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 
+# settings.json layout version. 2 = machine profile "PRINTING PROGRAM OLD"
+# (plc.pdf, PC word interface) is this machine's integration.
+SETTINGS_VERSION = 2
+
 DEFAULT_SETTINGS = {
+    "settings_version": SETTINGS_VERSION,
     # LS XGB over RS232, Modbus RTU
     "plc": {
         "port": "",
@@ -42,11 +47,10 @@ DEFAULT_SETTINGS = {
         "commands": {
             "servo_select": "", "alarm_reset_select": "", "origin_select": "",
             "servo_shift": "", "alarm_reset_shift": "", "origin_shift": "",
-            # TEMPORARY: test_run = M00029, the ladder's start request (rung 2).
-            # Used by RUN when no start_<cable> bit is set: one 0.3 s pulse per
-            # machine cycle, written only through the verified Modbus mapping
-            # (see TEMPORARY_COMMANDS below). move_origin: not known yet.
-            "test_run": "M00029", "test_stop": "", "move_origin": "",
+            # test_run: used by RUN in "independent" mode when no start_<cable>
+            # bit is set. Empty: the earlier M00029 start belonged to a different
+            # PLC program and is not part of this machine's profile.
+            "test_run": "", "test_stop": "", "move_origin": "",
             # Test flow handshake per cable: the app pulses start_<cable> to
             # begin that cable's test and waits for done_<cable> to turn ON.
             "start_select": "", "done_select": "",
@@ -58,11 +62,15 @@ DEFAULT_SETTINGS = {
         "skip_scan": True,
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
         "part_number": "",         # part number of the loaded model; scanned labels must contain it
-        # How the Test Console talks to the PLC (docs/plc_shared_cycle.md).
-        #   "independent": per-cable start_<cable>/done_<cable> handshake above
-        #   "shared_cycle": the ladder's one automatic cycle (M00029 / D05010)
+        # How the Test Console talks to the PLC.
+        #   "pc_interface": THIS machine - plc.pdf "PRINTING PROGRAM OLD", PC word
+        #                   interface D04100-D04102 / D04000-D04020 / D04200-D04213
+        #                   (docs/plc_pc_interface.md, settings in machine_profile below)
+        #   "independent":  per-cable start_<cable>/done_<cable> handshake above
+        #   "shared_cycle": a different ladder ("NEW NLF MC KOREA", M00029 / D05010;
+        #                   docs/plc_shared_cycle.md) - not this machine's program
         "integration": {
-            "mode": "independent",
+            "mode": "pc_interface",
             "shared": {
                 # Writing M00029 needs BOTH live_start_enabled and mapping.verified.
                 "live_start_enabled": False,
@@ -85,6 +93,38 @@ DEFAULT_SETTINGS = {
                 "direction_role": {"forward": "", "return": ""},  # "pull" / "push"
                 "force_scale": 0.0, "force_unit": "",       # 0 = show raw PLC counts
                 "position_scale": 0.0, "position_unit": "",
+            },
+        },
+        # PRINTING PROGRAM OLD profile (friction_tester/plc/pc_profile.py).
+        # Nothing is written to the PLC until mapping.verified, live_writes_enabled
+        # and command_owner_confirmed are all true (see the commissioning table in
+        # docs/plc_pc_interface.md).
+        "machine_profile": {
+            "id": "printing_program_old_pc_words",
+            "version": 1,
+            "mapping": {
+                "verified": False,
+                "areas": {
+                    "D": {"table": "holding_registers", "base": 0},
+                    "M": {"table": "coils", "base": 0},
+                },
+            },
+            "live_writes_enabled": False,
+            "command_owner_confirmed": False,     # no other program writes D04100-D04102
+            "internal_bits_enabled": False,       # read M00051/52/61/62 (M-area mapping verified)
+            "poll_interval": 0.1,
+            "timeouts": {
+                "echo": 1.5, "accept": 3.0, "stroke": 30.0, "home": 60.0, "meas_start": 8.0,
+                "release": 3.0, "meas_dwell": 1.0, "meas_settle": 0.5, "stroke_min_hold": 1.5,
+                "params": 3.0,
+            },
+            "measurement": {
+                "force_source": "serial",          # "serial" (KOMEIN) or "daq"
+                "loadcell": {"select": 1, "shift": 2},
+                "daq_force": {"select": "Loadcell 1", "shift": "Loadcell 2"},
+                "stroke": {"select": "", "shift": ""},   # DAQ sensor name of the LVDT, "" = none
+                "judge": "peak",                   # "peak" | "strokes" | "positions"
+                "strokes_per_test": 1,
             },
         },
         # Counters on the right-hand panel; day counts reset when the date changes.
@@ -131,22 +171,40 @@ def _merge(defaults, loaded):
     return result
 
 
-# Temporary command addresses, used while the saved value is blank (an older
-# settings.json saved every command as ""). Remove an entry once the machine's
-# I/O list is confirmed and the address is set in settings.json.
-TEMPORARY_COMMANDS = {"test_run": "M00029"}
+def migrate(loaded):
+    """Bring a settings.json from an earlier version up to SETTINGS_VERSION.
+
+    Keeps every user setting; changes only what the new machine profile
+    replaces, and records what it changed under "migrated".
+    """
+    version = int(loaded.get("settings_version", 1) or 1)
+    notes = []
+    if version < 2:
+        test = loaded.setdefault("test", {})
+        integ = test.setdefault("integration", {})
+        old_mode = integ.get("mode", "independent")
+        if old_mode != "pc_interface":
+            integ["mode"] = "pc_interface"
+            notes.append(f"integration.mode {old_mode} -> pc_interface (plc.pdf profile)")
+        cmds = test.get("commands") or {}
+        if str(cmds.get("test_run", "")).strip().upper() == "M00029":
+            cmds["test_run"] = ""
+            notes.append("commands.test_run M00029 removed (belonged to a different PLC program)")
+        loaded["settings_version"] = 2
+    if notes:
+        loaded["migrated"] = notes
+    return loaded
 
 
 def load_settings(path=SETTINGS_FILE):
     try:
         with open(path, "r", encoding="utf-8") as f:
-            settings = _merge(DEFAULT_SETTINGS, json.load(f))
+            loaded = migrate(json.load(f))
+        settings = _merge(DEFAULT_SETTINGS, loaded)
+        if loaded.get("migrated"):
+            settings["migrated"] = loaded["migrated"]
     except (FileNotFoundError, json.JSONDecodeError):
         settings = deepcopy(DEFAULT_SETTINGS)
-    cmds = settings["test"]["commands"]
-    for key, addr in TEMPORARY_COMMANDS.items():
-        if not str(cmds.get(key) or "").strip():
-            cmds[key] = addr
     return settings
 
 

@@ -228,6 +228,17 @@ class XGBPlc:
         if resp.isError():
             raise RuntimeError(f"Modbus coil write at {address} failed: {resp}")
 
+    def write_registers_raw(self, address, values):
+        """Write consecutive holding registers at a raw Modbus address (function 16)."""
+        values = [int(v) & 0xFFFF for v in values]
+        if not 1 <= len(values) <= 123:
+            raise ValueError("1 to 123 registers per write")
+        self._require_open()
+        with self._lock:
+            resp = self._client.write_registers(address, values, device_id=self._station)
+        if resp.isError():
+            raise RuntimeError(f"Modbus register write at {address} x{len(values)} failed: {resp}")
+
     def read_registers(self, address, count=1):
         """Read `count` holding registers starting at a D address."""
         if not 1 <= count <= 125:

@@ -243,5 +243,5 @@ class App:
             self.page = ModelSettingsPage(self.content, self.settings)
             self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
-            self.page = TestConsolePage(self.content, self.settings, self.plc, self.loadcells)
+            self.page = TestConsolePage(self.content, self.settings, self.plc, self.loadcells, daq=self.daq)
             self.page.pack(fill="both", expand=True, padx=12, pady=10)
