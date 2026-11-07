@@ -16,6 +16,14 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
    python main.py --simulate   # Test Console against the shared-cycle PLC simulator
    ```
 4. Tests (simulator, no hardware): `python -m pytest tests -q`
+5. Database (MySQL; connection at the top of `friction_tester/db.py`). The app creates the database
+   and tables on first use; to set them up beforehand, or to check the connection:
+   ```
+   python init_db.py                          # create database `friction` + all tables, list them
+   python init_db.py --check                  # only test the connection and list the tables
+   python init_db.py --admin E1001 "Kumar"    # also add / reset a sign-in user (password prompted)
+   ```
+   Safe to re-run: existing data is kept and older tables are migrated.
 
 ## Shared PLC cycle
 
