@@ -1,5 +1,5 @@
 {
-  "settings_version": 3,
+  "settings_version": 4,
   "plc": {
     "port": "",
     "baudrate": 9600,
@@ -36,8 +36,9 @@
       "load_min": null,
       "load_max": null,
       "clamp_count": 0,
-      "front_sensor": "P0000",
-      "rear_sensor": "P0001"
+      "forward_sensor": "P0006",
+      "backward_sensor": "P0007",
+      "part_sensor": "P000A"
     },
     "shift": {
       "model": "",
@@ -52,8 +53,9 @@
       "load_min": null,
       "load_max": null,
       "clamp_count": 0,
-      "front_sensor": "P0002",
-      "rear_sensor": "P0003"
+      "forward_sensor": "P0001",
+      "backward_sensor": "P0000",
+      "part_sensor": "P000B"
     },
     "commands": {
       "servo_select": "",
@@ -132,17 +134,31 @@
         "mt_concurrency": "unverified"
       },
       "mapping": {
+        "schema": "xgb_cnet_areas",
         "verified": false,
-        "areas": {
-          "D": {
-            "table": "holding_registers",
-            "base": 0
+        "verified_note": "",
+        "cnet_areas": {
+          "bit_read": {
+            "plc_base": "P00000",
+            "accessible_count": null
           },
-          "M": {
-            "table": "coils",
-            "base": 0
+          "bit_write": {
+            "plc_base": "M00000",
+            "accessible_count": null
+          },
+          "word_read": {
+            "plc_base": "D00000",
+            "accessible_count": null
+          },
+          "word_write": {
+            "plc_base": "D00000",
+            "accessible_count": null
           }
-        }
+        },
+        "word_read_order": [
+          "word_read",
+          "word_write"
+        ]
       },
       "live_writes_enabled": false,
       "command_owner_confirmed": false,

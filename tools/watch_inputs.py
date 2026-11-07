@@ -8,7 +8,8 @@ Close the app first: it holds the COM port. Ctrl+C to stop.
 Reads Modbus bits 0-15 from both coils (function 01) and discrete inputs
 (function 02) and prints a line whenever one changes. Move a cylinder, put a
 part in, press START: the table whose bit follows the sensor is the one the
-P inputs live in -> set test.sensor_table in settings.json to it.
+P inputs live in. With the XGB Cnet server, FC02 reads the bit_read area
+(machine_profile.mapping.cnet_areas.bit_read).
 """
 
 import sys
@@ -63,10 +64,10 @@ def main(argv):
         return out
 
     last = read_all()
-    print(f"\n{'bit':<30} {'coils':>6} {'discrete_inputs':>16}")
+    print(f"\n{'bit':<35} {'coils':>6} {'discrete_inputs':>16}")
     for n in range(COUNT):
         row = [("ERR" if last[t] is None else ("ON" if last[t][n] else "-")) for t in tables]
-        print(f"{n:>2} {label(n):<27} {row[0]:>6} {row[1]:>16}")
+        print(f"{n:>2} {label(n):<32} {row[0]:>6} {row[1]:>16}")
     print("\nWatching - move a cylinder, insert a part, press START (Ctrl+C to stop)\n")
     try:
         while True:

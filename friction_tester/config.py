@@ -9,7 +9,7 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # settings.json layout version. 2 = machine profile "PRINTING PROGRAM OLD"
 # (plc.pdf, PC word interface) is this machine's integration.
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
-SETTINGS_VERSION = 3
+SETTINGS_VERSION = 4
 
 DEFAULT_SETTINGS = {
     "settings_version": SETTINGS_VERSION,
@@ -44,9 +44,7 @@ DEFAULT_SETTINGS = {
                   "forward_sensor": "P0001", "backward_sensor": "P0000", "part_sensor": "P000B"},
         # Sensor lamps: cylinder forward/backward and part presence per cable,
         # from the machine I/O list (also P000E START, P000F emergency stop).
-        # Modbus table the P inputs are read from: "discrete_inputs" (function 02)
-        # or "coils" (function 01) - confirm with tools/watch_inputs.py.
-        "sensor_table": "discrete_inputs",
+        # Read through machine_profile.mapping (bit_read area, FC02 for P inputs).
         # PLC bits the Test Console buttons write (XGB addresses, e.g. "M0100").
         # Empty = not configured: the button only reports that. Fill these in
         # from the machine's I/O list.
@@ -123,12 +121,22 @@ DEFAULT_SETTINGS = {
                 "measurement_rules": "unverified",
                 "mt_concurrency": "unverified",
             },
+            # XGB built-in Cnet Modbus server areas (plc/modbus_map.py CnetAreaMap).
+            # plc_base values are the CANDIDATE PLC_INFAC layout, not the machine's
+            # confirmed parameters: read the live channel's Modbus settings back in
+            # XG5000 (docs/xg5000_modbus_verification.md), enter them here, and set
+            # verified only after targeted reads match XG5000's device monitor.
             "mapping": {
+                "schema": "xgb_cnet_areas",
                 "verified": False,
-                "areas": {
-                    "D": {"table": "holding_registers", "base": 0},
-                    "M": {"table": "coils", "base": 0},
+                "verified_note": "",
+                "cnet_areas": {
+                    "bit_read": {"plc_base": "P00000", "accessible_count": None},    # FC02
+                    "bit_write": {"plc_base": "M00000", "accessible_count": None},   # FC01, FC05/15
+                    "word_read": {"plc_base": "D00000", "accessible_count": None},   # FC04
+                    "word_write": {"plc_base": "D00000", "accessible_count": None},  # FC03, FC06/16
                 },
+                "word_read_order": ["word_read", "word_write"],
             },
             "live_writes_enabled": False,
             "command_owner_confirmed": False,     # no other program writes D04100-D04102
@@ -238,6 +246,26 @@ def migrate(loaded):
             meas["judge"] = ""
             notes.append("measurement.judge 'peak' (an earlier default, not a confirmed rule) cleared")
         loaded["settings_version"] = 3
+        version = 3
+    if version < 4:
+        mp = (loaded.get("test") or {}).get("machine_profile")
+        if isinstance(mp, dict) and isinstance(mp.get("mapping"), dict) and "cnet_areas" not in mp["mapping"]:
+            old = mp["mapping"]
+            mp["mapping"] = {
+                "schema": "xgb_cnet_areas", "verified": False,
+                "verified_note": "",
+                "cnet_areas": {
+                    "bit_read": {"plc_base": "P00000", "accessible_count": None},
+                    "bit_write": {"plc_base": "M00000", "accessible_count": None},
+                    "word_read": {"plc_base": "D00000", "accessible_count": None},
+                    "word_write": {"plc_base": "D00000", "accessible_count": None},
+                },
+                "word_read_order": ["word_read", "word_write"],
+            }
+            notes.append("machine_profile.mapping converted to the XGB Cnet-area schema (candidate bases, "
+                         f"verified=false; was verified={bool(old.get('verified'))}, areas="
+                         f"{sorted((old.get('areas') or {}).keys())}): confirm against the XG5000 read-back")
+        loaded["settings_version"] = 4
     if notes:
         loaded["migrated"] = notes
     return loaded

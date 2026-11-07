@@ -9,9 +9,11 @@ counters, ...) is kept. A copy is saved as settings.json.bak-YYYYMMDD-HHMMSS.
 
 What "enable" sets (and what it deliberately leaves off):
   integration.mode                 pc_interface
-  mapping.verified                 true   <- the operator takes responsibility that
-  live_writes_enabled              true      D04100.. = holding register 4100 etc.
-  command_owner_confirmed          true      and no other program writes D04100-D04102
+  mapping.verified                 unchanged - set it by hand only after the XG5000
+                                   read-back and targeted reads match
+                                   (docs/xg5000_modbus_verification.md, tools/plc_diag.py)
+  live_writes_enabled              true
+  command_owner_confirmed          true   <- no other program writes D04100-D04102
   internal_bits_enabled            true   (M00051.. completion flags read natively)
   measurement judge/sign/bounds    peak / absolute / inclusive  (commissioning values)
   mt_parallel_verified             unchanged (false: test AT first)
@@ -42,7 +44,7 @@ KEYS = [("integration.mode", ("test", "integration", "mode")),
         ("measurement.limit_bounds", ("test", "machine_profile", "measurement", "limit_bounds")),
         ("timeouts.alarm_reset_pulse", ("test", "machine_profile", "timeouts", "alarm_reset_pulse"))]
 
-ENABLE = {"integration.mode": "pc_interface", "mapping.verified": True, "live_writes_enabled": True,
+ENABLE = {"integration.mode": "pc_interface", "live_writes_enabled": True,
           "command_owner_confirmed": True, "internal_bits_enabled": True,
           "measurement.judge": "peak", "measurement.force_sign": "absolute",
           "measurement.limit_bounds": "inclusive"}
@@ -87,6 +89,11 @@ def main(argv, path=SETTINGS_FILE):
     save_settings(settings, path)
     print(f"{'Disabled' if '--disable' in argv else 'Enabled'} in {path}:")
     show(settings)
+    if not get(settings, paths["mapping.verified"]):
+        print("\nmapping.verified is false: the app still writes nothing. Read the PLC's Cnet Modbus settings "
+              "back in XG5000, enter them under machine_profile.mapping.cnet_areas, check them with "
+              "tools/plc_diag.py against the XG5000 monitor, then set mapping.verified by hand "
+              "(docs/xg5000_modbus_verification.md).")
     return 0
 
 

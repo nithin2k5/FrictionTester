@@ -96,7 +96,7 @@ def test_no_m00029_default_and_old_settings_migrated():
     assert s["test"]["commands"]["test_run"] == "" and s["test"]["integration"]["mode"] == "pc_interface"
     old = migrate({"test": {"integration": {"mode": "independent"}, "commands": {"test_run": "M00029"}}})
     assert old["test"]["commands"]["test_run"] == "" and old["test"]["integration"]["mode"] == "pc_interface"
-    assert old["settings_version"] == 3 and len(old["migrated"]) == 2
+    assert old["settings_version"] == 4 and len(old["migrated"]) == 2
 
 
 def test_unverified_mapping_writes_nothing():

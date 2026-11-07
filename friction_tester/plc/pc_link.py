@@ -103,8 +103,8 @@ class PcLink:
     def write_blocker(self):
         """Why the app may not write the interface words (None if it may)."""
         if not getattr(self.backend, "mapping", None) or not self.backend.mapping.verified:
-            return ("PLC writes are off: the Modbus mapping of the D area is not verified "
-                    "(machine_profile.mapping.verified)")
+            return ("PLC writes are off: the Modbus area mapping is not verified against the PLC's live "
+                    "Cnet settings (machine_profile.mapping.verified - see docs/xg5000_modbus_verification.md)")
         if not getattr(self.backend, "allow_writes", False):
             return "PLC writes are off: machine_profile.live_writes_enabled is false"
         if not self.owner_confirmed:

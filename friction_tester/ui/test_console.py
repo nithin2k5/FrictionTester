@@ -30,8 +30,7 @@ from . import theme
 from ..console_log import channel
 from .plot import LoadStrokePlot
 from ..config import save_settings
-from ..devices.plc_xgb import bit_address
-from ..plc.modbus_map import ModbusMapping, ModbusPlcBackend
+from ..plc.modbus_map import ModbusMapping, ModbusPlcBackend, make_mapping
 from ..plc.part_flow import SharedCycleFlow, panel_assignments
 from ..plc.shared_cycle import STEP_NAMES, CycleTracker, SharedCycleMonitor, read_snapshot
 from ..plc import pc_profile as pp
@@ -528,9 +527,10 @@ class TestConsolePage(tk.Frame):
         from ..plc.pc_link import PcLink
         from ..plc.pc_measure import Sampler
         mp = self.settings["test"]["machine_profile"]
-        mapping = ModbusMapping(mp.get("mapping"))
+        mapping = make_mapping(mp.get("mapping"))
         backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(mp.get("live_writes_enabled")))
         self.pc_log = EventLog(self._result_dir())
+        self.pc_log.log("MAPPING", mapping.describe())
         link = PcLink(backend, self.pc_log, owner_confirmed=bool(mp.get("command_owner_confirmed")),
                       internal_enabled=bool(mp.get("internal_bits_enabled")) and mapping.verified)
         self.sampler = Sampler(self.loadcells, self.daq, self.settings)
@@ -641,8 +641,11 @@ class TestConsolePage(tk.Frame):
         badge = {"confirmed": theme.PASS, "writing": theme.UPDATE, "pending": theme.BUSY}.get(p["state"], theme.FAIL)
         if snap is None:
             self.plc_badge.config(fg=theme.FAIL)
+            # Port state, PLC answer and register-map validity are different
+            # things: say which one failed, with the exact request.
+            label = summary.get("link_label") or "PLC status not available"
             why = summary.get("link_error")
-            self.plc_strip.config(text="PLC not reachable - no operation can be confirmed"
+            self.plc_strip.config(text=f"{label} - no motion, no results confirmed"
                                        + (f"   |   {why}" if why else ""))
         else:
             parts = []
@@ -1844,24 +1847,28 @@ class TestConsolePage(tk.Frame):
         if self._alive:
             self.after(0, lambda: self._apply(snapshot))
 
+    def _lamp_backend(self):
+        """Read-only view of the P inputs through machine_profile.mapping (bit_read area, FC02)."""
+        if getattr(self, "_lamp_be", None) is None:
+            mapping = make_mapping(self.settings["test"]["machine_profile"].get("mapping"))
+            self._lamp_be = ModbusPlcBackend(self.plc, mapping, allow_writes=False)
+        return self._lamp_be
+
     def _read_sensor_lamps(self, sides):
-        """All sensor lamps of both cables in one Modbus read (worker thread)."""
+        """All sensor lamps of both cables in as few Modbus reads as the mapping allows (worker thread)."""
         try:
-            table = self.settings["test"].get("sensor_table", "discrete_inputs")
-            wanted = {}
+            wanted = []
             for (key, _t, _s), side in zip(self.SIDES, sides):
                 cfg = self.settings["test"][key]
                 for name, setting in SENSOR_LAMPS.items():
-                    addr = str(cfg.get(setting, "")).strip()
+                    addr = str(cfg.get(setting, "")).strip().upper()
                     if addr:
-                        wanted[(id(side), name)] = (side, name, bit_address(addr))
+                        wanted.append((side, name, addr))
             if not wanted:
                 return
-            nums = [n for _s, _n, n in wanted.values()]
-            lo = min(nums)
-            bits = self.plc.read_table(table, lo, max(nums) - lo + 1)
-            for side, name, n in wanted.values():
-                side["lamps"][name] = bool(bits[n - lo])
+            bits = self._lamp_backend().read_bits(sorted({a for _s, _n, a in wanted}))
+            for side, name, addr in wanted:
+                side["lamps"][name] = bool(bits[addr])
         except Exception as exc:
             if str(exc) != getattr(self, "_lamp_error", None):
                 _ui.warning(f"sensor lamps not read: {exc}")

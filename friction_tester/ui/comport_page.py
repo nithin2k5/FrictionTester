@@ -296,8 +296,8 @@ class ComPortPage(tk.Frame):
                 self.log(f"PLC error: {exc}")
                 self._ui(self._after_plc_failure)
                 return
-            self.log("PLC bits:  " + "   ".join(
-                f"{a}={'ERR' if v == 'error' else ('ON' if v else 'OFF')}" for a, v in results))
+            self.log("PLC bits (FC01, coil = word*16+bit, raw):  " + "   ".join(
+                f"{a}={f'ERR ({v})' if isinstance(v, str) else ('ON' if v else 'OFF')}" for a, v in results))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -317,9 +317,10 @@ class ComPortPage(tk.Frame):
                 self.log(f"PLC error: {exc}")
                 self._ui(self._after_plc_failure)
                 return
-            self.log(f"PLC registers from {addr}:")
+            self.log(f"PLC holding registers (FC03) from raw offset {start} - equals {addr} only if the "
+                     "PLC's word-write area starts at D00000:")
             for i, v in enumerate(regs):
-                self.log(f"  D{start + i:04d} = {v}  (0x{v:04X}, signed {v - 65536 if v >= 32768 else v})")
+                self.log(f"  offset {start + i:5d} = {v}  (0x{v:04X}, signed {v - 65536 if v >= 32768 else v})")
             for i, big, swapped in plc_xgb.registers_as_floats(regs):
                 self.log(f"  D{start + i:04d}-D{start + i + 1:04d} float: "
                          f"{big:.6g} (high word first) / {swapped:.6g} (low word first)")

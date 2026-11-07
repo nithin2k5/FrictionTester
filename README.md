@@ -80,7 +80,7 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
   (zoom / Fit / pan) and live LOAD (from the loadcell), STROKE and SPEED (no source yet).
 - **Screen Save** writes a PNG of the panel to `screenshots/`.
 - Bottom bar per cable: **Actuator Control** (SERVO ON/OFF, ALARM RESET, Move Origin),
-  Front/Rear sensor lamps (PLC bits in `settings.json` → `test.<cable>.front_sensor / rear_sensor`)
+  Forward/Backward/Part sensor lamps (P inputs in `settings.json` → `test.<cable>.forward_sensor / backward_sensor / part_sensor`, read through `machine_profile.mapping`)
   and the clamp counter.
 - Right-hand panel, as on the LabVIEW screen:
   - **Model Set** — models from `TBL_MODEL_MASTER`; select one and press **Model Change** to load

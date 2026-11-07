@@ -26,7 +26,33 @@ import time
 
 from . import pc_profile as pp
 from .axis_ops import OpBlocked, make_op
+from .modbus_errors import ModbusRequestError, PlcExceptionResponse, PlcNoResponse, PlcNotOpen
+from .modbus_map import MappingError
 from .pc_link import WriteBlocked, validate_params
+
+# Link health, from the last poll/attach. Only "ok" carries usable machine status.
+LINK_STATES = {
+    "ok": "PLC status fresh",
+    "starting": "PLC not polled yet",
+    "port_closed": "PLC port not open",
+    "no_response": "PLC not responding",
+    "map_invalid": "PLC responding, but the PC-interface registers are not readable",
+    "config": "Modbus area mapping does not reach the PC-interface registers",
+    "error": "PLC read failed",
+}
+
+
+def classify_link_error(exc):
+    """LINK_STATES key for an exception raised by a poll or attach."""
+    if isinstance(exc, PlcNotOpen):
+        return "port_closed"
+    if isinstance(exc, PlcNoResponse):
+        return "no_response"
+    if isinstance(exc, PlcExceptionResponse):
+        return "map_invalid"
+    if isinstance(exc, (MappingError, ModbusRequestError)):
+        return "config"
+    return "error"
 
 ORIGIN = 1_000_000            # D02000 / D02100 initial value [p1]
 STOP_TEXT = ("Application sequence cancelled. Machine stop NOT confirmed - this PLC program has no PC stop "
@@ -222,6 +248,7 @@ class PcController:
         self.commands = queue.Queue()
         self.connected = False
         self.link_error = None          # why the last read/attach failed (None = fine)
+        self.link_state = "starting"    # LINK_STATES key
         self.snap = None
         self.stale = []
         self.pending_release = set()
@@ -292,7 +319,7 @@ class PcController:
             snap = None
             if self.connected:
                 self.log.log("DISCONNECT", str(exc))
-            self._link_failed(f"poll: {exc}")
+            self._link_failed(exc, "status read")
         self._connection(snap, now)
         self.snap = snap
         self._check_params(snap, now)
@@ -324,7 +351,7 @@ class PcController:
             try:
                 stale = self.link.attach()
             except Exception as exc:
-                self._link_failed(f"attach (read {pp.CMD_WORDS[0]}..): {exc}")
+                self._link_failed(exc, f"command-word read {pp.CMD_WORDS[0]}-{pp.CMD_WORDS[-1]}")
                 return
             self.connected = True
             if self.link_error:
@@ -337,6 +364,7 @@ class PcController:
                 self._msg(f"PC request bits are ON in the PLC: {names}. They are not re-sent; inspect the machine "
                           "and press STOP to release them.", "fail")
             self.log.log("CONNECT", "", stale=len(self.stale), pending_release=len(self.pending_release))
+        self.link_state = "ok"
         if self.pending_release and self.link.words is not None:
             try:
                 self.link.set_bits({b: False for b in self.pending_release}, "release after failed/cancelled op")
@@ -346,13 +374,19 @@ class PcController:
             except Exception as exc:
                 self.log.log("RELEASE-FAIL", str(exc))
 
-    def _link_failed(self, why):
+    def _link_failed(self, exc, what):
+        state = classify_link_error(exc)
+        why = f"{what}: {exc}"
         if why != self.link_error:                # log each new reason once, not every poll
-            self.log.log("LINK-FAIL", why)
-        self.link_error = why
+            self.log.log("LINK-FAIL", why, state=state)
+        self.link_state, self.link_error = state, why
 
     def _not_connected(self):
-        return f"PLC not connected ({self.link_error})" if self.link_error else "PLC not connected"
+        label = LINK_STATES.get(self.link_state, "PLC not connected")
+        return f"{label} - {self.link_error}" if self.link_error else label
+
+    def _status_age(self):
+        return None if self.snap is None else max(0.0, self.clock() - self.snap.time)
 
     def _apply(self, changes, op):
         if not changes:
@@ -376,6 +410,9 @@ class PcController:
             return blocker
         if not self.connected or self.snap is None:
             return self._not_connected()
+        age = self._status_age()
+        if age is not None and age > float(self.timeouts.get("freshness", 1.0)):
+            return f"PLC status is stale ({age:.1f} s old) - no motion until a fresh poll succeeds"
         if self.stale:
             return "PC request bits left ON in the PLC - inspect the machine and press STOP to release them"
         return None
@@ -774,7 +811,8 @@ class PcController:
     # ------------------------------------------------------------ display
     def status_summary(self):
         return {
-            "connected": self.connected, "link_error": self.link_error, "flow": self.flow, "params": dict(self.params),
+            "connected": self.connected, "link_error": self.link_error, "link_state": self.link_state,
+            "link_label": LINK_STATES.get(self.link_state, ""), "status_age": self._status_age(), "flow": self.flow, "params": dict(self.params),
             "ops": {a: (op.name, op.state) for a, op in self.manual.items()},
             "routines": {a: (r.op.name if r.op else "", r.op.state if r.op else r.state)
                          for a, r in self.routines.items()},

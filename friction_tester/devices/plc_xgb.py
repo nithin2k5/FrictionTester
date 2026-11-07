@@ -22,8 +22,18 @@ except ImportError:  # pragma: no cover - reported in the UI
 
 try:
     from pymodbus.client import ModbusSerialClient
+    from pymodbus.exceptions import ModbusIOException, ConnectionException
 except ImportError:  # pragma: no cover - reported in the UI
     ModbusSerialClient = None
+
+    class ModbusIOException(Exception):
+        pass
+
+    class ConnectionException(Exception):
+        pass
+
+from ..plc.modbus_errors import (READ_FC, PlcCommError, PlcExceptionResponse, PlcNoResponse, PlcNotOpen,
+                                 check_request)
 
 BAUD_RATES = [9600, 19200, 38400, 57600, 115200]
 CONNECT_RETRIES = 3
@@ -181,72 +191,88 @@ class XGBPlc:
 
     def _require_open(self):
         if not self.is_open:
-            raise RuntimeError("Not connected to PLC")
+            raise PlcNotOpen()
+
+    # ---- the single transaction path ----------------------------------------
+    # Every request from every thread (Test Console poll, PC-interface
+    # controller, COM Setting tools) passes through _call under self._lock, so
+    # requests on the serial line never interleave. Results are classified:
+    # PlcExceptionResponse (the PLC answered with an exception), PlcNoResponse
+    # (timeout / I/O), PlcNotOpen. Nothing is retried here.
+    def _call(self, fc, offset, qty, method, *args, **kwargs):
+        check_request(fc, offset, qty)
+        self._require_open()
+        station = self._station
+        with self._lock:
+            client = self._client
+            if client is None:
+                raise PlcNotOpen()
+            try:
+                resp = getattr(client, method)(offset, *args, device_id=station, **kwargs)
+            except (ModbusIOException, ConnectionException, OSError) as exc:
+                raise PlcNoResponse(fc, offset, qty, station, str(exc) or type(exc).__name__) from exc
+            except PlcCommError:
+                raise
+            except Exception as exc:
+                raise PlcNoResponse(fc, offset, qty, station, f"{type(exc).__name__}: {exc}") from exc
+        if resp is None:
+            raise PlcNoResponse(fc, offset, qty, station, "empty response")
+        if resp.isError():
+            code = getattr(resp, "exception_code", None)
+            if isinstance(code, int) and code:
+                raise PlcExceptionResponse(fc, offset, qty, station, code)
+            raise PlcNoResponse(fc, offset, qty, station, str(resp))
+        return resp
 
     def read_bits(self, addresses):
-        """[(address, True/False or error string), ...] for XGB bit addresses."""
-        self._require_open()
+        """[(address, True/False or error string), ...] - COM Setting test tool only.
+
+        Legacy helper: coil = word*16 + bit with the area letter ignored. The
+        PC-interface profile never uses it (see plc/modbus_map.py)."""
         results = []
-        with self._lock:
-            for addr in addresses:
-                resp = self._client.read_coils(bit_address(addr), count=1, device_id=self._station)
-                results.append((addr, "error" if resp.isError() else bool(resp.bits[0])))
+        for addr in addresses:
+            try:
+                resp = self._call(1, bit_address(addr), 1, "read_coils", count=1)
+                results.append((addr, bool(resp.bits[0])))
+            except PlcExceptionResponse as exc:
+                results.append((addr, f"error: {exc.detail}"))
         return results
 
     def write_bit(self, address, value):
-        self._require_open()
-        with self._lock:
-            resp = self._client.write_coil(bit_address(address), bool(value), device_id=self._station)
-        if resp.isError():
-            raise RuntimeError(f"Write to {address} failed: {resp}")
+        """Legacy helper (independent mode): coil word*16 + bit, area letter ignored."""
+        self._call(5, bit_address(address), 1, "write_coil", bool(value))
 
     # ---- raw Modbus access, used by friction_tester.plc.modbus_map ----------
-    # The helpers above assume every XGB bit is coil (word*16 + bit) and every
-    # D word is holding register n, ignoring the area letter. That mapping is
-    # not verified for this machine; the shared-cycle integration goes through
-    # an explicit, configurable mapping instead (plc/modbus_map.py).
+    # Offsets here are raw, zero-based protocol addresses. Translating XG5000
+    # device addresses to them is the mapping's job (plc/modbus_map.py).
     _READERS = {"coils": "read_coils", "discrete_inputs": "read_discrete_inputs",
                 "holding_registers": "read_holding_registers", "input_registers": "read_input_registers"}
 
     def read_table(self, table, address, count):
-        """Read `count` bits/registers from a Modbus table at a raw address."""
-        self._require_open()
-        method = self._READERS[table]
-        with self._lock:
-            resp = getattr(self._client, method)(address, count=count, device_id=self._station)
-        if resp.isError():
-            raise RuntimeError(f"Modbus {table} read at {address} x{count} failed: {resp}")
+        """Read `count` bits/registers from a Modbus table at a raw offset."""
+        fc = READ_FC[table]
+        resp = self._call(fc, address, count, self._READERS[table], count=count)
         if table in ("coils", "discrete_inputs"):
-            return [bool(b) for b in resp.bits[:count]]
-        return list(resp.registers[:count])
+            bits = [bool(b) for b in resp.bits[:count]]
+            if len(bits) < count:
+                raise PlcNoResponse(fc, address, count, self._station, f"short reply: {len(bits)} bits")
+            return bits
+        regs = list(resp.registers[:count])
+        if len(regs) < count:
+            raise PlcNoResponse(fc, address, count, self._station, f"short reply: {len(regs)} registers")
+        return regs
 
     def write_coil_raw(self, address, value):
-        """Write one coil at a raw Modbus address (function 05)."""
-        self._require_open()
-        with self._lock:
-            resp = self._client.write_coil(address, bool(value), device_id=self._station)
-        if resp.isError():
-            raise RuntimeError(f"Modbus coil write at {address} failed: {resp}")
+        """Write one coil at a raw offset (function 05)."""
+        self._call(5, address, 1, "write_coil", bool(value))
 
     def write_registers_raw(self, address, values):
-        """Write consecutive holding registers at a raw Modbus address (function 16)."""
+        """Write consecutive holding registers at a raw offset (function 16)."""
         values = [int(v) & 0xFFFF for v in values]
-        if not 1 <= len(values) <= 123:
-            raise ValueError("1 to 123 registers per write")
-        self._require_open()
-        with self._lock:
-            resp = self._client.write_registers(address, values, device_id=self._station)
-        if resp.isError():
-            raise RuntimeError(f"Modbus register write at {address} x{len(values)} failed: {resp}")
+        self._call(16, address, len(values), "write_registers", values)
 
     def read_registers(self, address, count=1):
-        """Read `count` holding registers starting at a D address."""
-        if not 1 <= count <= 125:
-            raise ValueError("Points must be between 1 and 125")
-        self._require_open()
+        """COM Setting tool: `count` holding registers from offset = D number (legacy assumption)."""
         start = register_address(address)
-        with self._lock:
-            resp = self._client.read_holding_registers(start, count=count, device_id=self._station)
-        if resp.isError():
-            raise RuntimeError(f"Error reading registers at {address}: {resp}")
+        resp = self._call(3, start, count, "read_holding_registers", count=count)
         return start, list(resp.registers)

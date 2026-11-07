@@ -14,7 +14,7 @@ Code: `friction_tester/plc/pc_profile.py` (map), `pc_link.py` (transport, single
 parameters), `axis_ops.py` (handshakes), `pc_flow.py` (cable routines, AT/MT coordinator, evaluation,
 faults), `pc_measure.py` (acquisition), `event_log.py`, `friction_tester/result_store.py` (saving).
 Mode `test.integration.mode = "pc_interface"`; settings `test.machine_profile` (profile version 2,
-settings version 3). Example: [settings.example.json](settings.example.json).
+settings version 4). Example: [settings.example.json](settings.example.json).
 
 ## Status legend
 
@@ -35,6 +35,13 @@ settings version 3). Example: [settings.example.json](settings.example.json).
 
 Status: M0800 → D04003, M0801 → D04004, M0802 → D04005 (p31). M0850 → D04006 (p31): **no measurement
 meaning established — not used.** The app reads D04000–D04020 in one request.
+
+How these native addresses become Modbus requests is set by the PLC's Cnet Modbus areas, modelled in
+`plc/modbus_map.py` (`CnetAreaMap`, settings `machine_profile.mapping.cnet_areas`). The defaults are
+the *candidate* PLC_INFAC layout (bit read P00000, bit write M00000, word read/write D00000), not the
+machine's confirmed parameters. On the machine (2026-11-07) FC03 offset 4000 x21 returned exception 02,
+so the live channel does not expose D04000 with its current settings. Diagnosis and the XG5000
+procedure: [xg5000_modbus_verification.md](xg5000_modbus_verification.md).
 
 `PcLink` is the only writer of D04100–D04102: one lock, masked bit updates, only the changed word is
 written, so SHIFT and SELECT requests in a shared word never overwrite each other. On (re)connection
@@ -224,8 +231,9 @@ Tk thread; UI updates go through `after()` polling of the controller and store q
 
 ## 9. Unresolved — machine verification needed
 
-1. The installed program is PRINTING PROGRAM OLD.xgwx.
-2. PLC model, protocol, station, serial settings, D/M Modbus mapping, register width, word order.
+1. The installed program is PRINTING PROGRAM OLD.xgwx (the NLF program has no D04000/D04100 interface).
+2. PLC model, connected Cnet channel, station, serial settings and the four Cnet Modbus area bases
+   (read back in XG5000 - see xg5000_modbus_verification.md); register width, word order.
 3. Native M reads: M00051/52/61/62, M00105/M00205, M0204x/M0214x (needed for `internal_flags` and the
    observed measurement-start handshake).
 4. Command-word ownership (no other writer of D04100–D04102).
@@ -247,9 +255,10 @@ Tk thread; UI updates go through `after()` polling of the controller and store q
 | Item | Setting |
 |---|---|
 | Program confirmed, mapping, native reads, stop, sensors, units, fixture, rules, MT | `commissioning.*` = `"verified"` (recorded in the log at start) |
-| D-area mapping checked | `mapping.areas.D`, `mapping.verified` |
+| Cnet Modbus areas read back and checked | `mapping.cnet_areas.*.plc_base` (+ optional `accessible_count`), `mapping.verified`, `mapping.verified_note` |
+| Status read function | `mapping.word_read_order` (`word_read` = FC04 first, `word_write` = FC03) |
 | Allow writes / sole writer | `live_writes_enabled`, `command_owner_confirmed` |
-| Native M reads | `mapping.areas.M`, `internal_bits_enabled` |
+| Native M reads | `mapping.cnet_areas.bit_write` (FC01), `internal_bits_enabled` |
 | Stroke completion | `stroke_completion` |
 | MT parallel | `mt_parallel_verified` |
 | Homing policy, fixture checks | `home_before_test`, `fixture_checks` |
