@@ -157,7 +157,13 @@ class Loadcell:
 
     def disconnect(self):
         with self._conn_lock:
-            self._close()
+            # Let a read in progress finish (≤ 1 s) so the port isn't closed under it.
+            got = self._lock.acquire(timeout=1.0)
+            try:
+                self._close()
+            finally:
+                if got:
+                    self._lock.release()
 
     def _close(self):
         if self._ser is not None:
@@ -184,6 +190,7 @@ class Loadcell:
         """Get one reading. Returns (sent command or None, raw line, value)."""
         self._require_open()
         with self._lock:
+            self._require_open()                  # may have been closed while waiting
             if self.stream_mode:
                 # Drop whatever is buffered (possibly half a line), then take
                 # the next complete frame.
@@ -209,6 +216,7 @@ class Loadcell:
     def _simple(self, cmd):
         self._require_open()
         with self._lock:
+            self._require_open()
             sent = self._command(cmd)
             time.sleep(0.1)
             # The manual defines no reply for Z/H/R; drop anything that came back.

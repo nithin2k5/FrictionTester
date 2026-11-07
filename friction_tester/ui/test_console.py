@@ -391,6 +391,7 @@ class TestConsolePage(tk.Frame):
         self.integration = effective_integration(settings, simulator)
         self.shared = self.integration["mode"] == "shared_cycle"
         self.monitor = None
+        self.flow = None
         self._polling = False
         self._alive = True
         self._hold_until = 0.0
@@ -618,7 +619,9 @@ class TestConsolePage(tk.Frame):
                 self._set_status(f"Part counted, but saving to {db.RESULTS_TABLE} failed: {result['error']}",
                                  theme.FAIL, 10)
 
-        threading.Thread(target=worker, daemon=True).start()
+        t = threading.Thread(target=worker, daemon=True)
+        self._save_threads = [x for x in getattr(self, "_save_threads", []) if x.is_alive()] + [t]
+        t.start()
         self.after(200, collect)
 
     def _result_dir(self):
@@ -909,15 +912,43 @@ class TestConsolePage(tk.Frame):
             p.reset_results()
 
     def exit_app(self):
-        """EXIT: close the app the same way as the window's close button."""
-        if not messagebox.askyesno("Exit", "Close the Friction Tester?", parent=self):
+        """EXIT: close the app through the same shutdown as the window's close button."""
+        busy = self.test_in_progress()
+        text = (f"{busy}.\n\nClose the Friction Tester anyway? The part will not be recorded."
+                if busy else "Close the Friction Tester?")
+        if not messagebox.askyesno("Exit", text, icon="warning" if busy else "question", parent=self):
             return
-        top = self.winfo_toplevel()
-        handler = top.protocol("WM_DELETE_WINDOW")
-        if handler:
-            top.tk.eval(handler)
-        else:
-            top.destroy()
+        self.winfo_toplevel().event_generate("<<AppExit>>")      # App.close(), already confirmed
+
+    def test_in_progress(self):
+        """Why closing now would lose a part, or None."""
+        state = self.flow.state if self.shared and self.flow else self._flow
+        if "_run" in state:
+            return "A test is running"
+        if state == "at_scan_shift":
+            return "This part's SELECT test is done but its SHIFT test is not"
+        return None
+
+    def pending_saves(self):
+        """Result rows still being written to the database."""
+        return [t for t in getattr(self, "_save_threads", []) if t.is_alive()]
+
+    def shutdown(self):
+        """Stop all background work before the devices are closed (app close).
+
+        Nothing is written to the PLC: a running machine cycle is left to the
+        machine. Returns the worker threads to wait for.
+        """
+        self._alive = False
+        self._stop_event.set()
+        self._pending.clear()
+        threads = [t for t in (getattr(self, "_poll_thread", None),) if t]
+        if self.monitor:
+            self.monitor.cancel()
+            self.monitor.stop()
+            if self.monitor._thread:
+                threads.append(self.monitor._thread)
+        return threads
 
     # ------------------------------------------------- PLC command bits
     def _command_address(self, command, label):
@@ -1418,7 +1449,8 @@ class TestConsolePage(tk.Frame):
             return
         if not self._polling:
             self._polling = True
-            threading.Thread(target=self._poll_worker, daemon=True).start()
+            self._poll_thread = threading.Thread(target=self._poll_worker, daemon=True)
+            self._poll_thread.start()
         self.after(POLL_MS, self._poll)
 
     def _poll_worker(self):

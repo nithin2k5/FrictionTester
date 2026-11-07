@@ -2,7 +2,9 @@
 
 import datetime
 import threading
+import time
 import tkinter as tk
+from tkinter import messagebox
 
 from . import theme
 from .comport_page import ComPortPage
@@ -43,10 +45,17 @@ class App:
         root.configure(bg=theme.BG)
         theme.apply_style(root)
 
+        self._closing = False
+        self._autoconnect_thread = None
+        self.page = None                  # the page widget currently shown
+
         self._build_header()
         self._build_body()
         self.load_page("test_console")
-        threading.Thread(target=self._autoconnect, daemon=True).start()
+        root.protocol("WM_DELETE_WINDOW", self.close)
+        root.bind("<<AppExit>>", lambda _e: self.close(confirmed=True))
+        self._autoconnect_thread = threading.Thread(target=self._autoconnect, daemon=True)
+        self._autoconnect_thread.start()
 
     def _autoconnect(self):
         """Connect every device that has a saved COM port, in the background.
@@ -60,10 +69,82 @@ class App:
             jobs.append((self.plc, s["plc"]))
         jobs += [(dev, cfg) for dev, cfg in zip(self.loadcells, s["loadcells"]) if cfg["port"]]
         for dev, cfg in jobs:
+            if self._closing:
+                return
             try:
                 dev.connect(cfg)
             except Exception:
                 pass
+            if self._closing:             # closed while this one was opening
+                try:
+                    dev.disconnect()
+                except Exception:
+                    pass
+
+    # --------------------------------------------------------------- closing
+    def close(self, confirmed=False):
+        """Close the app, releasing everything in order:
+
+        1. ask first if a part is being tested (window X; EXIT has asked already)
+        2. stop page background work (PLC monitor, live polling, test flow)
+        3. wait briefly for worker threads to finish their current read
+        4. close PLC, loadcells and NI DAQ (each on its own, with a time limit,
+           so one stuck driver can't keep the others open)
+        5. destroy the window
+
+        Nothing is written to the PLC; a running machine cycle is left to the machine.
+        """
+        if self._closing:
+            return
+        page = self.page if self.page is not None and self.page.winfo_exists() else None
+        busy = getattr(page, "test_in_progress", lambda: None)()
+        if busy and not confirmed and not messagebox.askyesno(
+                "Close", f"{busy}.\n\nClose the Friction Tester anyway? The part will not be recorded.",
+                icon="warning", parent=self.root):
+            return
+        self._closing = True
+        self.lbl_title.config(text="Closing…")
+        self.root.update_idletasks()
+
+        threads = list(getattr(page, "shutdown", lambda: [])() or [])
+        if self._autoconnect_thread:
+            threads.append(self._autoconnect_thread)
+        deadline = time.monotonic() + 2.0
+        for t in threads:
+            t.join(max(0.0, deadline - time.monotonic()))
+        # A part's result rows still going to TBL_TEST_RESULTS: give them time to land.
+        saves = getattr(page, "pending_saves", lambda: [])()
+        deadline = time.monotonic() + 10.0
+        for t in saves:
+            t.join(max(0.0, deadline - time.monotonic()))
+
+        self.release_devices()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def release_devices(self, limit=3.0):
+        """Disconnect every device; safe to call more than once."""
+        if getattr(self, "_released", False):
+            return
+        self._released = True
+        devices = [self.plc, *self.loadcells, self.daq]
+        workers = []
+        for dev in devices:
+            t = threading.Thread(target=self._safe_disconnect, args=(dev,), daemon=True)
+            t.start()
+            workers.append(t)
+        deadline = time.monotonic() + limit
+        for t in workers:
+            t.join(max(0.0, deadline - time.monotonic()))
+
+    @staticmethod
+    def _safe_disconnect(dev):
+        try:
+            dev.disconnect()
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------- header
     def _build_header(self):
@@ -151,15 +232,18 @@ class App:
         self.current_page = page_name
 
         if page_name == "comport_settings":
-            ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells).pack(
-                fill="both", expand=True, padx=16, pady=12)
+            self.page = ComPortPage(self.content, self.settings, self.plc, self.daq, self.loadcells)
+            self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "admin":
-            AdminPage(self.content).pack(fill="both", expand=True, padx=16, pady=12)
+            self.page = AdminPage(self.content)
+            self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "report":
-            ReportPage(self.content, self.settings).pack(fill="both", expand=True, padx=16, pady=12)
+            self.page = ReportPage(self.content, self.settings)
+            self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "model_settings":
-            ModelSettingsPage(self.content, self.settings).pack(fill="both", expand=True, padx=16, pady=12)
+            self.page = ModelSettingsPage(self.content, self.settings)
+            self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
-            TestConsolePage(self.content, self.settings, self.plc, self.loadcells,
-                            simulator=self.simulator).pack(
-                fill="both", expand=True, padx=12, pady=10)
+            self.page = TestConsolePage(self.content, self.settings, self.plc, self.loadcells,
+                                        simulator=self.simulator)
+            self.page.pack(fill="both", expand=True, padx=12, pady=10)

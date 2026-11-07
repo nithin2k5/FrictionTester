@@ -48,6 +48,17 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
   - **Scan Result** — SELECT and SHIFT text boxes for the scanned barcodes.
   - **Test Run, Test Stop, Move Origin** (RUN / STOP / ORIGIN).
 - **EXIT** closes the app (with confirmation).
+
+### Closing
+
+The window's X and **EXIT** run the same shutdown, in order: if a part is mid-test (a cycle running,
+or an AT part with SELECT done and SHIFT not) it asks first; then the PLC monitor, live polling and
+test flow are stopped; reads in progress get a moment to finish and result rows still being written
+to `TBL_TEST_RESULTS` up to 10 s; then the PLC, both loadcells and the NI DAQ task are released,
+each on its own with a time limit, so one stuck driver can't keep the others open; then the
+window closes and the process ends. Nothing is written to the PLC on close; a running machine cycle
+is left to the machine. Ctrl+C, closing the console window and Python exiting on an error release the
+devices too.
 - The status box lists any device that isn't connected.
 
 ### Test results table

@@ -169,11 +169,15 @@ class NIDaq:
         self._channels = [s["channel"] for s in specs]
 
     def disconnect(self):
+        """Stop and release the DAQmx task so the device is free for NI MAX / LabVIEW."""
         if self._task is not None:
+            task, self._task = self._task, None
             try:
-                self._task.close()
+                task.stop()
+            except Exception:
+                pass
             finally:
-                self._task = None
+                task.close()
 
     def read_average(self):
         """Acquire one finite block and return {channel: mean voltage}."""

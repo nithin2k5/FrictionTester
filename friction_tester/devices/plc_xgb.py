@@ -134,12 +134,20 @@ class XGBPlc:
         raise ConnectionError(f"PLC did not respond after {CONNECT_RETRIES} attempts: {last_error}")
 
     def disconnect(self):
-        if self._client is not None:
-            try:
-                self._client.close()
-            finally:
-                self._client = None
-                ports.release(self.port, "the PLC")
+        if self._client is None:
+            return
+        # Let a Modbus transaction in progress finish (≤ 2 s) before closing.
+        got = self._lock.acquire(timeout=2.0)
+        try:
+            if self._client is not None:
+                try:
+                    self._client.close()
+                finally:
+                    self._client = None
+                    ports.release(self.port, "the PLC")
+        finally:
+            if got:
+                self._lock.release()
 
     def _require_open(self):
         if not self.is_open:
