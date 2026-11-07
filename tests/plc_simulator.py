@@ -61,8 +61,8 @@ class SharedCycleSimulator:
         self._w(152, ng_count)
         self._w(154, ok_count + ng_count)
         for ch, (lo, hi) in {1: (300, 600), 2: (300, 600)}.items():
-            self._w(784 if ch == 1 else 788, lo)
-            self._w(782 if ch == 1 else 786, hi)
+            self._w(782 if ch == 1 else 786, lo)     # Select / Shift Pull Lower Limit
+            self._w(784 if ch == 1 else 788, hi)     # Select / Shift Pull Upper Limit
         if stale_verdict == "OK":
             self._b("M0000D", True)
         elif stale_verdict == "NG":
@@ -245,8 +245,8 @@ class SharedCycleSimulator:
             final2 = 430 + self.rng.randint(-20, 20)
             self._w(1250, final1)
             self._w(1253, final2)
-            lo1, hi1 = xa.to_signed16(self._rw(784)), xa.to_signed16(self._rw(782))
-            lo2, hi2 = xa.to_signed16(self._rw(788)), xa.to_signed16(self._rw(786))
+            lo1, hi1 = xa.to_signed16(self._rw(782)), xa.to_signed16(self._rw(784))
+            lo2, hi2 = xa.to_signed16(self._rw(786)), xa.to_signed16(self._rw(788))
             if not lo1 <= final1 <= hi1:
                 self._b("M00000", True)
             if not lo2 <= final2 <= hi2:

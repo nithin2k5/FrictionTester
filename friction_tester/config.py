@@ -138,10 +138,11 @@ DEFAULT_SETTINGS = {
                 "mt_concurrency": "unverified",
             },
             # XGB built-in Cnet Modbus server areas (plc/modbus_map.py CnetAreaMap).
-            # plc_base values are the CANDIDATE PLC_INFAC layout, not the machine's
-            # confirmed parameters: read the live channel's Modbus settings back in
-            # XG5000 (docs/xg5000_modbus_verification.md), enter them here, and set
-            # verified only after targeted reads match XG5000's device monitor.
+            # These bases equal the client project's Modbus settings (plc kd All.pdf
+            # p134, Internal Cnet CH2 RS485, station 1, Modbus RTU server: read bit
+            # P00000, write bit M00000, read word D00000, write word D00000). CH1 RS232
+            # is "XGT server", station 0. Set verified only after targeted reads match
+            # XG5000's device monitor on the live PLC (docs/xg5000_modbus_verification.md).
             "mapping": {
                 "schema": "xgb_cnet_areas",
                 "verified": False,

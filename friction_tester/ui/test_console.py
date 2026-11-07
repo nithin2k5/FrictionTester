@@ -503,7 +503,7 @@ class TestConsolePage(tk.Frame):
                                      anchor="w")
             self.plc_axis.pack(side="left", fill="x", expand=True)
 
-    def _start_shared_cycle(self, backend=None):
+    def _start_shared_cycle(self, backend=None, write_blocker=None):
         shared = self.integration["shared"]
         if backend is None:
             mapping = ModbusMapping(shared.get("mapping"))
@@ -515,7 +515,8 @@ class TestConsolePage(tk.Frame):
         tracker = CycleTracker(start_timeout=float(shared.get("start_timeout", 10.0)))
         self.monitor = SharedCycleMonitor(backend, tracker, can_write=writes,
                                           interval=float(shared.get("poll_interval", 0.25)))
-        self.flow = SharedCycleFlow(shared, self, self.monitor, writes, skip_scan=self._skip_scan())
+        self.flow = SharedCycleFlow(shared, self, self.monitor, writes, skip_scan=self._skip_scan(),
+                                    write_blocker=write_blocker)
         what = "writes" if self.kd else "live start"
         self.plc_mode.config(text=f"{mapping_text} · {what} {'ON' if writes() else 'OFF'}",
                              fg=theme.MUTED if writes() else theme.FAIL)
@@ -659,7 +660,7 @@ class TestConsolePage(tk.Frame):
         self.ctl = KdController(link, cfg, self.pc_log)
         self.ctl.start()
         self.after(100, self._drain_kd)
-        self._start_shared_cycle(backend=backend)
+        self._start_shared_cycle(backend=backend, write_blocker=link.write_blocker)
 
     def _drain_kd(self):
         """UI thread: apply what the kd controller thread produced."""

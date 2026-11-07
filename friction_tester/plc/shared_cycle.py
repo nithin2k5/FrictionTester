@@ -42,8 +42,8 @@ POINTS = {
     "idle": ("P00029", "bit", "read", "output: cycle idle (step = 0)", 16),
     "ok": ("M0000D", "bit", "read", "overall OK (latched)", 15),
     "ng": ("M0000C", "bit", "read", "overall NG (latched)", 15),
-    "ch1_ng": ("M00000", "bit", "read", "channel 1 final outside D00784..D00782", 15),
-    "ch2_ng": ("M00003", "bit", "read", "channel 2 final outside D00788..D00786", 15),
+    "ch1_ng": ("M00000", "bit", "read", "channel 1 (SELECT) final outside D00782..D00784", 15),
+    "ch2_ng": ("M00003", "bit", "read", "channel 2 (SHIFT) final outside D00786..D00788", 15),
     "ok_count": ("D00150", "uint16", "read", "PLC OK count", 15),
     "ng_count": ("D00152", "uint16", "read", "PLC NG count", 15),
     "total_count": ("D00154", "uint16", "read", "PLC total (D00150 + D00152)", 15),
@@ -54,10 +54,12 @@ POINTS = {
     "position": ("D00504", "int16", "read", "position word used by the sample windows (low word)", 5),
     "final_ch1": ("D01250", "int16", "read", "final calculated value, channel 1", 14),
     "final_ch2": ("D01253", "int16", "read", "final calculated value, channel 2", 14),
-    "ch1_upper": ("D00782", "int16", "read", "channel 1 upper limit", 15),
-    "ch1_lower": ("D00784", "int16", "read", "channel 1 lower limit", 15),
-    "ch2_upper": ("D00786", "int16", "read", "channel 2 upper limit", 15),
-    "ch2_lower": ("D00788", "int16", "read", "channel 2 lower limit", 15),
+    # Variable/comment table (plc kd All.pdf p5): D00782 "Select Pull Lower Limit",
+    # D00784 "Select Pull Upper Limit", D00786 "Shift Pull Lower Limit", D00788 "Shift Pull Upper Limit"
+    "ch1_upper": ("D00784", "int16", "read", "channel 1 (SELECT) pull upper limit", 15),
+    "ch1_lower": ("D00782", "int16", "read", "channel 1 (SELECT) pull lower limit", 15),
+    "ch2_upper": ("D00788", "int16", "read", "channel 2 (SHIFT) pull upper limit", 15),
+    "ch2_lower": ("D00786", "int16", "read", "channel 2 (SHIFT) pull lower limit", 15),
 }
 
 START_REQUEST = POINTS["start_request"][0]

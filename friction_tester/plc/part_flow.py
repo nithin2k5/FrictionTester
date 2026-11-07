@@ -30,9 +30,12 @@ _ids = itertools.count(1)
 CABLES = {"select": 0, "shift": 1}
 
 
-def live_start_blocker(cfg, writes_available):
-    """Why a live start may not be sent (None if it may)."""
+def live_start_blocker(cfg, writes_available, reason=None):
+    """Why a live start may not be sent (None if it may). `reason`: callable giving the exact cause."""
     if not writes_available:
+        why = reason() if reason else None
+        if why:
+            return f"Live PLC start is disabled - {why}. PLC monitoring stays on."
         return ("Live PLC start is disabled: the Modbus address mapping is not verified "
                 "(test.integration.shared.mapping.verified / live_start_enabled). PLC monitoring stays on.")
     return None
@@ -77,7 +80,7 @@ class SharedCycleFlow:
     show_cycle(stage, assignments, event), clear_panels(indices), part_done(record).
     `monitor` provides request_start(test_id) and cancel()."""
 
-    def __init__(self, cfg, ui, monitor, writes_available, skip_scan=False):
+    def __init__(self, cfg, ui, monitor, writes_available, skip_scan=False, write_blocker=None):
         self.cfg = cfg
         # skip_scan (temporary): RUN starts each stage directly - no labels.
         # AT: RUN starts SELECT, RUN again starts SHIFT. Never auto-starts.
@@ -85,6 +88,7 @@ class SharedCycleFlow:
         self.ui = ui
         self.monitor = monitor
         self.writes_available = writes_available   # callable -> bool
+        self.write_blocker = write_blocker         # callable -> reason text or None (optional)
         self.state = "idle"
         self.model = None
         self.model_type = None
@@ -107,7 +111,7 @@ class SharedCycleFlow:
         if model_type not in ("MT", "AT"):
             self.ui.message(f"RUN: model {model} has no Type - set MT or AT in Model Settings", "fail")
             return False
-        blocker = stage_blocker(self.cfg, model_type) or live_start_blocker(self.cfg, self.writes_available())
+        blocker = stage_blocker(self.cfg, model_type) or live_start_blocker(self.cfg, self.writes_available(), self.write_blocker)
         if blocker:
             self.ui.message(blocker, "fail")
             return False
@@ -159,7 +163,7 @@ class SharedCycleFlow:
 
     # ------------------------------------------------------------ cycle
     def _start_stage(self, stage, run_state):
-        blocker = stage_blocker(self.cfg, self.model_type) or live_start_blocker(self.cfg, self.writes_available())
+        blocker = stage_blocker(self.cfg, self.model_type) or live_start_blocker(self.cfg, self.writes_available(), self.write_blocker)
         if blocker:
             self._abort(blocker)
             return

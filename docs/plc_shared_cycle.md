@@ -36,7 +36,7 @@ D05010 is the step.
 | 51 | Final-value chain (below). Back to 33 until D05110 = D00781 (M02003 selects the repeat behaviour). |
 | 52 | Same repeat check after T0041. |
 | 60 | Home (DST 0 → 1500). |
-| 70 | Limit check: `D01250 < D00784 OR D01250 > D00782 → SET M00000`; `D01253 < D00788 OR D01253 > D00786 → SET M00003`. |
+| 70 | Limit check: D01250 below D00782 (Select Pull Lower) or above D00784 (Select Pull Upper) → SET M00000; D01253 below D00786 (Shift Pull Lower) or above D00788 (Shift Pull Upper) → SET M00003. Limit names from the project's variable/comment table (plc kd All.pdf p5). |
 | (any) | Rung 524: `NOT(NOT M00000 AND NOT M00003) → SET M0000C` (overall NG if either channel is out of limits). |
 | 80 | `NOT M0000C → SET M0000D`; `ADDP D00150 +1` if M0000D, `ADDP D00152 +1` if M0000C; then 0. |
 | always | `D00154 = D00150 + D00152`. M01120 / M01121 / M01122 zero the counters. |

@@ -264,3 +264,11 @@ def test_settings_v6_fills_at_procedure_channels_and_directions_only_when_empty(
         "direction_role": {"forward": "pull", "return": "push"}}}}}
     sh = migrate(kept)["test"]["integration"]["shared"]
     assert sh["channel_cable"] == {"1": "shift", "2": "select"} and sh["direction_role"]["forward"] == "pull"
+
+
+def test_run_blocker_names_the_kd_settings():
+    from friction_tester.plc.part_flow import live_start_blocker
+    link = KdLink(KdSim(), EventLog(folder=None), owner_confirmed=False)
+    msg = live_start_blocker({}, False, link.write_blocker)
+    assert "kd_profile.command_owner_confirmed" in msg and "integration.shared" not in msg
+    assert "integration.shared" in live_start_blocker({}, False)          # shared_cycle mode unchanged

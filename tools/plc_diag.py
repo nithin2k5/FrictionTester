@@ -6,6 +6,7 @@
                                                      try other Cnet bases (read-only, not saved)
     python tools/plc_diag.py --raw 4 4000 1          one raw request: FC (1-4), offset, quantity
     python tools/plc_diag.py --profile pc            PLC_INFAC (plc.pdf) blocks instead of plc kd.pdf
+    python tools/plc_diag.py --window                where the word areas stop answering (~50 single reads)
 
 Close the app first: it holds the COM port.
 
@@ -94,6 +95,8 @@ def main(argv):
                     help=f"override a Cnet area base, AREA in {', '.join(CNET_AREAS)}")
     ap.add_argument("--raw", nargs=3, type=int, metavar=("FC", "OFFSET", "QTY"))
     ap.add_argument("--profile", choices=("kd", "pc"), default="kd")
+    ap.add_argument("--window", action="store_true",
+                    help="single FC03/FC04 reads at offsets 0, 30, 130, 500, 990-1010, 4000, 5010 to find the word window")
     args = ap.parse_args(argv)
 
     settings = load_settings()
@@ -122,6 +125,18 @@ def main(argv):
           f"station {station}, timeout {cfg['timeout']} s")
     print(f"Mapping: {mapping.describe()}" + ("  [--base overrides, not saved]" if args.base else ""))
     try:
+        if args.window:
+            print("\nWord window (single registers, read only):")
+            for fc, table in ((4, "input_registers"), (3, "holding_registers")):
+                ok = []
+                for off in [0, 30, 130, 500] + list(range(990, 1011)) + [4000, 5010]:
+                    vals, err = read(plc, table, off, 1)
+                    ok.append((off, err is None, vals[0] if vals else None))
+                good = [o for o, y, _v in ok if y]
+                print(f"   FC{fc:02d}: answered at {good}")
+                print("         values: " + " ".join(f"{o}={v}" for o, y, v in ok if y and v))
+            print("   With a D00000 base, offset n = Dn: compare offset 30 / 130 with D00030 / D00130 in XG5000.")
+            return
         if args.raw:
             fc, off, qty = args.raw
             if fc not in TABLE_OF_FC:

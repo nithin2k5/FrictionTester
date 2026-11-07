@@ -53,6 +53,28 @@ D (D00500-D00510, D05000) and a **bit-write area based at M00000** (ORIGIN = coi
 offset 80). The section-5 table below was written for the PLC_INFAC interface; for kd, the bit-write
 row is required, not optional. `python tools/plc_diag.py` checks the kd addresses by default.
 
+## 1b. The client project's communication parameters (plc kd All.pdf, p134)
+
+| Internal Cnet | CH1 | CH2 |
+|---|---|---|
+| Type | RS232 | RS485 |
+| Data / stop / parity | 8 / 1 / none | 8 / 1 / none |
+| Station | 0 | 1 |
+| Operation mode | **XGT server** (LS protocol) | **Modbus RTU server** |
+| Modbus areas | - | read bit P00000, write bit M00000, read word D00000, write word D00000 |
+
+(The speed is not legible in the text of the printout.) The app's default mapping equals the CH2
+Modbus areas. The live PC port answers Modbus at **station 1**, which matches CH2, not CH1 (CH1 would
+answer only the XGT protocol, at station 0) - so COM10 is probably wired to CH2 through an RS485
+adapter. Check the cable: RS232 (TX/RX/SG) = CH1, RS485 (+/-) = CH2.
+
+Still open: on the machine FC04 answered at offset 500 but refused offset 5000, and earlier probes
+found word windows of about 1000 registers (FC04 0..1003, FC03 0..993). Either the live parameters
+differ from the project, or the XGB Modbus server only reaches about the first 1000 D registers -
+then D05000 (homing state), D05010 (cycle step), D05110, D01250 (finals) and D01500.. (results) are
+out of Modbus reach whatever the base. `python tools/plc_diag.py --window` finds the exact edge, and
+offsets 30 / 130 compared with D00030 / D00130 in XG5000's monitor show whether the base is D00000.
+
 ## 2. Possible causes - decide with live evidence, in this order
 
 1. **The installed program is the NLF program.** Then D04000/D04100 do not exist in the ladder; no

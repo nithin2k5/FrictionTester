@@ -89,6 +89,9 @@ RECIPE_WORK = ("D00700", 99)
 COMMAND_BITS = ["M00020", "M00021", "M00022", "M00023", "M00030", "M00031", "M00032", "M00033",
                 "M00034", "M00050", "M00062", "M00063"]
 
+# Project cross-check (plc kd All.pdf): variable/comment table p1-5 confirms D00500-D00503 bit names,
+# D00030 "Select Load Cell Value", D00130 "Shift Load Cell Value", positions D00735/D00745/D00755,
+# total D00730, home position D00740, speed D00750, measurement count D00781.
 # Inputs used as interlocks by the ladder; contact type / polarity NOT verified - shown raw.
 INTERLOCK_INPUTS = {"P00000": "Emergency stop (EMG) - in move/jog interlocks",
                     "P00004": "External emergency stop - in move/jog interlocks"}
@@ -101,16 +104,18 @@ WRITABLE_BITS = {HOME_REQUEST} | {m[0] for m in MOVES.values()}
 
 UNRESOLVED = [
     "Installed program: confirm by XG5000 Online -> Read that the PLC runs this program (search M00050, D05000).",
-    "Cnet Modbus areas of the PC's channel: M00050/M0003x need a bit-write area based at M (FC05); "
-    "D00500.. need a word area based at D. Coil writes are impossible / refused until confirmed.",
+    "Cnet: the project (plc kd All.pdf p134) has CH1 RS232 = XGT server, station 0 and CH2 RS485 = "
+    "Modbus RTU server, station 1, areas P00000 / M00000 / D00000 / D00000. Which channel the PC is "
+    "wired to and whether the live PLC holds these parameters is not confirmed; on the machine FC04 "
+    "offset 500 answers but 5000 returns exception 02 (a word window of about 1000 registers).",
     "Homing start/finish contacts (steps 212, 228): T0030 / P00003 branch, '= 10' vs '= 20' compare.",
     "Whether DST runs on the rising edge of M0003x (the app releases the bit once the axis is busy).",
     "P00000 / P00004 contact type (NO/NC) and wiring.",
     "Load-cell scaling (D00010/D00110 factors) and the meaning of value+100 (D00040/D00140).",
     "Who writes D00900-D00950 (position load values copied to D01200..): PC or HMI?",
-    "Auto cycle (plc Auto.pdf): ch1/ch2 = SELECT/SHIFT, which limit is upper/lower (D00782/D00784, "
-    "D00786/D00788), ageing M02000, and P0000A/P0000B - 'Driver Homing' / 'Driver Alarm' in the Auto "
-    "printout but part presence in the I/O list.",
+    "Auto cycle: ageing M02000; P0000A / P0000B are 'Driver Homing' / 'Driver Alarm Status' in the "
+    "project (P0001A 'Driver Home', P00009 'Completion Signal') but 'part presence' in the client's "
+    "I/O list - the sensor lamps still follow the I/O list.",
     "Recipe numbering D00080 1..20 versus the app's model list.",
 ]
 
