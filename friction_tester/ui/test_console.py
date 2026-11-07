@@ -1795,6 +1795,7 @@ class TestConsolePage(tk.Frame):
             if str(w["state"]) == "disabled" or w.winfo_containing(event.x_root, event.y_root) is not w:
                 return
             _ui.info(f"button {w['text'].strip()!r}")
+            self._last_status = None      # print the press's result even if it repeats the last message
         except Exception:
             pass
 
