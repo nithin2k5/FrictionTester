@@ -229,7 +229,7 @@ class CnetAreaMap:
         return self._plan(["bit_write"], a.area, a.word * 16 + a.bit, 1, address)
 
     def plan_read_bits(self, addresses):
-        """[(ModbusRequest, [(address, offset), ...]), ...] grouped into contiguous blocks."""
+        """[(ModbusRequest, [(address, index in the block), ...]), ...] in contiguous blocks."""
         by_area = {}
         for addr in addresses:
             name, off = self.locate_bit(addr)
@@ -253,7 +253,7 @@ class CnetAreaMap:
         lo, hi = block[0][0], block[-1][0]
         native = block[0][1] if lo == hi else f"{block[0][1]}..{block[-1][1]}"
         return (ModbusRequest(a["table"], lo, hi - lo + 1, native, name, a["plc_base"]),
-                [(addr, off) for off, addr in block])
+                [(addr, off - lo) for off, addr in block])     # index inside the block
 
     def describe(self):
         parts = []

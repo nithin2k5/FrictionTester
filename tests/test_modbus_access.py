@@ -281,7 +281,7 @@ def test_migration_converts_old_mapping_and_resets_verified():
         "verified": True, "areas": {"D": {"table": "holding_registers", "base": 0}}}}}}
     new = migrate(old)
     m = new["test"]["machine_profile"]["mapping"]
-    assert new["settings_version"] == 4 and m["schema"] == "xgb_cnet_areas" and m["verified"] is False
+    assert new["settings_version"] == 5 and m["schema"] == "xgb_cnet_areas" and m["verified"] is False
     assert m["cnet_areas"]["word_read"]["plc_base"] == "D00000"
     assert any("Cnet-area schema" in n for n in new["migrated"])
 
@@ -297,3 +297,14 @@ def test_register_error_is_reported_before_writes_off():
     r.step()
     msg = r.messages()[-1]
     assert "registers are not readable" in msg and "exception 02" in msg and "writes are off" not in msg
+
+
+def test_bit_blocks_index_inside_the_block():
+    class Plc:
+        is_open = True
+
+        def read_table(self, table, off, n):
+            return [(off + i) in (32, 80, 99) for i in range(n)]    # M00020, M00050, M00063 ON
+    backend = ModbusPlcBackend(Plc(), CnetAreaMap(cnet()))
+    bits = backend.read_bits(["M00020", "M00030", "M00050", "M00063", "P00000"])
+    assert bits == {"M00020": True, "M00030": False, "M00050": True, "M00063": True, "P00000": False}

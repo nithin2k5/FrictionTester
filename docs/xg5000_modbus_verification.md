@@ -45,6 +45,14 @@ contiguous range, so these counts are approximate. Only the XG5000 read-back can
 * COM Setting's "connected" only means the port opened and coil 0 answered. It says nothing about
   D04000.
 
+## 1a. Update: the client's reference program is plc kd.pdf
+
+The client named `plc kd.pdf` (NLF, no D04000/D04100 interface) the updated reference; the app's
+default mode is now `kd` (docs/plc_kd_profile.md). For that program the PC needs a word area based at
+D (D00500-D00510, D05000) and a **bit-write area based at M00000** (ORIGIN = coil write M00050,
+offset 80). The section-5 table below was written for the PLC_INFAC interface; for kd, the bit-write
+row is required, not optional. `python tools/plc_diag.py` checks the kd addresses by default.
+
 ## 2. Possible causes - decide with live evidence, in this order
 
 1. **The installed program is the NLF program.** Then D04000/D04100 do not exist in the ladder; no

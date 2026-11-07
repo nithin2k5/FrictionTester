@@ -9,7 +9,7 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # settings.json layout version. 2 = machine profile "PRINTING PROGRAM OLD"
 # (plc.pdf, PC word interface) is this machine's integration.
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
-SETTINGS_VERSION = 4
+SETTINGS_VERSION = 5
 
 DEFAULT_SETTINGS = {
     "settings_version": SETTINGS_VERSION,
@@ -70,14 +70,17 @@ DEFAULT_SETTINGS = {
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
         "part_number": "",         # part number of the loaded model; scanned labels must contain it
         # How the Test Console talks to the PLC.
-        #   "pc_interface": THIS machine - plc.pdf "PRINTING PROGRAM OLD", PC word
+        #   "kd":           client's updated reference "plc kd.pdf" (NLF, X axis):
+        #                   ORIGIN = M00050, moves M00030-M00034, status D00500..
+        #                   (docs/plc_kd_profile.md, settings in kd_profile below)
+        #   "pc_interface": plc.pdf "PRINTING PROGRAM OLD", PC word
         #                   interface D04100-D04102 / D04000-D04020 / D04200-D04213
         #                   (docs/plc_pc_interface.md, settings in machine_profile below)
         #   "independent":  per-cable start_<cable>/done_<cable> handshake above
         #   "shared_cycle": a different ladder ("NEW NLF MC KOREA", M00029 / D05010;
         #                   docs/plc_shared_cycle.md) - not this machine's program
         "integration": {
-            "mode": "pc_interface",
+            "mode": "kd",
             "shared": {
                 # Writing M00029 needs BOTH live_start_enabled and mapping.verified.
                 "live_start_enabled": False,
@@ -101,6 +104,15 @@ DEFAULT_SETTINGS = {
                 "force_scale": 0.0, "force_unit": "",       # 0 = show raw PLC counts
                 "position_scale": 0.0, "position_unit": "",
             },
+        },
+        # plc kd.pdf profile (friction_tester/plc/kd_profile.py). Uses the Cnet
+        # mapping in machine_profile.mapping (one PLC channel). Nothing is written
+        # until mapping.verified, live_writes_enabled and command_owner_confirmed.
+        "kd_profile": {
+            "live_writes_enabled": False,
+            "command_owner_confirmed": False,     # no HMI drives M00030-M00034 / M00050
+            "poll_interval": 0.2,
+            "timeouts": {"freshness": 1.0, "accept": 3.0, "home": 60.0, "move": 30.0},
         },
         # PRINTING PROGRAM OLD profile (friction_tester/plc/pc_profile.py).
         # Nothing is written to the PLC until mapping.verified, live_writes_enabled
@@ -231,7 +243,7 @@ def migrate(loaded):
         test = loaded.setdefault("test", {})
         integ = test.setdefault("integration", {})
         old_mode = integ.get("mode", "independent")
-        if old_mode != "pc_interface":
+        if old_mode not in ("pc_interface", "kd"):
             integ["mode"] = "pc_interface"
             notes.append(f"integration.mode {old_mode} -> pc_interface (plc.pdf profile)")
         cmds = test.get("commands") or {}
@@ -266,6 +278,13 @@ def migrate(loaded):
                          f"verified=false; was verified={bool(old.get('verified'))}, areas="
                          f"{sorted((old.get('areas') or {}).keys())}): confirm against the XG5000 read-back")
         loaded["settings_version"] = 4
+        version = 4
+    if version < 5:
+        integ = (loaded.get("test") or {}).get("integration")
+        if isinstance(integ, dict) and integ.get("mode") == "pc_interface":
+            integ["mode"] = "kd"
+            notes.append("integration.mode pc_interface -> kd (client's updated reference program plc kd.pdf)")
+        loaded["settings_version"] = 5
     if notes:
         loaded["migrated"] = notes
     return loaded

@@ -34,6 +34,8 @@ from friction_tester.config import SETTINGS_FILE, load_settings, save_settings  
 
 KEYS = [("integration.mode", ("test", "integration", "mode")),
         ("mapping.verified", ("test", "machine_profile", "mapping", "verified")),
+        ("kd.live_writes_enabled", ("test", "kd_profile", "live_writes_enabled")),
+        ("kd.command_owner_confirmed", ("test", "kd_profile", "command_owner_confirmed")),
         ("live_writes_enabled", ("test", "machine_profile", "live_writes_enabled")),
         ("command_owner_confirmed", ("test", "machine_profile", "command_owner_confirmed")),
         ("internal_bits_enabled", ("test", "machine_profile", "internal_bits_enabled")),
@@ -44,11 +46,13 @@ KEYS = [("integration.mode", ("test", "integration", "mode")),
         ("measurement.limit_bounds", ("test", "machine_profile", "measurement", "limit_bounds")),
         ("timeouts.alarm_reset_pulse", ("test", "machine_profile", "timeouts", "alarm_reset_pulse"))]
 
-ENABLE = {"integration.mode": "pc_interface", "live_writes_enabled": True,
+ENABLE = {"integration.mode": "kd", "kd.live_writes_enabled": True, "kd.command_owner_confirmed": True,
+          "live_writes_enabled": True,
           "command_owner_confirmed": True, "internal_bits_enabled": True,
           "measurement.judge": "peak", "measurement.force_sign": "absolute",
           "measurement.limit_bounds": "inclusive"}
-DISABLE = {"mapping.verified": False, "live_writes_enabled": False, "command_owner_confirmed": False}
+DISABLE = {"mapping.verified": False, "live_writes_enabled": False, "command_owner_confirmed": False,
+           "kd.live_writes_enabled": False, "kd.command_owner_confirmed": False}
 
 
 def get(d, path):

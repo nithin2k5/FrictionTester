@@ -402,7 +402,8 @@ class TestConsolePage(tk.Frame):
         self.daq = daq
         self.integration = copy.deepcopy(settings["test"]["integration"])
         self.shared = self.integration["mode"] == "shared_cycle"
-        self.pc = self.integration["mode"] == "pc_interface"     # plc.pdf profile (this machine)
+        self.pc = self.integration["mode"] == "pc_interface"     # plc.pdf profile
+        self.kd = self.integration["mode"] == "kd"               # plc kd.pdf profile (client reference)
         self.ctl = None
         self.sampler = None
         self.monitor = None
@@ -426,7 +427,7 @@ class TestConsolePage(tk.Frame):
 
         left = tk.Frame(body, bg=theme.BG)
         left.grid(row=0, column=0, sticky="nsew")
-        if self.shared or self.pc:
+        if self.shared or self.pc or self.kd:
             self._build_plc_strip(left)      # left column only, so the side panel keeps its height
         panels = tk.Frame(left, bg=theme.BG)
         panels.pack(fill="both", expand=True, pady=(0, 6))
@@ -450,6 +451,8 @@ class TestConsolePage(tk.Frame):
             self._start_shared_cycle()
         elif self.pc:
             self._start_pc_interface()
+        elif self.kd:
+            self._start_kd()
         else:
             for n, p in enumerate(self.panels):
                 p.set_source(f"Source: serial loadcell L{n + 1} (live LOAD) · results: start/done handshake")
@@ -621,6 +624,72 @@ class TestConsolePage(tk.Frame):
             self._show_pc_status(last[1], last[2])
         self.after(100, self._drain_pc)
 
+    # ============================================ plc kd.pdf profile (client reference)
+    def _start_kd(self):
+        from ..plc.event_log import EventLog
+        from ..plc.kd_flow import KdController
+        from ..plc.kd_link import KdLink
+        from ..plc import kd_profile as kp
+        kd_cfg = self.settings["test"].get("kd_profile") or {}
+        mapping = make_mapping(self.settings["test"]["machine_profile"].get("mapping"))
+        backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(kd_cfg.get("live_writes_enabled")))
+        self.pc_log = EventLog(self._result_dir())
+        self.pc_log.log("MAPPING", mapping.describe())
+        link = KdLink(backend, self.pc_log, owner_confirmed=bool(kd_cfg.get("command_owner_confirmed")))
+        self.pc_log.log("START", kp.PROFILE_TITLE, writes=link.write_blocker() or "enabled",
+                        unresolved=len(kp.UNRESOLVED))
+        self.ctl = KdController(link, copy.deepcopy(kd_cfg), self.pc_log)
+        for n, p in enumerate(self.panels):
+            p.set_source(f"Source: {kp.PROFILE_TITLE} · load D{30 if n == 0 else 130:05d} (raw)")
+        self.ctl.start()
+        self.after(100, self._drain_kd)
+
+    def _drain_kd(self):
+        """UI thread: apply what the kd controller thread produced."""
+        if not self._alive or self.ctl is None:
+            return
+        last = None
+        while True:
+            try:
+                ev = self.ctl.events.get_nowait()
+            except _queue.Empty:
+                break
+            if ev[0] == "snapshot":
+                last = ev
+            elif ev[0] == "message":
+                self.message(ev[1], ev[2])
+            elif ev[0] == "fault" and ev[1]:
+                self._set_status(f"FAULT latched: {ev[1]} - inspect the machine, then STOP to acknowledge",
+                                 theme.FAIL, 15)
+        if last is not None:
+            self._show_kd_status(last[1], last[2])
+        self.after(100, self._drain_kd)
+
+    def _show_kd_status(self, snap, summary):
+        if snap is None:
+            label = summary.get("link_label") or "PLC status not available"
+            why = summary.get("link_error")
+            self.plc_badge.config(fg=theme.FAIL)
+            self.plc_strip.config(text=f"{label} - no motion" + (f"   |   {why}" if why else ""))
+        else:
+            flags = [("BUSY", snap.st("busy")), ("ERR", snap.st("error")), ("HOMED", snap.st("homed")),
+                     ("POS-OK", snap.st("pos_complete")), ("LIM+", snap.st("upper_limit")),
+                     ("LIM-", snap.st("lower_limit")), ("EMG", snap.st("emergency_stop"))]
+            x = "X: " + (" ".join(n for n, v in flags if v) or "-") + f"  pos {snap.position}"
+            if snap.st("error"):
+                x += f"  err {snap.error_code}"
+            home = f"home step D05000={snap.home_state}" + (
+                f" M00050={int(bool(snap.cmd('M00050')))}" if snap.bits else " (M bits not readable)")
+            raw = " ".join(f"{a} {int(bool(v))}" for a, v in snap.inputs.items()) or "P inputs n/a"
+            loads = " ".join(f"{c[:2].upper()} {v}" for c, v in snap.loads.items() if v is not None)
+            fault = f"   |   FAULT: {summary['fault']}" if summary.get("fault") else ""
+            op = f"   |   {summary['op'][0]}: {summary['op'][1]}" if summary.get("op") else ""
+            self.plc_badge.config(fg=theme.FAIL if summary.get("fault") else
+                                  (theme.UPDATE if summary.get("op") else theme.PASS))
+            self.plc_strip.config(text=f"{x}   |   {home}   |   raw {raw}   |   load {loads}{op}{fault}")
+        self.plc_mode.config(text="plc kd · " + ("writes OFF" if summary.get("write_blocker") else "writes on"),
+                             fg=theme.BUSY if summary.get("write_blocker") else theme.PASS)
+
     def _retry_saves(self):
         if not self._alive:
             return
@@ -768,7 +837,8 @@ class TestConsolePage(tk.Frame):
         """Write the part's rows to TBL_TEST_RESULTS on a worker thread."""
         import uuid
         from .. import db
-        source = "PLC shared cycle" if self.shared else ("PLC pc interface" if self.pc else "PLC")
+        source = "PLC shared cycle" if self.shared else ("PLC pc interface" if self.pc else
+                                                          ("PLC kd" if self.kd else "PLC"))
         rows = db.result_rows(record, uuid.uuid4().hex, source)
         result = {}
 
@@ -1140,6 +1210,13 @@ class TestConsolePage(tk.Frame):
     def plc_pulse(self, command, label):
         """Momentary command: set the bit, hold 0.3 s, clear it."""
         _ui.info(f"{label} -> {command}")
+        if self.kd:
+            if command in ("move_origin", "origin_select", "origin_shift"):
+                self.ctl.submit("home")            # one X axis in plc kd.pdf: every ORIGIN homes it
+            else:
+                self._set_status(f"{label}: not assigned in plc kd.pdf (no PC alarm reset; drive reset is "
+                                 "P00003 in the homing sequence) - see docs/plc_kd_profile.md", theme.BUSY, 6)
+            return
         if self.pc:
             homes = {"move_origin": "all", "origin_select": "select", "origin_shift": "shift"}
             resets = {"alarm_reset_select": "select", "alarm_reset_shift": "shift"}
@@ -1169,6 +1246,10 @@ class TestConsolePage(tk.Frame):
     def toggle_servo(self, key, n):
         """Servo ON/OFF: a maintained PLC bit."""
         _ui.info(f"servo toggle -> {key}")
+        if self.kd:
+            self._set_status("Servo ON/OFF: not assigned in plc kd.pdf (servo ON output P00020 is always ON)",
+                             theme.BUSY, 6)
+            return
         if self.pc:
             self._set_status("Servo ON/OFF: not assigned in this PLC program (servo ON follows the PLC's own "
                              "start-up logic) - see docs/plc_pc_interface.md", theme.BUSY, 6)
@@ -1421,6 +1502,11 @@ class TestConsolePage(tk.Frame):
 
     def start_flow(self):
         """RUN: arm the flow for the loaded model's type."""
+        if self.kd:
+            self._set_status("RUN: the test sequence for plc kd.pdf is not defined yet (the PLC has no PULL/PUSH "
+                             "logic; moves M00030-M00034 must be sequenced by the PC) - ORIGIN only for now",
+                             theme.BUSY, 8)
+            return
         if self._flow == "idle" and not self._target_is_set():
             return
         if self._flow == "idle" and not self._skip_scan() and not self.settings["test"].get("part_number"):
@@ -1484,8 +1570,8 @@ class TestConsolePage(tk.Frame):
         if self.shared:
             self.flow.stop()             # app flow only - no stop command is sent to the PLC
             return
-        if self.pc:
-            self.ctl.submit("stop")      # releases requests; this PLC program has no stop command
+        if self.pc or self.kd:
+            self.ctl.submit("stop")      # releases requests; neither PLC program has a PC stop command
             return
         if self._flow == "idle":
             self.plc_pulse("test_stop", "Test stop")

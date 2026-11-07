@@ -1,5 +1,5 @@
 {
-  "settings_version": 4,
+  "settings_version": 5,
   "plc": {
     "port": "",
     "baudrate": 9600,
@@ -81,7 +81,7 @@
     "model_type": "",
     "part_number": "",
     "integration": {
-      "mode": "pc_interface",
+      "mode": "kd",
       "shared": {
         "live_start_enabled": false,
         "poll_interval": 0.25,
@@ -117,6 +117,17 @@
         "force_unit": "",
         "position_scale": 0.0,
         "position_unit": ""
+      }
+    },
+    "kd_profile": {
+      "live_writes_enabled": false,
+      "command_owner_confirmed": false,
+      "poll_interval": 0.2,
+      "timeouts": {
+        "freshness": 1.0,
+        "accept": 3.0,
+        "home": 60.0,
+        "move": 30.0
       }
     },
     "machine_profile": {

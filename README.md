@@ -25,9 +25,17 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
    ```
    Safe to re-run: existing data is kept and older tables are migrated.
 
-## PLC profile (this machine): PRINTING PROGRAM OLD
+## PLC profile: plc kd.pdf (client's updated reference)
 
-`test.integration.mode = "pc_interface"` (the default) drives the XG5000 program *PRINTING PROGRAM
+`test.integration.mode = "kd"` (the default) follows the client's reference program `plc kd.pdf`
+(NEW NLF MC KOREA MODIFY 09_06_25.xgwx, one X axis): ORIGIN = M00050 with the PLC's homing state
+D05000, moves M00030–M00034, status D00500–D00510. RUN is refused in this mode until the test
+sequence is defined; writes stay off until the PLC's Cnet Modbus areas are verified. Details and open
+items: [docs/plc_kd_profile.md](docs/plc_kd_profile.md); read-only check: `python tools/plc_diag.py`.
+
+## PLC profile: PRINTING PROGRAM OLD
+
+`test.integration.mode = "pc_interface"` drives the XG5000 program *PRINTING PROGRAM
 OLD.xgwx* (`plc.pdf`) through its PC word interface: commands D04100–D04102, echoes D04000–D04002,
 status D04003–D04005, parameters D04200–D04213 (echo D04007–D04020). Address map with page
 references, handshakes, commissioning settings and the unresolved machine items:

@@ -93,10 +93,10 @@ def settings(verified=True, live=True):
 
 def test_no_m00029_default_and_old_settings_migrated():
     s = load_settings(path="does-not-exist.json")
-    assert s["test"]["commands"]["test_run"] == "" and s["test"]["integration"]["mode"] == "pc_interface"
+    assert s["test"]["commands"]["test_run"] == "" and s["test"]["integration"]["mode"] == "kd"
     old = migrate({"test": {"integration": {"mode": "independent"}, "commands": {"test_run": "M00029"}}})
-    assert old["test"]["commands"]["test_run"] == "" and old["test"]["integration"]["mode"] == "pc_interface"
-    assert old["settings_version"] == 4 and len(old["migrated"]) == 2
+    assert old["test"]["commands"]["test_run"] == "" and old["test"]["integration"]["mode"] == "kd"
+    assert old["settings_version"] == 5 and len(old["migrated"]) == 3
 
 
 def test_unverified_mapping_writes_nothing():

@@ -5,6 +5,7 @@
     python tools/plc_diag.py --base word_read=D00000 --base word_write=D00000
                                                      try other Cnet bases (read-only, not saved)
     python tools/plc_diag.py --raw 4 4000 1          one raw request: FC (1-4), offset, quantity
+    python tools/plc_diag.py --profile pc            PLC_INFAC (plc.pdf) blocks instead of plc kd.pdf
 
 Close the app first: it holds the COM port.
 
@@ -14,9 +15,10 @@ and the outcome: the values, a Modbus exception (the PLC answered and refused
 the address/range), or no response (timeout / I/O). When a block fails, the
 first and last registers are tried on their own. There is no address sweep.
 
-These expectations only apply if the installed PLC program is the PLC_INFAC
-listing (plc.pdf, PRINTING PROGRAM OLD.xgwx); the NLF program has no
-D04000/D04100 interface. Readable zeros do not prove the mapping: compare the
+Default profile "kd": the client's reference program plc kd.pdf (D00500 axis
+status, D05000 homing state, load cells, command bits M00020-M00063 through the
+bit-write area). Profile "pc": the PLC_INFAC listing (plc.pdf, D04000..). Each
+only applies if that program is installed. Readable zeros do not prove the mapping: compare the
 values with XG5000's online device monitor, ideally a status bit you can
 change (servo ON, a cylinder sensor).
 """
@@ -33,6 +35,16 @@ from friction_tester.devices.plc_xgb import XGBPlc  # noqa: E402
 from friction_tester.plc.modbus_errors import PlcCommError, ModbusRequestError, READ_FC  # noqa: E402
 from friction_tester.plc.modbus_map import CnetAreaMap, MappingError, CNET_AREAS  # noqa: E402
 
+KD_BLOCKS = [  # (native start, quantity, role) - plc kd.pdf
+    ("D00500", 1, "X-axis status word (busy .0, error .1, pos complete .2, homed .4)"),
+    ("D00500", 11, "X-axis status block D00500-D00510 (position D00504/05, error code D00510)"),
+    ("D05000", 1, "homing state (0 idle, 10, 20)"),
+    ("D00030", 2, "SELECT load cell value (DINT, raw)"),
+    ("D00130", 2, "SHIFT load cell value (DINT, raw)"),
+    ("D00080", 1, "recipe number"),
+]
+KD_BITS = ["M00020", "M00021", "M00022", "M00023", "M00030", "M00031", "M00032", "M00033", "M00034",
+           "M00050", "M00062", "M00063"]
 BLOCKS = [  # (native start, quantity, role) - PLC_INFAC interface (plc.pdf pages 29-31)
     ("D04000", 1, "first command echo word (M0700)"),
     ("D04003", 3, "status words (M0800-M0802)"),
@@ -81,6 +93,7 @@ def main(argv):
     ap.add_argument("--base", action="append", default=[], metavar="AREA=BASE",
                     help=f"override a Cnet area base, AREA in {', '.join(CNET_AREAS)}")
     ap.add_argument("--raw", nargs=3, type=int, metavar=("FC", "OFFSET", "QTY"))
+    ap.add_argument("--profile", choices=("kd", "pc"), default="kd")
     args = ap.parse_args(argv)
 
     settings = load_settings()
@@ -117,8 +130,19 @@ def main(argv):
             print(f"\nraw FC{fc:02d} offset {off} (0x{off:04X}) quantity {qty} station {station}:")
             print(f"   {err if err else (fmt_words(vals) if fc in (3, 4) else vals)}")
             return
-        for native, count, role in BLOCKS:
+        for native, count, role in (KD_BLOCKS if args.profile == "kd" else BLOCKS):
             check_block(plc, mapping, station, native, count, role)
+        if args.profile == "kd":
+            print("\nCommand bits M00020-M00063 (bit_write area, FC01 - read only):")
+            try:
+                for req, items in mapping.plan_read_bits(KD_BITS):
+                    print(f"   request: {req.area} (base {req.base}) -> FC{req.fc:02d} offset {req.offset} "
+                          f"quantity {req.count} station {station}")
+                    bits, err = read(plc, req.table, req.offset, req.count)
+                    print(f"   result : {err}" if err else
+                          "   " + " ".join(f"{a}:{'1' if bits[i] else '0'}" for a, i in items))
+            except MappingError as exc:
+                print(f"   not sent: {exc}")
         print("\nP inputs P00000-P0000F (bit_read area):")
         try:
             plans = mapping.plan_read_bits(INPUTS)
