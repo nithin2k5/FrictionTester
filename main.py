@@ -8,6 +8,9 @@
 
 import argparse
 import tkinter as tk
+from tkinter import messagebox
+
+from friction_tester import single_instance
 
 from friction_tester.config import load_settings
 from friction_tester.devices import Loadcell, NIDaq, XGBPlc
@@ -25,6 +28,18 @@ def main():
         from friction_tester.plc.simulator import SharedCycleSimulator
         simulator = SharedCycleSimulator()
 
+    if not single_instance.acquire():
+        r = tk.Tk()
+        r.withdraw()
+        messagebox.showerror(
+            "Friction Tester",
+            "Friction Tester is already running.\n\n"
+            "Use the open window (check the taskbar). If no window is visible, an earlier copy is "
+            "stuck in the background holding the COM ports: open Task Manager → Details, end "
+            "python.exe / pythonw.exe, then start the app again.")
+        r.destroy()
+        return
+
     root = tk.Tk()
     plc, daq = XGBPlc(), NIDaq()
     loadcells = [Loadcell(1), Loadcell(2)]
@@ -33,10 +48,13 @@ def main():
         root.title("Friction Tester — SIMULATION")
 
     def on_close():
-        plc.disconnect()
-        daq.disconnect()
-        for lc in loadcells:
-            lc.disconnect()
+        # Release every port even if one device fails to close, and always
+        # end the process so no hidden copy keeps COM ports open.
+        for dev in (plc, daq, *loadcells):
+            try:
+                dev.disconnect()
+            except Exception:
+                pass
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)

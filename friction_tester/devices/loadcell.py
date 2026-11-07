@@ -20,6 +20,8 @@ none arrive it uses command mode with ID = loadcell number (L1 = 01, L2 = 02).
 import threading
 import time
 
+from . import ports
+
 try:
     import serial
 except ImportError:  # pragma: no cover - reported in the UI
@@ -73,10 +75,10 @@ def open_port(port, baudrate, tries=3, wait=0.7):
                 raise
             if attempt == tries - 1:
                 raise PortBusyError(
-                    f"{port} is in use by another program (another copy of this app, FeederCable / "
-                    f"EOL tester software, a serial terminal or the indicator's PC tool). Close it and "
-                    f"press CONNECT again. If nothing else is open, unplug and replug the USB-serial "
-                    f"adapter.") from exc
+                    f"Windows refused {port} (Access is denied): the port is already open somewhere. "
+                    f"Most often an earlier FrictionTester is still running in the background — check "
+                    f"Task Manager → Details for python.exe / pythonw.exe and end it, then press CONNECT. "
+                    f"Otherwise replug the USB-serial adapter or restart the PC.") from exc
             time.sleep(wait)
 
 
@@ -132,8 +134,10 @@ class Loadcell:
                     and self._ser.baudrate == int(cfg["baudrate"])):
                 return
             self._close()
+            ports.check_free(cfg["port"], self.name)
             self._ser = open_port(cfg["port"], int(cfg["baudrate"]))
             self.port = cfg["port"]
+            ports.claim(self.port, self.name)
             try:
                 self.device_id = STREAM_ID if self._is_streaming() else self.number
             except Exception:
@@ -161,6 +165,7 @@ class Loadcell:
                 self._ser.close()
             finally:
                 self._ser = None
+                ports.release(self.port, self.name)
 
     def _require_open(self):
         if not self.is_open:

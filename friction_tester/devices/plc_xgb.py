@@ -13,6 +13,8 @@ import struct
 import threading
 import time
 
+from . import ports
+
 try:
     import serial.tools.list_ports
 except ImportError:  # pragma: no cover - reported in the UI
@@ -103,6 +105,7 @@ class XGBPlc:
             raise ValueError("Station ID must be 0–247")
 
         self.disconnect()
+        ports.check_free(cfg["port"], "the PLC")
         client = ModbusSerialClient(
             port=cfg["port"],
             baudrate=int(cfg["baudrate"]),
@@ -118,6 +121,7 @@ class XGBPlc:
                     resp = client.read_coils(0, count=1, device_id=station)
                     if not resp.isError():
                         self._client, self._station, self.port = client, station, cfg["port"]
+                        ports.claim(self.port, "the PLC")
                         return
                     last_error = str(resp)
                 else:
@@ -135,6 +139,7 @@ class XGBPlc:
                 self._client.close()
             finally:
                 self._client = None
+                ports.release(self.port, "the PLC")
 
     def _require_open(self):
         if not self.is_open:
