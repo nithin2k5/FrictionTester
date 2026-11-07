@@ -1,12 +1,5 @@
-"""FrictionTester entry point.
+"""FrictionTester entry point:  python main.py"""
 
-    python main.py              normal start
-    python main.py --simulate   Test Console runs against the shared-cycle PLC
-                                simulator (no PLC needed; nothing is written to
-                                a real PLC)
-"""
-
-import argparse
 import atexit
 import os
 import signal
@@ -21,16 +14,6 @@ from friction_tester.ui import App
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Friction Tester")
-    parser.add_argument("--simulate", action="store_true",
-                        help="use the shared-cycle PLC simulator for the Test Console")
-    args = parser.parse_args()
-
-    simulator = None
-    if args.simulate:
-        from friction_tester.plc.simulator import SharedCycleSimulator
-        simulator = SharedCycleSimulator()
-
     if not single_instance.acquire():
         r = tk.Tk()
         r.withdraw()
@@ -46,9 +29,7 @@ def main():
     root = tk.Tk()
     plc, daq = XGBPlc(), NIDaq()
     loadcells = [Loadcell(1), Loadcell(2)]
-    app = App(root, load_settings(), plc, daq, loadcells, simulator=simulator)
-    if simulator is not None:
-        root.title("Friction Tester — SIMULATION")
+    app = App(root, load_settings(), plc, daq, loadcells)
 
     # Closing (window X, EXIT button) is App.close(): stop page work, then
     # release PLC, loadcells and NI DAQ, then destroy the window.

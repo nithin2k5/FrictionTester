@@ -23,7 +23,7 @@ import random
 import threading
 import time
 
-from . import xgb_address as xa
+from friction_tester.plc import xgb_address as xa
 
 # step -> seconds spent there (scaled by `speed`)
 DURATIONS = {10: 0.1, 33: 0.2, 34: 0.4, 40: 1.0, 41: 0.2, 42: 0.4, 50: 1.0, 51: 0.1,

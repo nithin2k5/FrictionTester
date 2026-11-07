@@ -12,10 +12,10 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
    ```
 3. Run:
    ```
-   python main.py              # normal
-   python main.py --simulate   # Test Console against the shared-cycle PLC simulator
+   python main.py
    ```
-4. Tests (simulator, no hardware): `python -m pytest tests -q`
+4. Tests (no hardware; the PLC cycle runs against a ladder model in `tests/plc_simulator.py`, which
+   the app itself never uses): `python -m pytest tests -q`
 5. Database (MySQL; connection at the top of `friction_tester/db.py`). The app creates the database
    and tables on first use; to set them up beforehand, or to check the connection:
    ```
@@ -83,7 +83,7 @@ Rows of one part share `TR_PART_UID`.
 | `TR_CH1_FINAL`, `TR_CH2_FINAL`, `TR_CH1_LIMIT_NG`, `TR_CH2_LIMIT_NG` | PLC final values (D01250 / D01253) and channel limit flags |
 | `TR_LOT_VALUE` | the part's lot: its first scanned label (SELECT label, or the MT label) |
 | `TR_LOT_RESULT` | the part's result: OK only if every cycle of the part is OK |
-| `TR_SOURCE`, `TR_DETAIL` | PLC or simulation; full JSON (extra windows, limits, PLC counters, evidence) |
+| `TR_SOURCE`, `TR_DETAIL` | where the result came from (PLC / PLC shared cycle); full JSON (extra windows, limits, PLC counters, evidence) |
 
 ### Report page
 

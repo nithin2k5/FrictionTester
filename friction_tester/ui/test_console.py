@@ -35,23 +35,6 @@ from ..plc.shared_cycle import STEP_NAMES, CycleTracker, SharedCycleMonitor, rea
 
 NO_DATA = "—"      # shown for a value that was not measured (a measured zero shows 0)
 
-# In simulation the simulator stands in for the PLC: its mapping is exact and
-# writing the start request is harmless. These assumptions apply to the
-# simulator only and are never written to settings.json.
-SIMULATION_PROFILE = {
-    "mode": "shared_cycle",
-    "shared": {"live_start_enabled": True, "at_cable_selection": "operator_fixture",
-               "mt_one_cycle_tests_both": True},
-}
-
-
-def effective_integration(settings, simulator=None):
-    """test.integration from settings, with the simulation profile laid over it."""
-    cfg = copy.deepcopy(settings["test"]["integration"])
-    if simulator is not None:
-        cfg["mode"] = SIMULATION_PROFILE["mode"]
-        cfg["shared"].update(SIMULATION_PROFILE["shared"])
-    return cfg
 
 VALUE_FG = "#ff6fd8"     # measured values (magenta, as on the LabVIEW screen)
 FIELD_BG = "#0d1016"
@@ -382,13 +365,12 @@ class CablePanel(tk.Frame):
 class TestConsolePage(tk.Frame):
     SIDES = (("select", "SELECT CABLE", "SL"), ("shift", "SHIFT CABLE", "SH"))
 
-    def __init__(self, master, settings, plc, loadcells, simulator=None):
+    def __init__(self, master, settings, plc, loadcells):
         super().__init__(master, bg=theme.BG)
         self.settings = settings
         self.plc = plc
         self.loadcells = loadcells
-        self.simulator = simulator
-        self.integration = effective_integration(settings, simulator)
+        self.integration = copy.deepcopy(settings["test"]["integration"])
         self.shared = self.integration["mode"] == "shared_cycle"
         self.monitor = None
         self.flow = None
@@ -475,23 +457,17 @@ class TestConsolePage(tk.Frame):
 
     def _start_shared_cycle(self):
         shared = self.integration["shared"]
-        if self.simulator is not None:
-            backend = self.simulator
-            mapping_text = "simulator"
-        else:
-            mapping = ModbusMapping(shared.get("mapping"))
-            backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(shared.get("live_start_enabled")))
-            mapping_text = "map " + ("verified" if mapping.verified else "UNVERIFIED")
+        mapping = ModbusMapping(shared.get("mapping"))
+        backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(shared.get("live_start_enabled")))
+        mapping_text = "map " + ("verified" if mapping.verified else "UNVERIFIED")
         self.backend = backend
         writes = lambda: bool(getattr(backend, "can_write", False))
         tracker = CycleTracker(start_timeout=float(shared.get("start_timeout", 10.0)))
         self.monitor = SharedCycleMonitor(backend, tracker, can_write=writes,
                                           interval=float(shared.get("poll_interval", 0.25)))
         self.flow = SharedCycleFlow(shared, self, self.monitor, writes, skip_scan=self._skip_scan())
-        mode = "SIMULATION · " if self.simulator is not None else ""
-        self.plc_mode.config(text=f"{mode}{mapping_text} · live start {'ON' if writes() else 'OFF'}",
-                             fg=theme.BUSY if self.simulator is not None else
-                             (theme.MUTED if writes() else theme.FAIL))
+        self.plc_mode.config(text=f"{mapping_text} · live start {'ON' if writes() else 'OFF'}",
+                             fg=theme.MUTED if writes() else theme.FAIL)
         assign = panel_assignments(shared, "MT", "both")
         roles = shared.get("direction_role") or {}
         directions_mapped = {roles.get("forward"), roles.get("return")} == {"pull", "push"}
@@ -599,7 +575,7 @@ class TestConsolePage(tk.Frame):
         """Write the part's rows to TBL_TEST_RESULTS on a worker thread."""
         import uuid
         from .. import db
-        source = "simulation" if self.simulator is not None else "PLC shared cycle"
+        source = "PLC shared cycle" if self.shared else "PLC"
         rows = db.result_rows(record, uuid.uuid4().hex, source)
         result = {}
 

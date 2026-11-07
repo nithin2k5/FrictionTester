@@ -1,7 +1,8 @@
 # Shared PLC cycle integration
 
 Source: XG5000 ladder printout "NEW NLF MC KOREA MODIFY 09_06_25" (17 pages, printed 2026-11-06).
-Code: `friction_tester/plc/` (address map, Modbus mapping, tracker, part flow, simulator),
+Code: `friction_tester/plc/` (address map, Modbus mapping, tracker, part flow; the ladder simulator
+for the automated tests is `tests/plc_simulator.py`),
 wired into the Test Console when `test.integration.mode = "shared_cycle"`.
 
 Everything below was read from the printout. Items the printout does not settle are listed under

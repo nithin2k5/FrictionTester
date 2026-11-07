@@ -1,7 +1,7 @@
 """Simulator coverage for the shared PLC cycle integration.
 
 Run:  python -m pytest tests -q
-Everything here runs against plc.simulator with a fake clock - no PLC needed.
+Everything here runs against tests/plc_simulator.py with a fake clock - no PLC needed.
 """
 
 import os
@@ -10,13 +10,14 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from friction_tester.plc import xgb_address as xa                      # noqa: E402
 from friction_tester.plc.modbus_map import ModbusMapping, ModbusPlcBackend, MappingError  # noqa: E402
 from friction_tester.plc.part_flow import SharedCycleFlow, panel_assignments  # noqa: E402
 from friction_tester.plc.shared_cycle import (CycleTracker, SharedCycleMonitor, read_measurements,  # noqa: E402
                                               read_snapshot)
-from friction_tester.plc.simulator import SharedCycleSimulator           # noqa: E402
+from plc_simulator import SharedCycleSimulator           # noqa: E402
 
 CONFIRMED = {"at_cable_selection": "operator_fixture", "mt_one_cycle_tests_both": True,
              "channel_cable": {"1": "select", "2": "shift"}, "direction_role": {"forward": "pull", "return": "push"}}

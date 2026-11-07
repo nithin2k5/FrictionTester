@@ -9,9 +9,10 @@ import time
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from friction_tester.config import TEMPORARY_COMMANDS, load_settings  # noqa: E402
-from friction_tester.plc.simulator import SharedCycleSimulator  # noqa: E402
+from plc_simulator import SharedCycleSimulator  # noqa: E402
 from friction_tester.ui import test_console  # noqa: E402
 
 
