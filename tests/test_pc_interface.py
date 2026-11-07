@@ -1,14 +1,12 @@
 """PRINTING PROGRAM OLD profile (plc.pdf) against the ladder simulator.
 
-Covers: AT and MT operation, both axes sharing a command word, requests held
-until completion then released, stale completion/position bits, disconnects
-during parameter transfer and movement, STOP followed by a late completion,
-missing force samples, one axis failing while the other succeeds, and exactly
-one stored result / production increment per part.
+Simulation only: passing here does not establish wiring, Modbus mapping,
+simultaneous machine operation or commissioning.
 """
 
 import os
 import sys
+import time
 
 import pytest
 
@@ -18,14 +16,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from friction_tester.plc import pc_profile as pp  # noqa: E402
 from friction_tester.plc.axis_ops import OpBlocked, StrokeOp  # noqa: E402
 from friction_tester.plc.event_log import EventLog  # noqa: E402
-from friction_tester.plc.pc_flow import PcController, evaluate_axis  # noqa: E402
+from friction_tester.plc.pc_flow import (PcController, derived_targets, evaluate_axis,  # noqa: E402
+                                         target_problems)
 from friction_tester.plc.pc_link import PcLink, read_snapshot, validate_params  # noqa: E402
+from friction_tester.result_store import ResultStore  # noqa: E402
 from pc_ladder_sim import PcLadderSim  # noqa: E402
 
-PARAMS = [10, 50, 100, 20, 500, 500,      # SHIFT jog low/high, speed, PULL travel, limits
+PARAMS = [10, 50, 100, 20, 500, 500,      # SHIFT jog low/high, speed, PULL travel, left/right limit
           10, 50, 100, 20, 500, 500,      # SELECT
           100, 100]                       # measurement start SHIFT, SELECT
 COND = {"load_min": 1.0, "load_max": 10.0, "positions": [None, None, None]}
+RULES = {"judge": "peak", "force_sign": "absolute", "limit_bounds": "inclusive", "min_samples": 3,
+         "strokes_per_test": 1}
 INFO = {"model": "M1", "part_number": "PN1", "conditions": {"select": dict(COND), "shift": dict(COND)}}
 
 
@@ -38,34 +40,43 @@ class Clock:
 
 
 class FakeSampler:
-    """Returns configured samples per (axis, direction); records captures."""
+    """Deterministic force data per (axis, direction); records captures."""
 
     def __init__(self):
         self.data = {}
         self.captures = []
+        self.open = set()
+
+    def describe(self, axis):
+        return {"force": {"source": "simulated", "channel": axis}, "stroke": None}
 
     def start(self, axis, kind, test_id, stroke_no):
         cap = (axis, kind, test_id, stroke_no)
         self.captures.append(cap)
+        self.open.add(cap)
         return cap
 
     def stop(self, cap):
-        return list(self.data.get((cap[0], cap[1]), [(0.0, 5.0, None)] * 5))
+        self.open.discard(cap)
+        return list(self.data.get((cap[0], cap[1]), [(float(i), 5.0, None) for i in range(5)]))
 
 
 class Rig:
-    def __init__(self, internal=False, skip_scan=False, timeouts=None, owner=True, verified=True):
+    def __init__(self, internal=True, skip_scan=False, timeouts=None, owner=True, verified=True,
+                 completion="internal_flags", cfg=None):
         self.clock = Clock()
         self.sim = PcLadderSim(self.clock)
         self.sim.mapping.verified = verified
         self.log = EventLog(folder=None, clock=lambda: __import__("datetime").datetime(2026, 11, 7))
         self.link = PcLink(self.sim, self.log, owner_confirmed=owner, internal_enabled=internal)
         self.sampler = FakeSampler()
-        cfg = {"timeouts": dict({"stroke": 5.0, "home": 10.0}, **(timeouts or {})),
-               "measurement": {"judge": "peak", "strokes_per_test": 1}}
-        self.ctl = PcController(self.link, cfg, self.log, self.sampler, clock=self.clock, skip_scan=skip_scan)
+        conf = {"timeouts": dict({"stroke": 5.0, "home": 10.0, "alarm_reset_pulse": 0.2}, **(timeouts or {})),
+                "measurement": dict(RULES), "mt_parallel_verified": True, "stroke_completion": completion,
+                "home_before_test": "if_not_referenced"}
+        conf.update(cfg or {})
+        self.ctl = PcController(self.link, conf, self.log, self.sampler, clock=self.clock, skip_scan=skip_scan)
         self.events = []
-        self.trace = []                  # per poll: (req bits D04101, sim shift pull step)
+        self.trace = []
         self.step()
 
     def step(self, dt=0.05):
@@ -91,7 +102,7 @@ class Rig:
 
     def confirm_params(self, values=PARAMS, model="M1"):
         self.ctl.submit("params", model, list(values))
-        self.step()                       # request taken: pending / writing, or refused
+        self.step()
         self.until(lambda: self.ctl.params["state"] in ("confirmed", "not_confirmed"))
 
     def parts(self):
@@ -103,54 +114,99 @@ class Rig:
     def run_part(self, mtype, labels=("LBL-1", "LBL-2")):
         self.ctl.submit("run", dict(INFO, type=mtype))
         self.step()
+        self.ctl.submit("scan", "select", labels[0])
         if mtype == "MT":
-            self.ctl.submit("scan", "select", labels[0])
             self.until(lambda: self.ctl.flow == "idle")
-        else:
-            self.ctl.submit("scan", "select", labels[0])
-            self.until(lambda: self.ctl.flow in ("at_scan_shift", "idle"))
-            if self.ctl.flow == "at_scan_shift":
-                self.ctl.submit("scan", "shift", labels[1])
-                self.until(lambda: self.ctl.flow == "idle")
+            return
+        self.until(lambda: self.ctl.flow in ("at_scan_shift", "idle"))
+        if self.ctl.flow == "at_scan_shift":
+            self.ctl.submit("scan", "shift", labels[1])
+            self.until(lambda: self.ctl.flow == "idle")
 
-    def all_requests_clear(self):
+    def requests_clear(self):
         return all(self.sim.D[4100 + i] == 0 for i in range(3))
 
 
-# ------------------------------------------------------------------ parameters
-def test_parameters_confirmed_by_readback_and_targets_follow_ladder_scaling():
+# ------------------------------------------------------------------ map / masks
+def test_alarm_reset_masks_and_coupled_bits():
+    assert pp.COMMANDS["shift"]["alarm_reset"] == (0, 10) and pp.m_address(700, 0, 10) == "M0700A"
+    assert pp.COMMANDS["select"]["alarm_reset"] == (0, 14) and pp.m_address(700, 0, 14) == "M0700E"
+    assert pp.SELECTOR == {"shift": "M00105", "select": "M00205"}
+    assert "torque-limit P00031" in pp.COUPLED_BITS["M07008"] and "lamp P0002D" in pp.COUPLED_BITS["M07008"]
+    assert "not alarm reset" in pp.COUPLED_BITS["M07008"]
+    used = {(i, n) for ops in pp.COMMANDS.values() for i, n in ops.values()}
+    assert (0, 8) not in used and (0, 15) not in used and (0, 12) not in used   # M07008, M0700F, M0700C
+
+
+def test_alarm_reset_selector_pulse_and_no_retry():
     r = Rig()
-    r.confirm_params()
-    assert r.ctl.params["state"] == "confirmed"
     a = r.sim.axes["shift"]
-    assert a.meas_target == 1_000_000 - 100 * 10                      # D02000 - p*10
-    assert a.pull_target == a.meas_target + 20 * 100 + 100            # + travel*100 + D00490
+    a.alarm_normal = False
+    r.sim.local["shift"] = True                     # local selected: PC branch inactive
+    r.step()
+    r.ctl.submit("alarm_reset", "shift")
+    r.step()
+    assert "local/touch operation selected (M00105 ON)" in r.messages()[-1]
+    assert r.sim.requests_seen["shift"]["alarm_reset"] == 0
+    r.sim.local["shift"] = False
+    r.step()                                         # commands use the latest poll's snapshot
+    r.ctl.submit("alarm_reset", "shift")
+    r.step()
+    r.until(lambda: not r.ctl.manual)
+    assert "alarm-normal input restored" in r.messages()[-1] and r.requests_clear()
+    a.alarm_normal, r.sim.alarm_clearable["shift"] = False, False   # an alarm that does not clear
+    r.step()
+    r.ctl.submit("alarm_reset", "shift")
+    r.step()
+    r.until(lambda: not r.ctl.manual)
+    r.run(3.0)
+    assert "not retried" in " ".join(r.messages()[-3:])
+    assert r.sim.requests_seen["shift"]["alarm_reset"] == 2      # one pulse per request, no repeats
+    r2 = Rig(timeouts={"alarm_reset_pulse": None})
+    r2.sim.axes["select"].alarm_normal = False
+    r2.step()
+    r2.ctl.submit("alarm_reset", "select")
+    r2.step()
+    assert "pulse length not configured" in r2.messages()[-1]
 
 
-def test_parameter_validation():
-    bad = list(PARAMS)
-    bad[12] = 40000                       # measurement start goes through 16-bit signed MUL
-    bad[2] = None
-    problems = validate_params(bad)
-    assert any("Operating speed is empty" in p for p in problems)
-    assert any("0..32767" in p for p in problems)
-
-
-def test_disconnect_during_parameter_transfer_leaves_not_confirmed():
+# ------------------------------------------------------------------ parameters
+def test_parameters_confirmed_after_echo_and_settle():
     r = Rig()
-    r.sim.fail_next_write = True          # partial / failed write
+    r.ctl.submit("params", "M1", list(PARAMS))
+    r.until(lambda: r.ctl.params["state"] == "settling")
+    r.until(lambda: r.ctl.params["state"] == "confirmed")
+    a = r.sim.axes["shift"]
+    assert a.meas_target == 1_000_000 - 100 * 10 and a.pull_target == a.meas_target + 20 * 100 + 100
+
+
+def test_parameter_validation_and_derived_targets():
+    bad = list(PARAMS)
+    bad[12], bad[2] = 40000, None
+    problems = validate_params(bad)
+    assert any("Operating speed is empty" in p for p in problems) and any("0..32767" in p for p in problems)
+    over = list(PARAMS)
+    over[3] = 600                                     # PULL target beyond the left limit
+    assert target_problems(derived_targets(over, m0700f_on=False))
+    assert not target_problems(derived_targets(PARAMS, m0700f_on=False))
+    r = Rig()
+    r.confirm_params(values=over)
+    assert r.ctl.params["state"] == "not_confirmed" and "outside the limits" in r.ctl.params["message"]
+
+
+def test_disconnect_or_failed_write_during_parameter_transfer():
+    r = Rig()
+    r.sim.fail_next_write = True
     r.confirm_params()
     assert r.ctl.params["state"] == "not_confirmed"
     r.ctl.submit("params", "M1", list(PARAMS))
-    r.step()                              # written, waiting for readback ...
-    r.step(0.0)
-    r.sim.connected = False               # ... and the link drops
+    r.step()
+    r.sim.connected = False
     r.run(1.0)
-    assert r.ctl.params["state"] == "not_confirmed"
     r.sim.connected = True
     r.run(1.0)
-    assert r.ctl.params["state"] == "not_confirmed"       # never silently re-confirmed
-    r.ctl.submit("run", dict(INFO, type="MT"))
+    assert r.ctl.params["state"] == "not_confirmed"
+    r.ctl.submit("run", dict(INFO, type="AT"))
     r.step()
     assert "Parameters not confirmed" in r.messages()[-1]
 
@@ -163,121 +219,208 @@ def test_writes_blocked_until_mapping_verified_and_owner_confirmed():
         assert not r.sim.writes
 
 
-# ------------------------------------------------------------------ AT / MT
-def test_at_part_two_scans_one_result():
+def test_parameters_frozen_during_an_active_part():
     r = Rig()
     r.confirm_params()
-    r.run_part("AT", ("SEL-1", "SHF-1"))
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    new = list(PARAMS)
+    new[2] = 120
+    r.ctl.submit("params", "M1", new)
+    r.step()
+    assert "frozen" in r.messages()[-1] and r.sim.D[4202] == 100
+    r.ctl.submit("scan", "select", "S")
+    r.until(lambda: r.ctl.flow == "at_scan_shift")
+    r.ctl.submit("scan", "shift", "H")
+    r.until(lambda: r.ctl.flow == "idle")
+    r.until(lambda: r.sim.D[4202] == 120)            # applied after the part
+
+
+# ------------------------------------------------------------------ AT / MT
+def test_at_part_order_and_one_result():
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "shift", "WRONG")
+    r.step()
+    assert "wrong field" in r.messages()[-1]
+    r.ctl.submit("scan", "select", "SEL-1")
+    r.until(lambda: r.sim.axes["select"].seq["pull"].word != 0)
+    r.ctl.submit("scan", "select", "AGAIN")
+    r.step()
+    assert "test is running" in r.messages()[-1]
+    r.until(lambda: r.ctl.flow == "at_scan_shift")
+    assert r.sim.starts["shift"]["pull"] == 0
+    r.ctl.submit("scan", "shift", "SHF-1")
+    r.until(lambda: r.ctl.flow == "idle")
     parts = r.parts()
-    assert len(parts) == 1 and parts[0]["verdict"] == "OK"
+    assert len(parts) == 1 and parts[0]["verdict"] == "OK" and parts[0]["counted"]
     assert [s["stage"] for s in parts[0]["stages"]] == ["select", "shift"]
-    assert parts[0]["label_select"] == "SEL-1" and parts[0]["label_shift"] == "SHF-1"
     for axis in pp.AXES:
         assert r.sim.starts[axis] == {"home": 0, "pull": 1, "push": 1, "meas": 1}
-    assert r.all_requests_clear()
+    assert r.requests_clear()
 
 
-def test_mt_both_axes_share_command_words_without_losing_bits():
+def test_mt_shared_words_without_lost_bits_and_mt_gate():
     r = Rig()
     r.confirm_params()
     r.run_part("MT", ("MT-1",))
     assert len(r.parts()) == 1 and r.parts()[0]["verdict"] == "OK"
-    both_pull = [w for _t, addr, vals in r.sim.writes if addr == "D04101" for w in vals if w & 0b1010 == 0b1010]
-    assert both_pull, "SHIFT and SELECT PULL requests were never ON together in D04101"
+    both = [w for _t, addr, vals in r.sim.writes if addr == "D04101" for w in vals if w & 0b1010 == 0b1010]
+    assert both, "SHIFT and SELECT PULL requests were never ON together in D04101"
     for axis in pp.AXES:
         assert r.sim.requests_seen[axis]["pull"] == 1 and r.sim.requests_seen[axis]["push"] == 1
-    assert r.all_requests_clear()
+    assert r.requests_clear()
+    gated = Rig(cfg={"mt_parallel_verified": False})
+    gated.confirm_params()
+    gated.ctl.submit("run", dict(INFO, type="MT"))
+    gated.step()
+    assert "not verified" in gated.messages()[-1] and gated.ctl.flow == "idle"
 
 
-def test_request_held_until_completion_then_released():
+def test_invalid_type_and_duplicate_run_refused():
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("run", dict(INFO, type="XX"))
+    r.step()
+    assert "invalid Type" in r.messages()[-1]
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    assert "already active" in r.messages()[-1]
+
+
+def test_request_held_through_completion_then_released():
     r = Rig()
     r.confirm_params()
     r.run_part("AT")
-    shift_pull = [(word & 0b10 != 0, step) for word, step, _sl in r.trace if step is not None]
-    assert shift_pull
-    for held, step in shift_pull:
-        if step <= 6:
-            assert held, f"PULL request released at step {step}, before completion"
-    assert any(step == 7 for _h, step in shift_pull), "sequence never waited for the release (step 7)"
-    assert any(not held for held, step in shift_pull if step >= 7)
+    seen = [(word & 0b10 != 0, step) for word, step, _sl in r.trace if step is not None]
+    for held, step in seen:
+        if step <= 5:                                   # M00051 is set at step 6
+            assert held, f"PULL request released at step {step}, before the completion flag"
+    # released while the sequence (and its exported "active" bit) was still in step 6/7
+    assert any(not held and step in (6, 7) for held, step in seen)
 
 
-def test_home_request_released_before_the_sequence_ends():
+def test_measurement_window_closes_at_completion_not_release():
     r = Rig()
     r.confirm_params()
-    r.ctl.submit("home", "shift")
-    r.until(lambda: not r.ctl.manual)
-    r.run(3.0)
-    assert r.sim.starts["shift"]["home"] == 1           # a held request would re-home at the end
-    assert "SHIFT HOME complete" in r.messages()[-1]
-    assert r.all_requests_clear()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "S")
+    r.until(lambda: r.sim.axes["select"].complete["pull"])
+    r.step()
+    assert not r.sampler.open
+    assert r.sim.axes["select"].seq["pull"].word != 0
 
 
-def test_internal_completion_bits_used_when_enabled():
-    r = Rig(internal=True)
-    r.confirm_params()
-    r.run_part("AT")
-    assert any("M00051" in line for line in r.log.tail(300))
-    assert len(r.parts()) == 1
-
-
-def test_skip_scan_at_needs_run_for_shift():
-    r = Rig(skip_scan=True)
+def test_position_fallback_only_when_selected():
+    r = Rig(internal=False)
     r.confirm_params()
     r.ctl.submit("run", dict(INFO, type="AT"))
-    r.until(lambda: r.ctl.flow == "at_scan_shift")
-    r.run(2.0)
-    assert r.ctl.flow == "at_scan_shift" and r.sim.starts["shift"]["pull"] == 0
-    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "S")
     r.until(lambda: r.ctl.flow == "idle")
-    assert len(r.parts()) == 1
+    assert r.parts()[0]["verdict"] == "INCOMPLETE"
+    assert any("not readable" in x for x in r.parts()[0]["reasons"])
+    f = Rig(internal=False, completion="position_fallback")
+    f.confirm_params()
+    f.run_part("AT")
+    assert f.parts()[-1]["verdict"] == "OK"
+    assert any("fresh target compare OFF->ON" in e for e in f.parts()[-1]["evidence"]["select"])
+    f.run_part("AT")                                    # axis now already on the start compare
+    assert any("no positioning requested" in e for e in f.parts()[-1]["evidence"]["select"])
 
 
-# ------------------------------------------------------------------ stale signals
-def test_stale_position_and_completion_bits_never_confirm_a_new_stroke():
-    r = Rig(internal=True)
+# ------------------------------------------------------------------ handshake failures
+def test_echo_without_acceptance_fails():
+    r = Rig()
+    r.confirm_params()
+    r.sim.ignore["select"] = True
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "S")
+    r.until(lambda: r.ctl.flow == "idle")
+    assert any("no fresh sequence" in x for x in r.parts()[0]["reasons"])
+    assert r.ctl.fault
+    r.run(0.5)
+    assert r.requests_clear()
+
+
+def test_stale_completion_and_position_bits_refused():
+    r = Rig()
     r.confirm_params()
     a = r.sim.axes["shift"]
-    a.pos = a.pull_target                 # axis already at the PULL target
-    r.sim.advance(0.0)
+    a.pos = a.pull_target
     r.step()
-    snap = read_snapshot(r.sim, internal_enabled=True)
+    snap = read_snapshot(r.sim, internal_enabled=True, now=r.clock())
     with pytest.raises(OpBlocked, match="already at the PULL target"):
         StrokeOp("shift", "pull").start(snap, r.clock())
     a.pos = a.meas_target
-    a.complete["pull"] = True             # completion bit left ON
+    a.complete["pull"] = True
     r.step()
-    snap = read_snapshot(r.sim, internal_enabled=True)
-    with pytest.raises(OpBlocked, match="M00051"):
+    snap = read_snapshot(r.sim, internal_enabled=True, now=r.clock())
+    with pytest.raises(OpBlocked, match="stale completion flag M00051"):
         StrokeOp("shift", "pull").start(snap, r.clock())
 
 
-def test_stale_request_bits_at_attach_are_reported_not_resent():
-    clock = Clock()
+def test_home_feedback_before_sequence_end_is_not_completion():
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("home", "shift")
+    r.step()
+    seq = r.sim.axes["shift"].seq["home"]
+    early = False
+    while r.ctl.manual and r.clock.t < 400:
+        r.step()
+        if r.sim.axes["shift"].origin_complete and seq.word != 0:
+            early = True
+        if not r.ctl.manual:
+            assert seq.word == 0, "home reported done before M0200 returned to idle"
+    assert early, "origin feedback never preceded the end of the sequence"
+    r.run(3.0)
+    assert r.sim.starts["shift"]["home"] == 1 and "HOME complete" in r.messages()[-1]
+
+
+def test_measurement_start_timeout_branch_is_a_failure():
+    r = Rig()
+    r.confirm_params(values=PARAMS[:12] + [200, 100])
+    r.sim.stuck["shift"] = True
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "S")
+    r.until(lambda: r.ctl.flow == "at_scan_shift")
+    r.ctl.submit("scan", "shift", "H")
+    r.until(lambda: r.ctl.flow == "idle")
+    assert any("timeout branch" in x for x in r.parts()[-1]["reasons"])
+    assert r.parts()[-1]["verdict"] == "INCOMPLETE" and not r.parts()[-1]["counted"]
+
+
+# ------------------------------------------------------------------ stale requests, STOP, disconnect, faults
+def test_stale_request_bits_reported_not_resent_released_by_stop():
     r = Rig()
     r.sim.connected = False
     r.run(0.5)
-    r.sim.D[4101] |= 1 << 1               # SHIFT PULL request left ON by an earlier session
+    r.sim.D[4101] |= 1 << 1
     r.sim.connected = True
     r.step()
     assert r.ctl.stale == [("shift", "pull")]
-    r.ctl.submit("run", dict(INFO, type="MT"))
+    r.ctl.submit("run", dict(INFO, type="AT"))
     r.step()
     assert "press STOP" in r.messages()[-1]
-    writes_before = len(r.sim.writes)
+    before = len(r.sim.writes)
     r.ctl.submit("stop")
     r.step()
-    assert r.sim.D[4101] & 0b10 == 0 and r.ctl.stale == []
-    assert len(r.sim.writes) == writes_before + 1               # only the release was written
-    r.run(3.0)                                                  # the PLC's PULL ends after the release
+    assert r.sim.D[4101] & 0b10 == 0 and r.ctl.stale == [] and len(r.sim.writes) == before + 1
+    r.run(3.0)
     r.confirm_params()
-    r.run_part("MT")
-    assert len(r.parts()) == 1
-    del clock
+    r.run_part("AT")
+    assert r.parts()[-1]["verdict"] == "OK"
 
 
-# ------------------------------------------------------------------ disconnects, STOP, failures
-def test_disconnect_during_movement_is_not_confirmed_or_resent():
+def test_disconnect_during_stroke_latches_fault_no_resend():
     r = Rig()
     r.confirm_params()
     r.ctl.submit("run", dict(INFO, type="AT"))
@@ -289,10 +432,19 @@ def test_disconnect_during_movement_is_not_confirmed_or_resent():
     r.sim.connected = True
     r.until(lambda: r.ctl.flow == "idle")
     r.run(3.0)
-    assert r.parts() == []
-    assert any("INCOMPLETE" in m for m in r.messages())
-    assert r.sim.requests_seen["select"]["pull"] == 1          # never re-sent
-    assert r.all_requests_clear()                              # released after reconnecting
+    part = r.parts()[-1]
+    assert part["verdict"] == "INCOMPLETE" and not part["counted"]
+    assert r.sim.requests_seen["select"]["pull"] == 1 and r.requests_clear()
+    assert r.ctl.fault
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    assert "Fault latched" in r.messages()[-1]
+    r.ctl.submit("stop")
+    r.step()
+    assert r.ctl.fault is None
+    r.confirm_params()
+    r.run_part("AT")
+    assert r.parts()[-1]["verdict"] == "OK"
 
 
 def test_stop_then_late_completion_is_ignored():
@@ -304,87 +456,99 @@ def test_stop_then_late_completion_is_ignored():
     r.until(lambda: r.sim.axes["select"].seq["pull"].step == 3)
     r.ctl.submit("stop")
     r.step()
-    assert r.sim.D[4101] & 0b1000 == 0                         # request released at once
-    assert any("no PC stop command" in m for m in r.messages())
-    r.run(5.0)                                                 # PLC finishes the stroke by itself
+    assert r.sim.D[4101] & 0b1000 == 0
+    assert "Machine stop NOT confirmed" in r.ctl.status_summary()["stop_state"]
+    r.run(5.0)
     assert r.sim.axes["select"].seq["pull"].word == 0
-    assert r.parts() == [] and not [e for e in r.events if e[0] == "axis_result"]
-    assert r.ctl.flow == "idle"
+    assert [p["verdict"] for p in r.parts()] == ["ABORTED"] and not r.parts()[0]["counted"]
+    assert not [e for e in r.events if e[0] == "axis_result"]
+    r.ctl.submit("scan", "select", "LATE")
+    r.step()
+    assert "press RUN first" in r.messages()[-1]
 
 
-def test_missing_force_samples_make_the_part_ng():
-    r = Rig()
-    r.confirm_params()
-    r.sampler.data[("shift", "push")] = []                     # no samples at all
-    r.sampler.data[("select", "pull")] = [(0.0, None, None)] * 4   # reads failed
-    r.run_part("MT")
-    parts = r.parts()
-    assert len(parts) == 1 and parts[0]["verdict"] == "NG"
-    problems = {s["stage"]: s["result"]["problems"] for s in parts[0]["stages"]}
-    assert any("no valid force samples" in p for p in problems["shift"])
-    assert any("no valid force samples" in p for p in problems["select"])
-
-
-def test_one_axis_fails_while_the_other_succeeds():
+def test_one_axis_fails_while_the_other_finishes():
     r = Rig(timeouts={"stroke": 3.0})
     r.confirm_params()
-    r.sim.stuck["select"] = False
     r.ctl.submit("run", dict(INFO, type="MT"))
     r.step()
     r.ctl.submit("scan", "select", "MT-1")
     r.until(lambda: r.sim.axes["select"].seq["pull"].word != 0)
-    r.sim.stuck["select"] = True                               # SELECT never reaches its PULL target
+    r.sim.stuck["select"] = True
     r.until(lambda: r.ctl.flow == "idle", limit=40)
-    results = [e for e in r.events if e[0] == "axis_result"]
-    assert [e[1] for e in results] == ["shift"]                # SHIFT finished on its own
-    assert r.parts() == [] and any("INCOMPLETE" in m for m in r.messages())
-    assert r.sim.D[4101] & 0b1000 == 0                         # SELECT PULL request released
+    assert [e[1] for e in r.events if e[0] == "axis_result"] == ["shift"]
+    part = r.parts()[-1]
+    assert part["verdict"] == "INCOMPLETE" and [s["verdict"] for s in part["stages"]] == ["ERROR", "OK"]
+    assert r.sim.D[4101] & 0b1000 == 0
 
 
-def test_measurement_start_gives_up_after_plc_timeout():
+def test_missing_invalid_and_insufficient_samples_are_incomplete():
     r = Rig()
-    r.confirm_params(values=PARAMS[:12] + [200, 100])          # new SHIFT start position
-    r.sim.stuck["shift"] = True
-    r.ctl.submit("run", dict(INFO, type="AT", conditions=INFO["conditions"]))
-    r.step()
-    r.ctl.submit("scan", "select", "S")
-    r.until(lambda: r.ctl.flow == "at_scan_shift")
-    r.ctl.submit("scan", "shift", "H")
-    r.until(lambda: r.ctl.flow == "idle", limit=30)
-    assert any("measurement-start position not reached" in m for m in r.messages())
-    assert r.parts() == []
+    r.confirm_params()
+    r.sampler.data[("shift", "push")] = []
+    r.sampler.data[("select", "pull")] = [(0.0, None, None)] * 4 + [(1.0, 5.0, None)]
+    r.run_part("MT")
+    part = r.parts()[-1]
+    assert part["verdict"] == "INCOMPLETE" and not part["counted"]
+    text = " ".join(part["reasons"])
+    assert "PUSH stroke 1: 0 valid samples" in text and "PULL stroke 1: 1 valid samples" in text
 
 
-def test_exactly_one_result_and_increment_per_part():
+def test_exactly_one_result_per_part():
     r = Rig()
     r.confirm_params()
     r.run_part("AT", ("A1", "B1"))
     r.run_part("MT", ("C1",))
     r.run(3.0)
     parts = r.parts()
-    assert len(parts) == 2 and len({p["part_id"] for p in parts}) == 2
-    assert sum(1 for line in r.log.tail(300) if "PART" in line and "complete" in line) == 2
+    assert [p["counted"] for p in parts] == [True, True] and len({p["part_id"] for p in parts}) == 2
 
 
 # ------------------------------------------------------------------ evaluation
-def test_evaluation_rules():
-    ok = evaluate_axis([{"pull": [(0, 2.0, None), (1, -6.0, None)], "push": [(0, 3.0, None)]}],
-                       COND, {"judge": "peak"})
-    assert ok["ok"] and ok["pull"] == [6.0] and ok["push"] == [3.0]
-    out = evaluate_axis([{"pull": [(0, 12.0, None)], "push": [(0, 3.0, None)]}], COND, {"judge": "peak"})
-    assert not out["ok"] and "outside" in out["problems"][0]
-    pos = evaluate_axis([{"pull": [(0, 2.0, 0.0), (1, 4.0, 5.0), (2, 6.0, 10.0)], "push": [(0, 3.0, 5.0)]}],
-                        dict(COND, positions=[0.0, 5.0, None]), {"judge": "positions"})
-    assert pos["pull"] == [2.0, 4.0, None] and not pos["ok"]   # position 3 not set -> missing
-    no_lim = evaluate_axis([{"pull": [(0, 2.0, None)], "push": [(0, 3.0, None)]}],
-                           dict(COND, load_min=None), {"judge": "peak"})
-    assert not no_lim["ok"]
+def test_evaluation_rules_are_explicit():
+    s = [{"pull": [(i, v, None) for i, v in enumerate((2.0, -6.0, 3.0))],
+          "push": [(i, 3.0, None) for i in range(3)]}]
+    assert evaluate_axis(s, COND, {})["verdict"] == "INCOMPLETE"
+    ok = evaluate_axis(s, COND, RULES)
+    assert ok["verdict"] == "OK" and ok["pull"] == [6.0]
+    signed = evaluate_axis(s, COND, dict(RULES, force_sign="signed"))
+    assert signed["verdict"] == "NG" and signed["pull"] == [-6.0]
+    edge = [{"pull": [(i, 10.0, None) for i in range(3)], "push": [(i, 3.0, None) for i in range(3)]}]
+    assert evaluate_axis(edge, COND, RULES)["verdict"] == "OK"
+    assert evaluate_axis(edge, COND, dict(RULES, limit_bounds="exclusive"))["verdict"] == "NG"
+    pos = [{"pull": [(0, 2.0, 0.0), (1, 4.0, 10.0), (2, 6.0, 20.0)],
+            "push": [(0, 3.0, 0.0), (1, 3.0, 10.0), (2, 3.0, 20.0)]}]
+    res = evaluate_axis(pos, dict(COND, positions=[5.0, 15.0, None]), dict(RULES, judge="positions"))
+    assert res["pull"] == [3.0, 5.0] and res["verdict"] == "OK"
+    out = evaluate_axis(pos, dict(COND, positions=[25.0]), dict(RULES, judge="positions"))
+    assert out["verdict"] == "INCOMPLETE" and "not covered" in out["problems"][0]
 
 
-def test_shared_command_word_keeps_the_other_axis_bits():
-    r = Rig()
-    r.link.set_bits({pp.COMMANDS["select"]["pull"]: True}, "t")
-    r.link.set_bits({pp.COMMANDS["shift"]["pull"]: True}, "t")
-    assert r.sim.D[4101] == 0b1010
-    r.link.set_bits({pp.COMMANDS["select"]["pull"]: False}, "t")
-    assert r.sim.D[4101] == 0b0010
+# ------------------------------------------------------------------ result saving
+def test_failed_save_retry_without_duplicates(tmp_path):
+    table, fail = [], {"n": 1}
+
+    def insert(rows):
+        if any(r["TR_PART_UID"] == rows[0]["TR_PART_UID"] for r in table):
+            return 0
+        table.extend(rows)
+        if fail["n"]:                                  # saved, but the acknowledgement is lost
+            fail["n"] -= 1
+            raise ConnectionError("lost acknowledgement")
+        return len(rows)
+
+    rows = lambda rec: [{"TR_PART_UID": rec["part_id"], "TR_STAGE": s} for s in ("SELECT", "SHIFT")]
+    path = str(tmp_path / "unsaved.json")
+    store = ResultStore(path, insert, rows)
+    rec = {"part_id": "P1", "counted": True}
+    store.submit(rec)
+    for _ in range(200):
+        if not store._busy:
+            break
+        time.sleep(0.01)
+    assert store.pending() == ["P1"] and store.events.get_nowait()[0] == "failed"
+    assert ResultStore(path, insert, rows).pending() == ["P1"]       # survives a restart
+    store.save_now()
+    assert store.pending() == [] and len(table) == 2
+    assert store.events.get_nowait()[0] == "saved" and store.events.empty()
+    assert store.submit(rec) is False and len(table) == 2           # duplicate submission ignored

@@ -8,7 +8,8 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 
 # settings.json layout version. 2 = machine profile "PRINTING PROGRAM OLD"
 # (plc.pdf, PC word interface) is this machine's integration.
-SETTINGS_VERSION = 2
+# 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
+SETTINGS_VERSION = 3
 
 DEFAULT_SETTINGS = {
     "settings_version": SETTINGS_VERSION,
@@ -60,6 +61,9 @@ DEFAULT_SETTINGS = {
         # label / part-number check; AT: press RUN again for the SHIFT stage).
         # Set false to bring back the scan flow.
         "skip_scan": True,
+        # Scanned-label check: "contains_part_number" (label must contain the model's part
+        # number), "regex" (per-field patterns below) or "none" (no format rule defined).
+        "label_rule": {"mode": "contains_part_number", "select": "", "shift": ""},
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
         "part_number": "",         # part number of the loaded model; scanned labels must contain it
         # How the Test Console talks to the PLC.
@@ -101,7 +105,19 @@ DEFAULT_SETTINGS = {
         # docs/plc_pc_interface.md).
         "machine_profile": {
             "id": "printing_program_old_pc_words",
-            "version": 1,
+            "version": 2,
+            # Commissioning facts - "unverified" until checked on the machine.
+            "commissioning": {
+                "program_installed": "unverified",   # PRINTING PROGRAM OLD.xgwx is on the PLC
+                "protocol_mapping": "unverified",     # protocol, station, serial, D/M Modbus mapping, word order
+                "native_m_reads": "unverified",       # M00051/52/61/62, M00105/M00205, M0204x/M0214x
+                "stop_behavior": "unverified",        # no PC stop command in this program
+                "sensor_assignment": "unverified",    # loadcell/LVDT per cable, polarity
+                "unit_scaling": "unverified",         # counts per mm, speed units, force calibration
+                "fixture_sequence": "unverified",
+                "measurement_rules": "unverified",
+                "mt_concurrency": "unverified",
+            },
             "mapping": {
                 "verified": False,
                 "areas": {
@@ -111,20 +127,39 @@ DEFAULT_SETTINGS = {
             },
             "live_writes_enabled": False,
             "command_owner_confirmed": False,     # no other program writes D04100-D04102
-            "internal_bits_enabled": False,       # read M00051/52/61/62 (M-area mapping verified)
+            "internal_bits_enabled": False,       # native M reads (M-area mapping verified)
+            # PULL/PUSH completion: "internal_flags" (M00051/52/61/62, needs native M reads) or
+            # "position_fallback" (target compare + in-position + ladder step timing) - select the
+            # fallback only after validating it on the machine.
+            "stroke_completion": "internal_flags",
+            "mt_parallel_verified": False,        # SHIFT and SELECT may move together (MT)
+            "home_before_test": "if_not_referenced",   # "never" | "if_not_referenced" | "always"
+            # Status names (pc_profile.STATUS) that must be ON before a cable routine, e.g.
+            # ["clamp_on"]. Empty = no fixture check configured (shown in the result evidence).
+            "fixture_checks": {"select": [], "shift": []},
             "poll_interval": 0.1,
             "timeouts": {
-                "echo": 1.5, "accept": 3.0, "stroke": 30.0, "home": 60.0, "meas_start": 8.0,
-                "release": 3.0, "meas_dwell": 1.0, "meas_settle": 0.5, "stroke_min_hold": 1.5,
-                "params": 3.0,
+                "freshness": 1.0, "echo": 1.5, "accept": 3.0, "stroke": 30.0, "home": 60.0,
+                "meas_start": 8.0, "release": 3.0, "meas_dwell": 1.0, "meas_settle": 0.5,
+                "stroke_min_hold": 1.5, "params": 3.0, "params_settle": 0.5, "part": 600.0,
+                "alarm_reset_pulse": None,        # s, from the drive requirements; None = disabled
+                "alarm_reset_check": 3.0,
             },
             "measurement": {
                 "force_source": "serial",          # "serial" (KOMEIN) or "daq"
                 "loadcell": {"select": 1, "shift": 2},
                 "daq_force": {"select": "Loadcell 1", "shift": "Loadcell 2"},
                 "stroke": {"select": "", "shift": ""},   # DAQ sensor name of the LVDT, "" = none
-                "judge": "peak",                   # "peak" | "strokes" | "positions"
-                "strokes_per_test": 1,
+                "calibration": {
+                    "select": {"scale": 1.0, "offset": 0.0, "unit": "", "verified": False},
+                    "shift": {"scale": 1.0, "offset": 0.0, "unit": "", "verified": False},
+                },
+                # Evaluation rules - all must be set, otherwise every result is INCOMPLETE:
+                "judge": "",                       # "peak" | "strokes" | "positions"
+                "force_sign": "",                  # "absolute" | "signed"
+                "limit_bounds": "",                # "inclusive" | "exclusive"
+                "min_samples": 3,                  # valid samples per stroke direction
+                "strokes_per_test": 1,             # PULL+PUSH pairs per cable routine
             },
         },
         # Counters on the right-hand panel; day counts reset when the date changes.
@@ -191,6 +226,13 @@ def migrate(loaded):
             cmds["test_run"] = ""
             notes.append("commands.test_run M00029 removed (belonged to a different PLC program)")
         loaded["settings_version"] = 2
+        version = 2
+    if version < 3:
+        meas = (((loaded.get("test") or {}).get("machine_profile") or {}).get("measurement") or {})
+        if meas.get("judge") == "peak":
+            meas["judge"] = ""
+            notes.append("measurement.judge 'peak' (an earlier default, not a confirmed rule) cleared")
+        loaded["settings_version"] = 3
     if notes:
         loaded["migrated"] = notes
     return loaded

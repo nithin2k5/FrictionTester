@@ -237,9 +237,24 @@ def _pc_result_rows(record, part_uid, source):
         for d, key in (("FWD", "pull"), ("RET", "push")):
             for i, v in enumerate((res.get(key) or [])[:3]):
                 row[f"TR_CH1_{d}_{i + 1}"] = v
-        row["TR_DETAIL"] = json.dumps({"profile": record.get("profile"), "part_id": record.get("part_id"),
-                                       "verdict_basis": record.get("verdict_basis"), "result": res}, default=str)
+        row["TR_DETAIL"] = json.dumps({
+            "profile": record.get("profile"), "part_id": record.get("part_id"), "started": record.get("started"),
+            "verdict_basis": record.get("verdict_basis"), "counted": record.get("counted"),
+            "reasons": record.get("reasons"), "result": res, "snapshot": record.get("snapshot"),
+            "evidence": (record.get("evidence") or {}).get(st["stage"]),
+            "acquisition": (record.get("acquisition") or {}).get(st["stage"])}, default=str)
         rows.append(row)
+    if not rows:                     # aborted before any cable ran: one row keeps the reason
+        rows.append({c: None for c in RESULT_COLUMNS})
+        rows[0].update({"TR_PART_UID": part_uid, "TR_DATETIME": record["time"].replace("T", " "),
+                        "TR_MODEL": record.get("model"), "TR_MODEL_TYPE": record.get("type"),
+                        "TR_PART_NUMBER": record.get("part_number"), "TR_STAGE": "PART",
+                        "TR_LABEL": record.get("label_select") or record.get("label_shift"),
+                        "TR_STAGE_RESULT": record.get("verdict"), "TR_LOT_RESULT": record.get("verdict"),
+                        "TR_LOT_VALUE": record.get("label_select") or record.get("label_shift"),
+                        "TR_SOURCE": source,
+                        "TR_DETAIL": json.dumps({"part_id": record.get("part_id"), "reasons": record.get("reasons"),
+                                                 "snapshot": record.get("snapshot")}, default=str)})
     return rows
 
 
@@ -290,12 +305,20 @@ def result_rows(record, part_uid, source):
 
 
 def insert_test_results(rows):
-    """Insert the rows of one part in a single transaction."""
+    """Insert the rows of one part in a single transaction.
+
+    Idempotent per part: if rows with this TR_PART_UID already exist (a retry
+    after a lost acknowledgement), nothing is inserted and 0 is returned.
+    """
     if not rows:
         return 0
     sql = (f"INSERT INTO {RESULTS_TABLE} ({', '.join(RESULT_COLUMNS)}) "
            f"VALUES ({', '.join(['%s'] * len(RESULT_COLUMNS))})")
     with cursor(commit=True) as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {RESULTS_TABLE} WHERE TR_PART_UID = %s FOR UPDATE",
+                    (rows[0]["TR_PART_UID"],))
+        if cur.fetchone()[0]:
+            return 0
         cur.executemany(sql, [[r.get(c) for c in RESULT_COLUMNS] for r in rows])
         return cur.rowcount
 

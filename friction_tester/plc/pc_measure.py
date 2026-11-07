@@ -10,9 +10,11 @@ The cable assignment, calibration, units and sign are NOT established by the
 PLC program; the defaults follow the Test Console (SELECT = Loadcell 01,
 SHIFT = Loadcell 02) and must be confirmed on the machine.
 
-start() begins a capture on its own thread just before the stroke request is
-written; stop() ends it and returns [(t, load, stroke), ...]. A failed read
-records None for that sample, so missing data reaches the evaluation.
+    calibration:   {"select": {"scale": 1.0, "offset": 0.0, "unit": "", "verified": False}, ...}
+                   load = reading * scale + offset (serial: indicator value; daq: sensor row value)
+start() begins a capture on its own thread before the stroke request is
+written; stop() ends it and returns [(t, load, stroke, raw_load, raw_stroke), ...].
+A failed read records None (invalid) - no other sensor is substituted.
 """
 
 import threading
@@ -51,28 +53,49 @@ class Sampler:
         return None
 
     def _daq_value(self, name):
+        """(value, volts) of a DAQ sensor row, or (None, None)."""
         s = self._sensor(name)
         if not s or self.daq is None or not self.daq.is_open:
-            return None
+            return None, None
         volts = self.daq.read_average().get(s["channel"])
         if volts is None:
-            return None
-        return (volts - float(s.get("offset_v", 0.0))) * float(s.get("scale", 1.0))
+            return None, None
+        return (volts - float(s.get("offset_v", 0.0))) * float(s.get("scale", 1.0)), volts
+
+    def describe(self, axis):
+        """Source, channel, units and calibration status recorded with each result."""
+        m = self.mcfg
+        cal = (m.get("calibration") or {}).get(axis) or {}
+        if m.get("force_source", "serial") == "daq":
+            name = (m.get("daq_force") or {}).get(axis, "")
+            s = self._sensor(name) or {}
+            force = {"source": "NI DAQ", "channel": f"{name} {s.get('channel', '?')}", "unit": s.get("unit", "")}
+        else:
+            force = {"source": "serial loadcell", "channel": f"L{(m.get('loadcell') or {}).get(axis, '?')}",
+                     "unit": cal.get("unit", "")}
+        stroke = (m.get("stroke") or {}).get(axis, "")
+        return {"force": force, "stroke": stroke or None,
+                "calibration": {"scale": cal.get("scale", 1.0), "offset": cal.get("offset", 0.0),
+                                "unit": cal.get("unit", ""), "verified": bool(cal.get("verified"))},
+                "period_s": self.period}
 
     def read_once(self, axis):
         m = self.mcfg
-        load = stroke = None
+        raw_load = stroke = raw_stroke = None
         if m.get("force_source", "serial") == "daq":
-            load = self._daq_value((m.get("daq_force") or {}).get(axis, ""))
+            value, raw_load = self._daq_value((m.get("daq_force") or {}).get(axis, ""))
         else:
+            value = None
             n = int((m.get("loadcell") or {}).get(axis, 0) or 0)
             lc = self.loadcells[n - 1] if 1 <= n <= len(self.loadcells) else None
             if lc is not None and lc.is_open:
-                load = lc.read()[2]
+                _sent, raw_load, value = lc.read()
+        cal = (m.get("calibration") or {}).get(axis) or {}
+        load = None if value is None else value * float(cal.get("scale", 1.0)) + float(cal.get("offset", 0.0))
         name = (m.get("stroke") or {}).get(axis, "")
         if name:
-            stroke = self._daq_value(name)
-        return load, stroke
+            stroke, raw_stroke = self._daq_value(name)
+        return load, stroke, raw_load, raw_stroke
 
     def start(self, axis, kind, test_id, stroke_no):
         cap = Capture(axis, kind, test_id, stroke_no)
@@ -83,11 +106,11 @@ class Sampler:
                 while not cap.stop_event.is_set():
                     t = time.monotonic()
                     try:
-                        load, stroke = self.read_once(axis)
+                        load, stroke, raw_load, raw_stroke = self.read_once(axis)
                     except Exception:
-                        load = stroke = None
+                        load = stroke = raw_load = raw_stroke = None
                         cap.errors += 1
-                    cap.samples.append((t, load, stroke))
+                    cap.samples.append((t, load, stroke, raw_load, raw_stroke))
                     self.latest[axis] = (load, stroke)
                     cap.stop_event.wait(self.period)
             finally:

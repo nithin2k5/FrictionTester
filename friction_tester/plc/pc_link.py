@@ -42,6 +42,18 @@ class PcSnapshot:
         """M00051/52/61/62 when read, else None."""
         return self.internal.get(pp.INTERNAL_COMPLETE[axis].get(op, ""), None)
 
+    def selector(self, axis):
+        """M00105 / M00205 (ON = local branch) when read, else None."""
+        return self.internal.get(pp.SELECTOR[axis])
+
+    def meas_step(self, axis):
+        """Active step of the measurement-start chain (-1 = idle), None if not read."""
+        bits = [self.internal.get(a) for a in pp.MEAS_STEP_BITS[axis]]
+        if any(b is None for b in bits):
+            return None
+        on = [k for k, b in enumerate(bits) if b]
+        return on[0] if on else -1
+
     def axis_idle(self, axis):
         """No PULL/PUSH sequence active and motion permitted (home not running)."""
         return (self.st(axis, "pull_active") is False and self.st(axis, "push_active") is False
@@ -57,6 +69,8 @@ def read_snapshot(backend, internal_enabled=False, now=None):
     internal = {}
     if internal_enabled:
         addrs = [a for axis in pp.AXES for a in pp.INTERNAL_COMPLETE[axis].values()]
+        addrs += list(pp.SELECTOR.values())
+        addrs += [a for axis in pp.AXES for a in pp.MEAS_STEP_BITS[axis]]
         internal = dict(backend.read_bits(addrs))
     return PcSnapshot(time=time.monotonic() if now is None else now,
                       echo=list(words[0:3]), status=list(words[3:6]), param_echo=list(words[7:21]),

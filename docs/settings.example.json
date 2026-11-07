@@ -1,0 +1,263 @@
+{
+  "settings_version": 3,
+  "plc": {
+    "port": "",
+    "baudrate": 9600,
+    "station_id": 1,
+    "bytesize": 8,
+    "parity": "N",
+    "stopbits": 1,
+    "timeout": 1.0,
+    "test_bits": "P0000, P0001, M0000",
+    "reg_address": "D0000",
+    "reg_points": 2
+  },
+  "loadcells": [
+    {
+      "port": "",
+      "baudrate": 9600
+    },
+    {
+      "port": "",
+      "baudrate": 9600
+    }
+  ],
+  "test": {
+    "select": {
+      "model": "",
+      "speed": null,
+      "delay": null,
+      "stroke": null,
+      "positions": [
+        null,
+        null,
+        null
+      ],
+      "load_min": null,
+      "load_max": null,
+      "clamp_count": 0,
+      "front_sensor": "P0000",
+      "rear_sensor": "P0001"
+    },
+    "shift": {
+      "model": "",
+      "speed": null,
+      "delay": null,
+      "stroke": null,
+      "positions": [
+        null,
+        null,
+        null
+      ],
+      "load_min": null,
+      "load_max": null,
+      "clamp_count": 0,
+      "front_sensor": "P0002",
+      "rear_sensor": "P0003"
+    },
+    "commands": {
+      "servo_select": "",
+      "alarm_reset_select": "",
+      "origin_select": "",
+      "servo_shift": "",
+      "alarm_reset_shift": "",
+      "origin_shift": "",
+      "test_run": "",
+      "test_stop": "",
+      "move_origin": "",
+      "start_select": "",
+      "done_select": "",
+      "start_shift": "",
+      "done_shift": ""
+    },
+    "skip_scan": true,
+    "label_rule": {
+      "mode": "contains_part_number",
+      "select": "",
+      "shift": ""
+    },
+    "model_type": "",
+    "part_number": "",
+    "integration": {
+      "mode": "pc_interface",
+      "shared": {
+        "live_start_enabled": false,
+        "poll_interval": 0.25,
+        "start_timeout": 10.0,
+        "mapping": {
+          "verified": false,
+          "areas": {
+            "P": {
+              "table": "coils",
+              "base": 0
+            },
+            "M": {
+              "table": "coils",
+              "base": 0
+            },
+            "D": {
+              "table": "holding_registers",
+              "base": 0
+            }
+          }
+        },
+        "at_cable_selection": "",
+        "mt_one_cycle_tests_both": false,
+        "channel_cable": {
+          "1": "",
+          "2": ""
+        },
+        "direction_role": {
+          "forward": "",
+          "return": ""
+        },
+        "force_scale": 0.0,
+        "force_unit": "",
+        "position_scale": 0.0,
+        "position_unit": ""
+      }
+    },
+    "machine_profile": {
+      "id": "printing_program_old_pc_words",
+      "version": 2,
+      "commissioning": {
+        "program_installed": "unverified",
+        "protocol_mapping": "unverified",
+        "native_m_reads": "unverified",
+        "stop_behavior": "unverified",
+        "sensor_assignment": "unverified",
+        "unit_scaling": "unverified",
+        "fixture_sequence": "unverified",
+        "measurement_rules": "unverified",
+        "mt_concurrency": "unverified"
+      },
+      "mapping": {
+        "verified": false,
+        "areas": {
+          "D": {
+            "table": "holding_registers",
+            "base": 0
+          },
+          "M": {
+            "table": "coils",
+            "base": 0
+          }
+        }
+      },
+      "live_writes_enabled": false,
+      "command_owner_confirmed": false,
+      "internal_bits_enabled": false,
+      "stroke_completion": "internal_flags",
+      "mt_parallel_verified": false,
+      "home_before_test": "if_not_referenced",
+      "fixture_checks": {
+        "select": [],
+        "shift": []
+      },
+      "poll_interval": 0.1,
+      "timeouts": {
+        "freshness": 1.0,
+        "echo": 1.5,
+        "accept": 3.0,
+        "stroke": 30.0,
+        "home": 60.0,
+        "meas_start": 8.0,
+        "release": 3.0,
+        "meas_dwell": 1.0,
+        "meas_settle": 0.5,
+        "stroke_min_hold": 1.5,
+        "params": 3.0,
+        "params_settle": 0.5,
+        "part": 600.0,
+        "alarm_reset_pulse": null,
+        "alarm_reset_check": 3.0
+      },
+      "measurement": {
+        "force_source": "serial",
+        "loadcell": {
+          "select": 1,
+          "shift": 2
+        },
+        "daq_force": {
+          "select": "Loadcell 1",
+          "shift": "Loadcell 2"
+        },
+        "stroke": {
+          "select": "",
+          "shift": ""
+        },
+        "calibration": {
+          "select": {
+            "scale": 1.0,
+            "offset": 0.0,
+            "unit": "",
+            "verified": false
+          },
+          "shift": {
+            "scale": 1.0,
+            "offset": 0.0,
+            "unit": "",
+            "verified": false
+          }
+        },
+        "judge": "",
+        "force_sign": "",
+        "limit_bounds": "",
+        "min_samples": 3,
+        "strokes_per_test": 1
+      }
+    },
+    "counters": {
+      "date": "",
+      "ok_day": 0,
+      "ng_day": 0,
+      "ok_total": 0,
+      "ng_total": 0,
+      "target": 0,
+      "complete": 0,
+      "saved_select": 0,
+      "saved_shift": 0
+    },
+    "save_dir": "data"
+  },
+  "daq": {
+    "device": "",
+    "terminal_config": "Differential",
+    "sample_rate": 1000.0,
+    "samples_per_channel": 100,
+    "sensors": [
+      {
+        "name": "Loadcell 1",
+        "channel": "ai0",
+        "range": "±10 V",
+        "scale": 1.0,
+        "offset_v": 0.0,
+        "unit": "kgf"
+      },
+      {
+        "name": "Loadcell 2",
+        "channel": "ai1",
+        "range": "±10 V",
+        "scale": 1.0,
+        "offset_v": 0.0,
+        "unit": "kgf"
+      },
+      {
+        "name": "LVDT 1",
+        "channel": "ai2",
+        "range": "±10 V",
+        "scale": 1.0,
+        "offset_v": 0.0,
+        "unit": "mm"
+      },
+      {
+        "name": "LVDT 2",
+        "channel": "ai3",
+        "range": "±10 V",
+        "scale": 1.0,
+        "offset_v": 0.0,
+        "unit": "mm"
+      }
+    ]
+  }
+}

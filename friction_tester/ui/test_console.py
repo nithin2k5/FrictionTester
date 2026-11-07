@@ -340,8 +340,9 @@ class CablePanel(tk.Frame):
             present = [v for v in vals if v is not None]
             self.res[f"{d}_mean"].config(text=fmt(sum(present) / len(present)) if present else NO_DATA)
         self.res["max"].config(text=fmt(res.get("max")))
-        ok = res.get("ok")
-        self.judge.config(text="OK" if ok else "NG", fg=theme.PASS if ok else theme.FAIL)
+        verdict = res.get("verdict") or ("OK" if res.get("ok") else "NG")
+        self.judge.config(text=verdict if verdict != "INCOMPLETE" else "INCMP",
+                          fg={"OK": theme.PASS, "NG": theme.FAIL}.get(verdict, theme.BUSY))
         self.last_ok = None              # counted per part by the controller
         problems = res.get("problems") or []
         counts = res.get("sample_counts") or {}
@@ -524,11 +525,22 @@ class TestConsolePage(tk.Frame):
         link = PcLink(backend, self.pc_log, owner_confirmed=bool(mp.get("command_owner_confirmed")),
                       internal_enabled=bool(mp.get("internal_bits_enabled")) and mapping.verified)
         self.sampler = Sampler(self.loadcells, self.daq, self.settings)
-        cfg = {"timeouts": mp.get("timeouts") or {}, "measurement": mp.get("measurement") or {}}
+        cfg = copy.deepcopy(mp)
+        from .. import db
+        from ..result_store import ResultStore
+        self.store = ResultStore(
+            os.path.join(self._result_dir(), "unsaved_results.json"),
+            insert_rows=lambda rows: (db.init_database(), db.insert_test_results(rows))[1],
+            make_rows=lambda rec: db.result_rows(rec, rec["part_id"], "PLC pc interface"))
+        if self.store.pending():
+            self.store.retry()
+        self.after(15000, self._retry_saves)
+        unverified = [k for k, v in (mp.get("commissioning") or {}).items() if v != "verified"]
         self.ctl = PcController(link, cfg, self.pc_log, self.sampler,
                                 interval=float(mp.get("poll_interval", 0.1)), skip_scan=self._skip_scan())
         self.pc_log.log("START", pp.PROFILE_TITLE, version=mp.get("version"),
-                        mapping=mapping.describe(), writes=link.write_blocker() or "enabled")
+                        mapping=mapping.describe(), writes=link.write_blocker() or "enabled",
+                        unverified=",".join(unverified) or "-")
         m = mp.get("measurement") or {}
         for (key, _t, _s), panel in zip(self.SIDES, self.panels):
             if m.get("force_source", "serial") == "serial":
@@ -575,10 +587,45 @@ class TestConsolePage(tk.Frame):
                 n = [k for k, _t, _s in self.SIDES].index(ev[1])
                 self.panels[n].show_pc_result(ev[2], f"Source: {pp.PROFILE_TITLE}")
             elif kind == "part_done":
-                self.record_part(ev[1])
+                self._pc_part_done(ev[1])
+            elif kind == "fault" and ev[1]:
+                self._set_status(f"FAULT latched: {ev[1]} - inspect the machine, then STOP to acknowledge",
+                                 theme.FAIL, 15)
+        while True:
+            try:
+                sev = self.store.events.get_nowait()
+            except _queue.Empty:
+                break
+            if sev[0] == "saved":
+                rec = sev[1]
+                if rec.get("counted"):
+                    self._count_part(rec)
+                self.pc_log.log("SAVED", rec["part_id"], verdict=rec["verdict"], counted=rec.get("counted"))
+                if rec["verdict"] in ("OK", "NG"):
+                    self._set_status(f"Part {rec['verdict']} saved", theme.PASS if rec["verdict"] == "OK"
+                                     else theme.FAIL, 4)
+            else:
+                self.pc_log.log("SAVE-FAIL", sev[1]["part_id"], error=sev[2])
+                self._set_status(f"Part {sev[1]['part_id']} NOT SAVED ({sev[2]}) - retrying; RUN is blocked "
+                                 "until it is saved", theme.FAIL, 15)
         if last is not None:
             self._show_pc_status(last[1], last[2])
         self.after(100, self._drain_pc)
+
+    def _retry_saves(self):
+        if not self._alive:
+            return
+        if self.store.pending():
+            self.store.retry()
+        self.after(15000, self._retry_saves)
+
+    def _pc_part_done(self, record):
+        """A finalized part: one CSV line, then the database (counters follow the confirmed save)."""
+        try:
+            self._append_result_row(record)
+        except Exception as exc:
+            self._set_status(f"Result file could not be written: {exc}", theme.FAIL, 10)
+        self.store.submit(record)
 
     def _show_pc_status(self, snap, summary):
         p = summary["params"]
@@ -592,12 +639,16 @@ class TestConsolePage(tk.Frame):
                 st = lambda n: snap.st(axis, n)
                 flags = [("SV", st("servo_on")), ("ALM-OK", st("alarm_normal")), ("PERMIT", st("permitted")),
                          ("PULL", st("pull_active")), ("PUSH", st("push_active")), ("@START", st("at_meas_start")),
-                         ("@PULL", st("at_pull")), ("CLAMP", st("clamp_on")), ("ERR", st("axis_error"))]
-                on = " ".join(name for name, v in flags if v)
-                parts.append(f"{pp.AXIS_NAME[axis]}: {on or '-'} · product raw {int(bool(st('product_raw')))}")
-            estop = f"E-stop U{int(bool(snap.common('estop_upper')))} L{int(bool(snap.common('estop_lower')))}"
-            self.plc_badge.config(fg=theme.UPDATE if self.ctl.busy() else theme.PASS)
-            self.plc_strip.config(text="   |   ".join(parts) + f"   |   {estop}")
+                         ("@PULL", st("at_pull")), ("CLAMP-ON", st("clamp_on")), ("ERR", st("axis_error"))]
+                parts.append(f"{pp.AXIS_NAME[axis]}: " + (" ".join(n for n, v in flags if v) or "-"))
+            raw = (f"raw P0000F {int(bool(snap.common('p0000f_input')))} P0000D "
+                   f"{int(bool(snap.common('p0000d_input')))} · M0800A {int(bool(snap.common('m0800a_cond')))} "
+                   f"M0800B {int(bool(snap.common('m0800b_cond')))}")
+            fault = f"   |   FAULT: {summary['fault']}" if summary.get("fault") else ""
+            stop = "   |   app cancelled - machine stop NOT confirmed" if summary.get("stop_state") else ""
+            self.plc_badge.config(fg=theme.FAIL if summary.get("fault") else
+                                  (theme.UPDATE if self.ctl.busy() else theme.PASS))
+            self.plc_strip.config(text="   |   ".join(parts) + f"   |   {raw}{fault}{stop}")
         blocker = summary.get("write_blocker")
         self.plc_mode.config(text=(f"params: {p['state'].replace('_', ' ')}"
                                    + (" · writes OFF" if blocker else "")), fg=badge)
@@ -679,6 +730,15 @@ class TestConsolePage(tk.Frame):
 
     def record_part(self, record):
         """One confirmed part: production counters once, and one row in the Saved-to folder."""
+        self._count_part(record)
+        try:
+            self._append_result_row(record)
+        except Exception as exc:
+            self._set_status(f"Part counted, but the result file could not be written: {exc}", theme.FAIL, 10)
+        self._save_result_rows(record)
+
+    def _count_part(self, record):
+        """Production and OK/NG counters for one finished part."""
         self._roll_day()
         c = self.counters
         key = "ok" if record["verdict"] == "OK" else "ng"
@@ -689,11 +749,6 @@ class TestConsolePage(tk.Frame):
             c[f"saved_{cable}"] += 1
         self._show_counters()
         self._save_counters()
-        try:
-            self._append_result_row(record)
-        except Exception as exc:
-            self._set_status(f"Part counted, but the result file could not be written: {exc}", theme.FAIL, 10)
-        self._save_result_rows(record)
 
     def _save_result_rows(self, record):
         """Write the part's rows to TBL_TEST_RESULTS on a worker thread."""
@@ -1072,8 +1127,11 @@ class TestConsolePage(tk.Frame):
         """Momentary command: set the bit, hold 0.3 s, clear it."""
         if self.pc:
             homes = {"move_origin": "all", "origin_select": "select", "origin_shift": "shift"}
+            resets = {"alarm_reset_select": "select", "alarm_reset_shift": "shift"}
             if command in homes:
                 self.ctl.submit("home", homes[command])
+            elif command in resets:
+                self.ctl.submit("alarm_reset", resets[command])
             else:
                 self._set_status(f"{label}: not assigned in this PLC program (plc.pdf) - see the unresolved "
                                  "list in docs/plc_pc_interface.md", theme.BUSY, 6)
@@ -1250,8 +1308,25 @@ class TestConsolePage(tk.Frame):
         if model:
             self.model_entry.insert(0, model)
 
-    def _label_matches_part(self, label):
-        """A scanned label must contain the loaded model's part number (spaces/hyphens ignored)."""
+    def _label_matches_part(self, label, key="select"):
+        """Scanned-label check per test.label_rule:
+        contains_part_number - the label contains the model's part number (spaces/hyphens ignored)
+        regex                - the label matches the pattern set for that field
+        none                 - no format rule defined (accepted, and the status says so)"""
+        import re
+        rule = self.settings["test"].get("label_rule") or {"mode": "contains_part_number"}
+        mode = rule.get("mode", "contains_part_number")
+        if mode == "none":
+            self._set_status("No label format rule defined (test.label_rule) - label accepted unchecked",
+                             theme.BUSY, 4)
+            return True
+        if mode == "regex":
+            pattern = (rule.get(key) or "").strip()
+            if not pattern:
+                self._set_status(f"No label pattern defined for {key.upper()} (test.label_rule.{key})",
+                                 theme.BUSY, 4)
+                return True
+            return re.fullmatch(pattern, label) is not None
         norm = lambda x: "".join(ch for ch in x.upper() if ch.isalnum())
         part = self.settings["test"].get("part_number", "")
         return bool(part) and norm(part) in norm(label)
@@ -1343,6 +1418,11 @@ class TestConsolePage(tk.Frame):
                     e.delete(0, "end")
             return
         if self.pc:
+            if self._flow == "idle" and self.store.pending():
+                self.store.retry()
+                self._set_status(f"RUN blocked: {len(self.store.pending())} finished part(s) not saved yet - "
+                                 "retrying the database", theme.FAIL, 8)
+                return
             if self._flow == "idle":
                 for e in self.scan_entries.values():
                     e.delete(0, "end")
@@ -1409,7 +1489,7 @@ class TestConsolePage(tk.Frame):
         label = self.scan_entries[key].get().strip()
         if not label:
             return
-        if self._flow in ("at_scan_select", "at_scan_shift", "mt_scan") and not self._label_matches_part(label):
+        if self._flow in ("at_scan_select", "at_scan_shift", "mt_scan") and not self._label_matches_part(label, key):
             part = self.settings["test"].get("part_number", "") or "(none set)"
             messagebox.showerror("Wrong label",
                                  f"The scanned label does not match the loaded part.\n\n"

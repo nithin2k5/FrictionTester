@@ -32,16 +32,18 @@ AXIS_NAME = {"shift": "SHIFT", "select": "SELECT"}
 # (word index 0..2 into CMD_WORDS, bit). Pages in brackets.
 COMMANDS = {
     "shift": {
-        "home": (0, 9),         # M07009 [p3 rung 154]: SET M02000 when M0020 = 0, M00120, no err/busy
+        "home": (0, 9),         # M07009 [p3 rung 154]: SET M02000 when M0200 = 0, M00120, no err/busy
         "meas_start": (2, 8),   # M07028 [p14-15]: SET M02040 when M0204 = 0, M00120, M00122
         "pull": (1, 1),         # M07011 [p5-6]:  SET M02010 when M0201 = 0, M00120, M00122
         "push": (1, 0),         # M07010 [p8-9]:  SET M02020 when M0202 = 0, M00120, M00122
+        "alarm_reset": (0, 10), # M0700A [p27]: P00033 = (M00105 AND M0010D) OR (NOT M00105 AND M0700A)
     },
     "select": {
         "home": (0, 13),        # M0700D [p4]
         "meas_start": (2, 9),   # M07029 [p15-16]
         "pull": (1, 3),         # M07013 [p7-8]
         "push": (1, 2),         # M07012 [p10-11]
+        "alarm_reset": (0, 14), # M0700E [p28]: P00037 = (M00205 AND M0020D) OR (NOT M00205 AND M0700E)
     },
 }
 
@@ -63,7 +65,10 @@ STATUS = {
         "at_meas_start": (2, 14, "CurPos = D02018"),
         "clamp_off": (0, 2, "P00002"),
         "clamp_on": (0, 3, "P00003"),
-        "product_raw": (0, 11, "NOT M00025 (= NOT(NOT P0000A AND P00019)) - see UNRESOLVED"),
+        "expansion_home": (0, 0, "P00000"),
+        "expansion_end": (0, 1, "P00001"),
+        "discharge2_home": (0, 4, "P00004"),
+        "discharge2_end": (0, 5, "P00005"),
     },
     "select": {
         "servo_on": (1, 2, "P00014"),
@@ -81,13 +86,42 @@ STATUS = {
         "at_meas_start": (2, 15, "CurPos = D02118"),
         "clamp_off": (0, 8, "P00008"),
         "clamp_on": (0, 9, "P00009"),
-        "product_raw": (0, 10, "NOT M00026 (= NOT(NOT P0000B AND P00018)) - see UNRESOLVED"),
+        "expansion_home": (0, 6, "P00006"),
+        "expansion_end": (0, 7, "P00007"),
     },
 }
+# Neutral names: physical meaning / polarity not verified against wiring.
 COMMON_STATUS = {
-    "meas_start_switch": (0, 12, "P0000E (conditioned)"),
-    "estop_upper": (0, 13, "P0000F"),
-    "estop_lower": (2, 6, "P0000D"),
+    "m0800a_cond": (0, 10, "NOT M00026; M00026 = NOT P0000B AND P00018 [p23-24] - product detection? unverified"),
+    "m0800b_cond": (0, 11, "NOT M00025; M00025 = NOT P0000A AND P00019 [p23-24] - product detection? unverified"),
+    "meas_start_switch": (0, 12, "P0000E conditioned [p24]"),
+    "p0000f_input": (0, 13, "P0000F upper emergency input, ON = permission in the shown logic [p27-28]"),
+    "p0000d_input": (2, 6, "P0000D lower emergency input, ON = permission in the shown logic [p25]"),
+}
+
+# Local/PC selector per axis (touch-operation select): ON = local branch, the PC
+# fixture / alarm-reset branches are inactive [p27-28]. Not exported; readable
+# only through a verified native M mapping.
+SELECTOR = {"shift": "M00105", "select": "M00205"}
+
+# Sequence words (bit k = step k of a BSFT chain) [p3-16]. Only the
+# measurement-start chain is read (when the M mapping is verified): its word is
+# not exported and its step 5 can advance on T0103/T0203 without the target.
+SEQ_WORDS = {
+    "shift": {"home": "M0200", "pull": "M0201", "push": "M0202", "repeat": "M0203", "meas_start": "M0204"},
+    "select": {"home": "M0210", "pull": "M0211", "push": "M0212", "repeat": "M0213", "meas_start": "M0214"},
+}
+MEAS_STEP_BITS = {axis: [f"{SEQ_WORDS[axis]['meas_start']}{k:X}" for k in range(10)] for axis in ("shift", "select")}
+MEAS_RELEASE_STEP = 7          # step 7 waits for the request to be released
+
+# Bits that drive more than one thing - never exposed as a simple control.
+COUPLED_BITS = {
+    "M07008": "SHIFT torque-limit P00031 (with M0700F) AND green lamp P0002D [p27, p29] - not alarm reset",
+    "M0700C": "SELECT torque-limit P00035 (with M0700F) [p28]",
+    "M0700F": "PC manual/automatic branch: servo-enable paths, torque limits, D00490 (+100 PULL target) [p20, p27-28]",
+    "M07007": "SHIFT servo enable in the manual PC branch only (M0700F ON) [p27]",
+    "M0700B": "SELECT servo enable in the manual PC branch only (M0700F ON) [p28]",
+    "M07006": "SET buzzer P0002A; reset by NG box P0001A [p29]",
 }
 
 # Internal completion bits (set at step 6, reset at steps 1 and 9 of the
@@ -144,7 +178,8 @@ FIXTURE_COMMANDS = {
     "select_clamp": (2, 1, "P0002F"),
 }
 
-# Request bits the app must never leave set by accident (motion requests).
+# Request bits the app must never leave set by accident (motion requests and
+# alarm reset).
 MOTION_BITS = {(axis, op): COMMANDS[axis][op] for axis in AXES for op in COMMANDS[axis]}
 
 
@@ -166,29 +201,28 @@ def command_name(axis, op):
 
 
 UNRESOLVED = [
-    "Modbus mapping of the D area (and M area, for M00051/52/61/62): table, offset and word order of "
-    "the XGB Cnet port. Live writes stay off until verified.",
-    "Command-word ownership: no other application may write D04100-D04102 while this app runs.",
-    "M0800A/M0800B ('product detection'): the ladder drives them from NOT M00026 / NOT M00025, and "
-    "M00025/M00026 = NOT P0000A AND P00019 / NOT P0000B AND P00018 (p23) are also SELECT-cycle "
-    "PULL/PUSH requests (p7, p10, p14). P00018/P00019 are unlabelled. Shown raw only.",
-    "Home / PULL / PUSH sequences have no PLC timeout (T0100-T0102 unused); the app times out but "
-    "cannot stop the axis - a stuck sequence must be cleared at the machine.",
-    "Measurement-start positioning ends after 5 s (T0103/T0203) even if the position was not reached; "
-    "its sequence word M0204/M0214 is not exported, so the app checks the position bit itself.",
+    "Program identity: confirm PRINTING PROGRAM OLD.xgwx is the program installed on the machine.",
+    "Communication: PLC model, protocol, station, serial settings and the Modbus mapping of the D area "
+    "(table, offset, register width, word order). Live writes stay off until verified.",
+    "Native M reads (M00051/52/61/62, selectors M00105/M00205, measurement-start steps M0204x/M0214x): "
+    "needed for PULL/PUSH completion and verified measurement-start acceptance.",
+    "Command-word ownership: no other program may write D04100-D04102 while this app runs.",
+    "Stop: no PC stop command and no verified abort procedure in this program.",
+    "M0800A/M0800B: conditioned, inverted signals (NOT M00026 / NOT M00025, from P0000A/P0000B and "
+    "unlabelled P00018/P00019); M00025/M00026 are also SELECT-cycle PULL/PUSH requests [p7, p10, p14, p23]. "
+    "Physical assignment and presence semantics unverified - diagnostic only.",
+    "Emergency inputs P0000F/P0000D: polarity and wiring unverified (shown raw).",
+    "Home / PULL / PUSH sequences have no PLC timeout (T0100-T0102 unused); a stuck sequence must be "
+    "cleared at the machine. Timer units (presets 1, 5, 10, 50) depend on timer configuration.",
     "Units: speeds/travel/limits are scaled x100 and measurement start x10 into positioning counts; "
-    "counts per mm and speed units are machine calibration (not in the program).",
-    "D00490 (+100 counts on the PULL target while M0700F is OFF) - meaning of M0700F (D04100 bit 15).",
-    "M07008 drives both lamp P0002D (p29) and, with M0700F, P00031 (p27); M0700A/M0700E appear to "
-    "be alarm reset - not assigned to buttons.",
-    "Servo ON from the PC (M07007/M0700B with M0700F, p27-28) - not used.",
-    "Overall machine stop: no PC stop command exists in this program.",
-    "Printing P00038 is triggered by M07000->M07002 / M07003->M07004 sequences (p32-33): fixture "
-    "solenoid commands are therefore not written by the app.",
-    "Fixture sequence, clamp polarity and the SHIFT clamp output being gated by the SELECT select "
-    "bit M00205 (p28) - confirm before automatic clamping.",
-    "Force source, loadcell-to-cable assignment, stroke source (LVDT), calibration and whether "
-    "PULL1-3/PUSH1-3 are positions or repeated strokes.",
-    "Model fields without a PLC transfer address: delay time, positions 1-3, LOAD limits (used by "
-    "the app's own judgement only).",
+    "counts per mm and speed units are machine calibration.",
+    "Alarm reset: required pulse length (drive requirement) and whether one pulse clears each fault class.",
+    "M0700F, M07007, M0700B, M07008, M0700C: coupled mode/servo/torque-limit/lamp outputs - not written.",
+    "Fixture order, sensor confirmations and clamp polarity; both clamp PC branches use M00205 [p28].",
+    "Printing P00038 is triggered by M07000->M07002 / M07003->M07004 [p32-33]; fixture bits not written.",
+    "MT: simultaneous SHIFT/SELECT motion (clearance, fixtures, drives, acquisition) not verified.",
+    "Measurement: force source per cable, stroke/LVDT source and alignment, calibration, sign, "
+    "sampling windows, limits rule, positions vs repeated strokes.",
+    "K04200/K04300 (busy), K0422/K0432 (positions), K04204/K04304 (origin) - native access/width not verified.",
+    "D04006 (copy of M0850): no measurement meaning established.",
 ]

@@ -12,14 +12,19 @@ mapping, allow_writes) and reproduces, per axis:
 * measurement start giving up after 5 s (T0103)
 * M00051/52/61/62 set at step 6, reset at steps 1 and 9
 
+* selectors M00105/M00205 (local[axis]) and alarm reset M0700A/M0700E -> P00033/
+  P00037 only while the selector is OFF
+* measurement-start step bits M0204k / M0214k (bit k = step k, as BSFT)
+
 Faults: connected=False (reads/writes raise), fail_next_write, stuck[axis]
-(the axis never reaches its target), other_writer (changes command words).
+(the axis never reaches its target), ignore[axis] (requests echoed, never
+accepted), alarm on an axis (alarm_normal False; clearable or not).
 """
 
 ORIGIN = 1_000_000
 AXES = ("shift", "select")
-CMD = {"shift": {"home": (0, 9), "meas_start": (2, 8), "pull": (1, 1), "push": (1, 0)},
-       "select": {"home": (0, 13), "meas_start": (2, 9), "pull": (1, 3), "push": (1, 2)}}
+CMD = {"shift": {"home": (0, 9), "meas_start": (2, 8), "pull": (1, 1), "push": (1, 0), "alarm_reset": (0, 10)},
+       "select": {"home": (0, 13), "meas_start": (2, 9), "pull": (1, 3), "push": (1, 2), "alarm_reset": (0, 14)}}
 STATUS = {
     "shift": {"servo_on": (0, 14), "pos_complete": (0, 15), "origin_complete": (1, 0), "alarm_normal": (1, 1),
               "pull_active": (1, 6), "push_active": (1, 7), "permitted": (1, 10), "axis_error": (2, 0),
@@ -83,6 +88,9 @@ class PcLadderSim:
         self.connected = True
         self.fail_next_write = False
         self.stuck = {a: False for a in AXES}
+        self.ignore = {a: False for a in AXES}
+        self.local = {a: False for a in AXES}
+        self.alarm_clearable = {a: True for a in AXES}
         self.writes = []                     # (time, address, values)
         self.requests_seen = {a: {k: 0 for k in CMD[a]} for a in AXES}   # rising edges of request bits
         self.starts = {a: {k: 0 for k in ("home", "pull", "push", "meas")} for a in AXES}  # sequences started
@@ -117,11 +125,17 @@ class PcLadderSim:
     def read_bits(self, addresses):
         self._check()
         out = {}
+        sel = {"M00105": "shift", "M00205": "select"}
+        meas = {"shift": "M0204", "select": "M0214"}
         for a in addresses:
             for axis in AXES:
                 for kind, name in COMPLETE[axis].items():
                     if name == a:
                         out[a] = self.axes[axis].complete[kind]
+                if a.startswith(meas[axis]) and len(a) == 6:
+                    out[a] = self.axes[axis].seq["meas"].step == int(a[5], 16)
+            if a in sel:
+                out[a] = self.local[sel[a]]
         return out
 
     # ------------------------------------------------------------ ladder
@@ -163,6 +177,11 @@ class PcLadderSim:
                 if r and not self._last_req[axis][kind]:
                     self.requests_seen[axis][kind] += 1
                 self._last_req[axis][kind] = r
+            reset_bit = 10 if axis == "shift" else 14
+            if (self.D[4100] >> reset_bit) & 1 and not self.local[axis] and self.alarm_clearable[axis]:
+                a.alarm_normal = True                       # P00033 / P00037 pulse
+            if self.ignore[axis]:
+                continue
             self._home(axis, a, dt)
             self._stroke(axis, a, "pull", a.pull_target, dt)
             self._stroke(axis, a, "push", a.meas_target, dt)

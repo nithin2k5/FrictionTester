@@ -27,33 +27,38 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
 
 ## PLC profile (this machine): PRINTING PROGRAM OLD
 
-`test.integration.mode = "pc_interface"` (the default) drives this machine's XG5000 program
-(`plc.pdf`, *PRINTING PROGRAM OLD*) through its PC word interface: commands D04100–D04102, echoes
-D04000–D04002, status D04003–D04005, model parameters D04200–D04213 (echo D04007–D04020). Each cable
-test is: measurement-start positioning → PULL → PUSH (force sampled during each stroke from the
-serial loadcells or the NI DAQ) → the app's OK/NG judgement against the model's LOAD limits.
-The address map, handshakes, commissioning table and the unresolved machine items are in
-[docs/plc_pc_interface.md](docs/plc_pc_interface.md).
+`test.integration.mode = "pc_interface"` (the default) drives the XG5000 program *PRINTING PROGRAM
+OLD.xgwx* (`plc.pdf`) through its PC word interface: commands D04100–D04102, echoes D04000–D04002,
+status D04003–D04005, parameters D04200–D04213 (echo D04007–D04020). Address map with page
+references, handshakes, commissioning settings and the unresolved machine items:
+[docs/plc_pc_interface.md](docs/plc_pc_interface.md); all settings with defaults:
+[docs/settings.example.json](docs/settings.example.json).
 
-**Nothing is written to the PLC** until all three are set in `settings.json` → `test.machine_profile`:
-`mapping.verified` (D-area Modbus mapping checked), `live_writes_enabled`, and
-`command_owner_confirmed` (no other program writes D04100–D04102). Until then the Test Console
-monitors the status words and shows "params: not confirmed · writes OFF".
+**Nothing is written to the PLC** until `test.machine_profile.mapping.verified`, `live_writes_enabled`
+and `command_owner_confirmed` are all true. PULL/PUSH completion needs native M reads
+(`internal_bits_enabled`) unless `stroke_completion = "position_fallback"` is chosen after validation;
+MT needs `mt_parallel_verified`; results stay INCOMPLETE until `measurement.judge`, `force_sign` and
+`limit_bounds` are set. Until then the Test Console monitors and explains what is missing.
 
-- **Model parameters**: Model Settings → *PLC Parameters* (7 raw words per cable). Model Change sends
-  them when both axes are idle; RUN is allowed only after the PLC echoes the full set back.
-- **RUN / scans**: AT = scan SELECT → SELECT test → scan SHIFT → SHIFT test → one part; MT = one scan →
-  both cables together → one part (`test.skip_scan` still starts tests without scanning).
-- **STOP** releases the app's requests. This PLC program has **no PC stop command**: a stroke that has
-  started finishes by itself — use the machine's emergency stop to stop motion.
-- **ORIGIN / Move Origin** run the home handshake (both axes / one axis). Servo and alarm-reset
-  buttons are not assigned in this program.
-- A machine-operation failure leaves the part **incomplete** (not counted or saved); missing or
-  out-of-limit force values make the cable **NG**. Each finished part is counted and saved once.
-- Log: `<Saved to>/plc_events_YYYYMMDD.log` (requests, echoes, state changes, timeouts, saves).
+- **Cable routine**: fixture checks (configurable) → home if not referenced → measurement-start
+  positioning → PULL / PUSH with force acquisition → evaluation.
+- **AT**: RUN → SELECT label → SELECT routine → SHIFT label → SHIFT routine → one part. **MT**: one label →
+  both routines together → one part.
+- **Model parameters**: Model Settings → *PLC Parameters*; sent when both axes are idle, confirmed by
+  readback, frozen for the active part.
+- **STOP** cancels the application sequence and clears its requests; the screen says *machine stop NOT
+  confirmed* — this program has no PC stop command. Use the machine's emergency stop.
+- **Faults** (timeouts, disconnects, drive faults) latch: RUN is refused until the machine is
+  inspected and STOP acknowledges the fault.
+- **ORIGIN / Move Origin** run the home handshake; **ALARM RESET** sends one pulse of
+  `timeouts.alarm_reset_pulse` (disabled until set) through the PLC's local/PC arbitration.
+- **Results**: OK / NG are counted; INCOMPLETE / ABORTED are saved with reasons and not counted. Parts are
+  saved idempotently with a backlog file; counters change on the confirmed save; RUN waits while a
+  part is unsaved.
+- **Labels**: `test.label_rule` = `contains_part_number` (default), `regex` per field, or `none`.
+- Log: `<Saved to>/plc_events_YYYYMMDD.log`.
 
-Settings saved by an earlier version are migrated on load (kept, with the mode switched to
-`pc_interface` and the old program's M00029 run address removed; see `"migrated"` in the settings).
+Settings from earlier versions are migrated on load (kept; changes listed under `"migrated"`).
 
 ### Other ladder (not this machine): shared cycle
 

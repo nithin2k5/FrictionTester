@@ -1,161 +1,260 @@
 # PLC profile: PRINTING PROGRAM OLD (PC word interface)
 
-Source: XG5000 printout `plc.pdf`, file `PRINTING PROGRAM OLD.xgwx`, 33 pages, printed 2026-11-06.
-This is **this machine's** program. The earlier "NEW NLF MC KOREA" ladder (M00029 start, D05010 step,
-M0000C/M0000D verdict; `docs/plc_shared_cycle.md`) is a different program and is not used here.
+Source: the supplied 33-page printout headed **PLC_INFAC**, footer **PRINTING PROGRAM OLD.xgwx**
+(`plc.pdf`, printed 2026-11-06). **Confirm this is the program installed on the machine before
+commissioning.** Its addresses are not mixed with the older "NEW NLF MC KOREA" / PAGE 1.pdf program
+(`docs/plc_shared_cycle.md`, mode `shared_cycle`).
 
-Code: `friction_tester/plc/pc_profile.py` (address map), `pc_link.py` (reads, single command-word
-owner, parameter transfer), `axis_ops.py` (handshakes), `pc_flow.py` (controller, AT/MT flow,
-evaluation), `pc_measure.py` (acquisition), `event_log.py`. Mode: `test.integration.mode = "pc_interface"`;
-settings: `test.machine_profile` (version 1).
+Addresses below are native XG5000 device addresses — not connector pins and not verified Modbus
+offsets. Bit numbers are zero-based (M0700A = bit 10 of M0700). Several Korean comments in the
+printout are damaged by character encoding; meanings below come from the logic, and uncertain
+comments are marked as such. SH = SHIFT axis (X), SL = SELECT axis (Y).
 
-SH = SHIFT cable (X axis), SL = SELECT cable (Y axis). Bit n is zero-based (D04101 bit 3 = M07013).
+Code: `friction_tester/plc/pc_profile.py` (map), `pc_link.py` (transport, single command-word owner,
+parameters), `axis_ops.py` (handshakes), `pc_flow.py` (cable routines, AT/MT coordinator, evaluation,
+faults), `pc_measure.py` (acquisition), `event_log.py`, `friction_tester/result_store.py` (saving).
+Mode `test.integration.mode = "pc_interface"`; settings `test.machine_profile` (profile version 2,
+settings version 3). Example: [settings.example.json](settings.example.json).
 
-## Interface (pages 29–32, all every scan)
+## Status legend
 
-| Direction | Words | Ladder |
-|---|---|---|
-| PC → PLC commands | D04100, D04101, D04102 | `MOV D0410x M070x` (p29) |
-| Command echo | D04000, D04001, D04002 | `MOV M070x D0400x` (p30) |
-| Status | D04003, D04004, D04005 | `MOV M080x D0400x+3` (p31) |
-| Parameters | D04200–D04213 | `MOV D042xx M07yy` (p30), then `MOV M07yy D020xx` + `MOV 0` upper word (p25–27) |
-| Parameter echo | D04007–D04020 | `MOV M0750..M0763 D04007..D04020` (p32) |
-| (unused) | D04006 ← M0850 | p31, purpose not stated |
-
-The app reads D04000–D04020 in one request and writes only D04100–D04102 and D04200–D04213.
-
-## Motion commands
-
-| Action | SHIFT | SELECT | Sequence word | Start condition (as printed) |
-|---|---|---|---|---|
-| Home | D04100.9 / M07009 | D04100.13 / M0700D | M0020 / M0210 | request AND word = 0 AND M00120 AND NOT axis error AND NOT busy (p3–4) |
-| Measurement start | D04102.8 / M07028 | D04102.9 / M07029 | M0204 / M0214 | request AND word = 0 AND M00120 AND M00122 (p14–16) |
-| PULL | D04101.1 / M07011 | D04101.3 / M07013 | M0201 / M0211 | (local M0010A OR M00125 OR request) AND word = 0 AND M00120 AND M00122 (p5–8) |
-| PUSH | D04101.0 / M07010 | D04101.2 / M07012 | M0202 / M0212 | (local M0010B OR M00126 OR request) AND word = 0 AND M00120 AND M00122 (p8–11) |
-
-M00120 = servo ON AND alarm-normal (p3). M00122 = home, PULL and PUSH words all 0 AND M00121
-(no axis error, origin determined, not busy, origin complete).
-
-### Sequences and the handshake the app uses
-
-**PULL / PUSH** (steps M0201x, BSFT): 0 → 1 (reset M00051) → 2 (0.2 s, DMOV target → D01000)
-→ 3 (1.0 s) → 4 → 5 (NOT busy AND CurPos = target, **no timeout**) → 6 (0.1 s, **SET M00051**)
-→ 7 (**waits until every PULL request is released**) → 9 (word = 0, reset M00051). PULL target
-D02004, PUSH target D02018 (= measurement start).
-
-App: precheck (servo, alarm-normal, no error, no active sequence, permitted, **target bit OFF**,
-completion bit OFF) → set the request → echo seen → "active" (M08016…) ON → completion → release
-→ "active" OFF. Completion = M00051/52/61/62 when the M-area mapping is verified and enabled;
-otherwise target bit + positioning complete while active **and** the request held ≥ 1.5 s after
-acceptance (step timers 0.2 + 1.0 + 0.1 + 0.1 s), because the axis can arrive during step 3.
-
-**Home** (M0020x): 0 (0.1 s) → 1 (0.1 s) → 2 (0.5 s, home output P00032 / P00036) → 3 (origin
-complete P00012) → 5 (1.0 s, origin determined, PRS D02000) → 8 (word = 0). Because step 0 is set
-by request AND word = 0, a request still ON at the end would home again. App: request until
-"motion permitted" (M0801A/B) drops, release at once, done on permitted ON + origin complete.
-
-**Measurement start** (M0204x): step 5 advances on CurPos = D02018 **or after T0103 = 5 s**; step 7
-waits for release. The word is not exported and not part of M00122. App: request, done when the
-measurement-start bit (M0802E/F) and positioning complete are ON after ≥ 1.0 s, release, settle 0.5 s;
-fails if the position is not reached in 8 s.
-
-Disconnect during any operation: the operation fails as not confirmed; its request is released
-once the link is back and is **never re-sent**. Request bits found ON at connection (earlier session
-or another writer) are reported and block testing until STOP releases them.
-
-## Status (D04003–D04005)
-
-| Signal | SHIFT | SELECT | From |
-|---|---|---|---|
-| Servo ON | D04003.14 / M0800E | D04004.2 / M08012 | P00010 / P00014 |
-| Positioning complete | D04003.15 / M0800F | D04004.3 / M08013 | P00011 / P00015 |
-| Origin complete | D04004.0 / M08010 | D04004.4 / M08014 | P00012 / P00016 |
-| Alarm-normal | D04004.1 / M08011 | D04004.5 / M08015 | P00013 / P00017 (NO contact in M00120 → ON = no alarm) |
-| PULL active | D04004.6 / M08016 | D04004.8 / M08018 | M00127 = M0201 ≠ 0 / M00227 |
-| PUSH active | D04004.7 / M08017 | D04004.9 / M08019 | M00128 = M0202 ≠ 0 / M00228 |
-| Motion permitted | D04004.10 / M0801A | D04004.11 / M0801B | M00120 AND M00122 |
-| Soft limits | D04004.12, .13 | D04004.14, .15 | M00123/124 (CurPos ≥ D02014 / ≤ D02016) |
-| PLC axis error | D04005.0 / M08020 | D04005.1 / M08021 | K04201 / K04301 |
-| At PULL target | D04005.2 / M08022 | D04005.4 / M08024 | CurPos = D02004 / D02104 |
-| At PUSH / start target | D04005.3 / M08023 | D04005.5 / M08025 | CurPos = D02018 / D02118 |
-| At measurement start | D04005.14 / M0802E | D04005.15 / M0802F | CurPos = D02018 / D02118 (same compare) |
-| Clamp OFF / ON | D04003.2 / .3 | D04003.8 / .9 | P00002/3, P00008/9 |
-| "Product" (raw) | D04003.11 / M0800B | D04003.10 / M0800A | NOT M00025 / NOT M00026 — see unresolved |
-| Start switch, E-stops | D04003.12 (P0000E), D04003.13 (P0000F upper), D04005.6 (P0000D lower) | | |
-
-## Parameters (D04200–D04213)
-
-| Word | SHIFT → | Word | SELECT → | Scaling (p20–22) |
-|---|---|---|---|---|
-| D04200 | D02022 low jog speed | D04206 | D02122 | ×100 → K0481 / K0521 |
-| D04201 | D02024 high jog speed | D04207 | D02124 | ×100 → K0479 / K0519 |
-| D04202 | D02026 operating speed | D04208 | D02126 | ×100 → D02002 / D02102 → D01002 / D01102 |
-| D04203 | D02028 PULL travel | D04209 | D02128 | target = start + ×100 + D00490 |
-| D04204 | D02030 left limit | D04210 | D02130 | D02000 + ×100 → D02014 |
-| D04205 | D02032 right limit | D04211 | D02132 | D02000 − ×100 → D02016 |
-| D04212 | D02034 measurement start | D04213 | D02134 | D02000 − **MUL** ×10 → D02018 (16-bit signed: 0..32767) |
-
-D02000 / D02100 = 1 000 000 (origin value, p1; PRS after homing). D00490 = 100 while M0700F is OFF,
-0 while ON (p20). The transfer runs every scan, so a new value changes the PLC's targets at once:
-the app writes parameters only while both axes are idle and allows a test only after the full set
-reads back equal in D04007–D04020. A failed write, a mismatch or a disconnect leaves the model
-"Parameters not confirmed". Values: whole numbers 0..65535 (measurement start 0..32767). Stored per
-model in `TBL_MODEL_MASTER` columns `MM_<SELECT|SHIFT>_PLC_*` (Model Settings → PLC Parameters).
-
-## Unresolved — needs the machine / original project
-
-1. **Modbus mapping** of the XGB Cnet port for the D area (and the M area for M00051/52/61/62):
-   table, offset, word order. Default = holding register n, unverified; no writes until verified.
-2. **Command-word ownership**: confirm no other program writes D04100–D04102.
-3. **M0800A / M0800B** ("product detection" in the brief) come from NOT M00026 / NOT M00025; on p23
-   M00025 = NOT P0000A AND P00019 and M00026 = NOT P0000B AND P00018 (P00018/19 unlabelled), and the
-   same M00025/M00026 are SELECT-cycle PULL/PUSH requests (p7, p10, p14). If P00019 is ON with P0000A
-   OFF, SELECT PULL could start on its own and could not pass its release step. Shown raw only.
-4. **No PLC timeout** for home / PULL / PUSH (T0100–T0102 are unused); the app times out but cannot
-   stop an axis. Measurement start ends after 5 s even off position.
-5. **Units**: counts per mm and speed units of the positioning module (×100 / ×10 scaling only).
-6. **M0700F** (D04100.15): changes the PULL target by 100 counts and the servo-ON / P00031 logic. Not written.
-7. **M07008** drives lamp P0002D (p29) and, with M0700F, P00031 (p27); M0700A / M0700E look like alarm
-   reset (P00033 / P00037). No button is assigned.
-8. **Servo ON** from the PC (M07007 / M0700B with M0700F) — not used.
-9. **No overall stop command** in this program: STOP releases the app's requests; a stroke that has
-   started finishes by itself. Use the machine's emergency stop to stop motion.
-10. **Printing P00038** is triggered by M07000→M07002 and M07003→M07004 (p32–33), so the fixture
-    solenoid bits are not written by the app.
-11. **Fixture**: clamp polarity and sequence; the SHIFT clamp output P0002E is gated by NOT M00205
-    (the SELECT touch-select bit) as printed. No automatic clamping.
-12. **Measurement**: loadcell ↔ cable (default SELECT = L1, SHIFT = L2), stroke/LVDT source, calibration,
-    zero, sign, and whether PULL1–3 / PUSH1–3 are positions or repeated strokes (`measurement.judge`).
-13. **Model fields with no PLC address**: delay time, positions 1–3, LOAD min/max (app judgement only).
-14. Ladder quirks as printed: SH PUSH release step checks M0010A (local PULL), not M0010B (p9); the SH
-    repeat cycle waits on M00061 (an SL bit, p12).
-
-## Commissioning
-
-| Item | Setting (`test.machine_profile`) |
+| Tag | Meaning |
 |---|---|
-| Verify D-area mapping (read D04003–D04005 in the app vs. XG5000 monitor; write one parameter word and read its echo) | `mapping.areas.D`, then `mapping.verified: true` |
-| Allow PC writes | `live_writes_enabled: true` |
-| Only this app writes D04100–D04102 | `command_owner_confirmed: true` |
-| M-area mapping verified (M00051 etc.) | `mapping.areas.M`, `internal_bits_enabled: true` |
-| Loadcell / DAQ per cable, LVDT, judgement | `measurement.*` |
-| Timeouts (s) | `timeouts.*` |
+| **Implemented** | in the application code |
+| **Simulated** | exercised against `tests/pc_ladder_sim.py` by `tests/test_pc_interface.py` |
+| **Hardware-verified** | checked on the machine — **nothing is in this state yet** |
+| **Unresolved** | needs a machine/wiring/project fact; kept configurable and off by default |
 
-Every request, echo, state change, timeout, parameter transfer and saved part is logged with a
-timestamp in `<Saved to>/plc_events_YYYYMMDD.log`.
+## 1. Transport (pages 29–32) — implemented, simulated
 
-## What was verified
+| PC writes | PLC word | Echo | Page |
+|---|---|---|---|
+| D04100 | M0700 | D04000 | 29 (`MOV D04100 M0700`), 30 (`MOV M0700 D04000`) |
+| D04101 | M0701 | D04001 | 29, 30 |
+| D04102 | M0702 | D04002 | 29, 30 |
 
-In simulation (`tests/pc_ladder_sim.py`, a scan-level model of the sequences above, and
-`tests/test_pc_interface.py`): parameter readback and target scaling; validation; failed write and
-disconnect during transfer; writes blocked without verification/ownership; AT and MT parts;
-both axes sharing D04101 without losing bits; requests held through step 6 and released at step 7;
-home released before its sequence ends (homes once); internal completion bits; skip-scan AT; stale
-position / completion bits refused; stale request bits reported, not re-sent, released by STOP;
-disconnect during a stroke (part incomplete, request released after reconnect, not re-sent); STOP
-followed by the PLC finishing the stroke (ignored); missing force samples (NG); one axis failing
-while the other finishes (part incomplete); measurement start giving up after 5 s; exactly one
-result per part. The Test Console was also driven end-to-end against the simulator.
+Status: M0800 → D04003, M0801 → D04004, M0802 → D04005 (p31). M0850 → D04006 (p31): **no measurement
+meaning established — not used.** The app reads D04000–D04020 in one request.
 
-**Not verified** (needs the real machine): every item in the unresolved list, the real Modbus
-addressing and timing, the loadcell/LVDT readings during strokes, and the fixture.
+`PcLink` is the only writer of D04100–D04102: one lock, masked bit updates, only the changed word is
+written, so SHIFT and SELECT requests in a shared word never overwrite each other. On (re)connection
+the current words are adopted; request bits found ON are reported, never re-sent, and released only
+by the operator (STOP). Nothing writes zero to all words at start or stop. Writes require
+`mapping.verified`, `live_writes_enabled` and `command_owner_confirmed`. An echo proves only the
+copy; acceptance and completion are checked separately.
+
+## 2. Commands
+
+| Function | SHIFT | SELECT | Pages |
+|---|---|---|---|
+| Home | D04100.9 / M07009 | D04100.13 / M0700D | 3–5 |
+| Measurement start | D04102.8 / M07028 | D04102.9 / M07029 | 14–16 |
+| PULL (tension) | D04101.1 / M07011 | D04101.3 / M07013 | 5–8 |
+| PUSH (compression) | D04101.0 / M07010 | D04101.2 / M07012 | 8–11 |
+| Alarm reset | D04100.10 / M0700A → P00033 | D04100.14 / M0700E → P00037 | 27–28 |
+
+Alarm reset (p27–28): `P00033 = (M00105 AND M0010D) OR (NOT M00105 AND M0700A)`, `P00037 = (M00205 AND
+M0020D) OR (NOT M00205 AND M0700E)` — the PC branch works only while the local/PC selector M00105 /
+M00205 is OFF. App: one pulse of `timeouts.alarm_reset_pulse` seconds per operator press (**None by
+default → disabled until the drive requirement is known**); refused if the selector is read ON or the
+alarm-normal input is already ON; if alarm-normal does not return it is reported and **not retried**.
+— implemented, simulated.
+
+**M07008 is not alarm reset**: it drives SHIFT torque-limit P00031 (with M0700F, p27) and green lamp
+P0002D (p29). M0700C drives SELECT torque-limit P00035 (with M0700F, p28). M0700F selects the manual/
+automatic PC branches (servo enable via M07007 / M0700B only in the manual branch; with M0700F OFF the
+automatic branch keeps servo enable asserted; D00490 = 100 while OFF). None of these is written.
+
+### Handshakes (axis_ops.py)
+
+**PULL / PUSH** — sequence word M0201 / M0202 (SL M0211 / M0212), steps as BSFT (p5–11): 0 SET by
+request AND word = 0 AND M00120 AND M00122 · 1 reset completion · 2 DMOV target → D01000 (T 2) ·
+3 (T 10) · 5 NOT busy AND CurPos = target (**no timeout**) · 6 **SET M00051 / M00052** (SL M00061 /
+M00062) · 7 **waits for the request OFF** · 9 word = 0, completion reset. Exported active M08016 /
+M08017 (SL M08018 / M08019) stays ON through step 7.
+
+App: precheck (fresh data, servo, alarm-normal, no error, no active sequence, permission ON, no
+stale completion flag, target compare OFF) → arm acquisition → request → acceptance = echo AND active
+ON AND permission OFF (fresh sequence) → completion = the flag of this execution (window closes here)
+→ clear the request → wait active OFF, flag OFF, permission ON before the next stroke.
+Completion source `stroke_completion`:
+* `internal_flags` (default) needs **native M reads** (`internal_bits_enabled`); if they are not
+  readable the routine stops with "completion flag not readable" — no status bit is substituted.
+* `position_fallback` (opt-in, validate on the machine first): target compare + in-position while
+  active, request held ≥ `stroke_min_hold` (ladder step timers; timer units unverified).
+
+**Home** — word **M0200** / M0210 (p3–5): 0 → 1 → 2 (home output P00032 / P00036) → 3 (origin P00012 /
+P00016) → 5 (origin determined, PRS D02000 / D02100 = 1 000 000 — home is **not** coordinate 0) → 8
+word = 0. Step 0 is SET by request AND word = 0, so a held request re-homes after the reset.
+App: request until permission (M0801A / M0801B, which requires M0200 = 0) drops → release at once →
+done only when permission is restored, origin feedback ON and no axis error. Origin feedback alone
+(arrives at step 3) is not completion. — implemented, simulated (origin feedback before the end).
+
+**Measurement start** — word M0204 / M0214, targets D02018 / D02118 (p14–16): step 5 advances on
+`CurPos = target` **OR T0103 / T0203**; step 7 waits for release. The word is not exported and not in
+M00122 (permission does not drop). With native reads of the step bits M02040–M02049 / M02140–M02149:
+acceptance = chain active; at step 7 the start compare (M0802E / M0802F) and in-position must be ON,
+otherwise **the timeout branch was taken → failure**; then release and wait for the chain to reset.
+Without them: request only if the compare is OFF; accept a fresh OFF→ON + in-position after
+`meas_dwell`; an axis already on target is recorded as such and no motion is requested.
+M08023 = M0802E and M08025 = M0802F are the **same compares** and never count as two pieces of evidence.
+— implemented, simulated (timeout branch without arrival).
+
+Per axis, one operation at a time. A lost connection fails the operation as not confirmed; its
+request is released after reconnection and never replayed.
+
+## 3. Status (pages 24–25) — implemented (display + handshakes)
+
+| Meaning | SHIFT | SELECT |
+|---|---|---|
+| Servo ON feedback | D04003.14 / M0800E / P00010 | D04004.2 / M08012 / P00014 |
+| Drive in-position | D04003.15 / M0800F / P00011 | D04004.3 / M08013 / P00015 |
+| Drive origin feedback | D04004.0 / M08010 / P00012 | D04004.4 / M08014 / P00016 |
+| Drive alarm-normal input (ON = no alarm, permission in M00120) | D04004.1 / M08011 / P00013 | D04004.5 / M08015 / P00017 |
+| PULL / PUSH active | D04004.6 / .7 | D04004.8 / .9 |
+| Motion permission (M00120 AND M00122) | D04004.10 / M0801A | D04004.11 / M0801B |
+| Soft limits M00123/124, M00223/224 | D04004.12 / .13 | D04004.14 / .15 |
+| PLC positioning error | D04005.0 / M08020 / K04201 | D04005.1 / M08021 / K04301 |
+| At PULL target | D04005.2 / M08022 | D04005.4 / M08024 |
+| At PUSH/start target | D04005.3 / M08023 | D04005.5 / M08025 |
+| At measurement start (same compare) | D04005.14 / M0802E | D04005.15 / M0802F |
+| Clamp OFF / ON | D04003.2 / .3 (P00002/3) | D04003.8 / .9 (P00008/9) |
+| Expansion home / end | D04003.0 / .1 (P00000/1) | D04003.6 / .7 (P00006/7) |
+| Discharge-2 home / end | D04003.4 / .5 (P00004/5) | — |
+
+Neutral, raw only: D04003.10 / M0800A = NOT M00026, D04003.11 / M0800B = NOT M00025, with M00025 =
+NOT P0000A AND P00019, M00026 = NOT P0000B AND P00018 (p23–24) — conditioned, inverted signals whose
+comments disagree with the inputs; M00025/M00026 are also SELECT-cycle PULL/PUSH requests (p7, p10,
+p14). D04003.12 = P0000E (start switch, conditioned), D04003.13 = P0000F (upper emergency input),
+D04005.6 = P0000D (lower emergency input): ON is a permission in the shown logic; shown as raw values,
+never as "emergency pressed". K04200/K04300 (busy), K0422/K0432 (positions used in compares),
+K04204/K04304 (origin reference) are not read — native access and width unverified; command position
+is never presented as measured stroke.
+
+## 4. Parameters (pages 20–27, 30, 32) — implemented, simulated
+
+| Parameter | SHIFT write → PLC | SELECT write → PLC |
+|---|---|---|
+| Jog low speed | D04200 → D02022 | D04206 → D02122 |
+| Jog high speed | D04201 → D02024 | D04207 → D02124 |
+| Test operating speed | D04202 → D02026 | D04208 → D02126 |
+| PULL travel | D04203 → D02028 | D04209 → D02128 |
+| Left limit | D04204 → D02030 | D04210 → D02130 |
+| Right limit | D04205 → D02032 | D04211 → D02132 |
+| Measurement start | D04212 → D02034 | D04213 → D02134 |
+
+Through M0750–M0763 (p30), upper word cleared (p25–27), echo D04007–D04020 (p32), working copies
+D03002…D03016 / D03102…D03116 (p23). Formulas (p20–22): start D02018 = D02000 − D03016 × 10 (16-bit
+signed MUL → 0..32767), D02118 likewise; PULL D02004 = D02018 + D03008 × 100 + D00490 (D02104 likewise);
+D00490 = 100 when M0700F is OFF, 0 when ON; speeds × 100; limits D02014 = D02000 + L × 100,
+D02016 = D02000 − R × 100. These are counts, not mm or mm/s.
+
+App: whole numbers 0..65535 (start 0..32767); derived targets checked (right ≤ start ≤ PULL ≤ left,
+using the PLC's own D00490 from the M0700F echo — the app never adds D00490 itself); written only
+when both axes are idle and no part is active; confirmed after the full echo matches **and**
+`params_settle` has passed (the echo does not prove the derived targets were recalculated). A failed
+write, mismatch or disconnect leaves "Parameters not confirmed". Parameters are frozen per part; a
+model change during a part is refused in the UI and new parameters are deferred.
+
+## 5. Fixture, mode, printing — not written by the app
+
+| Request | Output | PC branch |
+|---|---|---|
+| D04100.0 / M07000 | P00024 SH expansion | M00105 OFF |
+| D04100.1 / M07001 | P00025 SH discharge 1 | M00105 OFF |
+| D04100.2 / M07002 | P00026 SH discharge 2 | M00105 OFF |
+| D04100.3 / M07003 | P00027 SL expansion | M00205 OFF |
+| D04100.4 / M07004 | P00028 SL discharge 1 | M00205 OFF |
+| D04100.5 / M07005 | P00029 SL discharge 2 | M00205 OFF |
+| D04102.0 / M07020 | P0002E SH clamp | **M00205** OFF, as drawn (p28) |
+| D04102.1 / M07021 | P0002F SL clamp | M00205 OFF |
+
+Printing/NG (p32–33): M07000 → M07002 and M07003 → M07004 sequences feed M00011–M00015 → **P00038**;
+M07006 SETs buzzer P0002A; NG box P0001A resets it. Fixture commands therefore affect printing/NG;
+P00038 is not a force verdict and is not combined with the app's PRN printing. Fixture order and
+sensor confirmations are commissioning items; `fixture_checks` can require status bits (e.g.
+`clamp_on`) before a routine; empty = "fixture checks not configured" recorded in each result.
+
+## 6. Application process — implemented, simulated
+
+Cable routine: fixture checks → home if `home_before_test` requires it (`if_not_referenced` by
+default: origin feedback OFF) → measurement-start positioning → `strokes_per_test` × (PULL, PUSH)
+with acquisition → evaluation. No extra return-to-home and no fixture release are added.
+
+* AT: RUN → SELECT label (SELECT field only) → SELECT routine → SHIFT label → SHIFT routine → one part.
+  A SELECT INCOMPLETE ends the part; OK/NG continue to SHIFT.
+* MT: RUN → one label (copied to both fields) → both routines together, each tracked on its own →
+  one part. **Refused unless `mt_parallel_verified`** (never silently made sequential).
+* Refused: wrong field, scans while testing or before RUN, invalid type, RUN while active, model change
+  during a part. Label check `test.label_rule`: `contains_part_number` (existing), `regex` per field, or
+  `none` (status says no rule is defined).
+
+## 7. Measurement and results — implemented, simulated with deterministic data
+
+`measurement`: force source per cable (serial loadcell number or NI DAQ sensor row), stroke source (DAQ
+LVDT row, or none), calibration (scale, offset, unit, verified flag), and the evaluation rules, **all
+unset by default**: `judge` (`peak` | `strokes` | `positions` with linear interpolation on the stroke
+source), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
+`min_samples`. Samples carry timestamp, calibrated and raw force, stroke and raw stroke; a failed read
+is recorded as invalid (no substitute sensor). Positions and repetition count are separate settings.
+
+Verdicts: OK / NG (a value outside the limits) per cable; **INCOMPLETE** for unset rules, missing
+limits, too few or invalid samples, uncovered positions; **ERROR** for a failed machine operation.
+Part: OK / NG (counted) or INCOMPLETE / ABORTED (saved with reasons, not counted). Records include
+labels, model/condition/parameter/rule snapshot, evidence per operation, acquisition metadata, graph
+data (≤ 200 points per direction), timestamps.
+
+Saving (`result_store.py`): each finalized part goes to `<Saved to>/unsaved_results.json`, then to
+`TBL_TEST_RESULTS` on a worker thread; `insert_test_results` skips a part UID already present, so a
+retry after a lost acknowledgement cannot duplicate it. Counters change only on the confirmed save
+(once per part). While a part is unsaved, RUN is refused and saving is retried every 15 s.
+
+## 8. STOP, faults, threads — implemented, simulated
+
+No verified stop address or abort procedure exists in this program. STOP cancels the application's
+sequencing, invalidates the run token (late events are ignored), clears the app's request bits, ends
+the part as ABORTED and shows **"Application sequence cancelled — machine stop NOT confirmed"**.
+Clearing a PULL/PUSH request does not abort motion: a started stroke finishes by itself.
+
+Timeouts (acceptance, motion, release, part), disconnects during an operation, drive faults and
+failed operations **latch a fault**: RUN is refused until the operator inspects the machine and presses
+STOP while the PLC is connected and no sequence is active or in error. A disconnected machine is not
+assumed stopped; nothing is replayed after reconnection. Communication and acquisition run off the
+Tk thread; UI updates go through `after()` polling of the controller and store queues.
+
+## 9. Unresolved — machine verification needed
+
+1. The installed program is PRINTING PROGRAM OLD.xgwx.
+2. PLC model, protocol, station, serial settings, D/M Modbus mapping, register width, word order.
+3. Native M reads: M00051/52/61/62, M00105/M00205, M0204x/M0214x (needed for `internal_flags` and the
+   observed measurement-start handshake).
+4. Command-word ownership (no other writer of D04100–D04102).
+5. Stop behaviour / abort procedure (none in this program).
+6. Alarm-reset pulse length and behaviour per fault class.
+7. Product-detection meaning of M0800A/M0800B, P00018/P00019 functions, SELECT/SHIFT assignment.
+8. Emergency input polarity and wiring (P0000F, P0000D).
+9. Timer units (presets 1, 2, 5, 10, 50); PLC sequences without timeouts (home, PULL, PUSH).
+10. Engineering units: counts per mm, speed units, force calibration.
+11. Fixture order, sensor confirmations, clamp polarity; SHIFT clamp gated by M00205.
+12. MT simultaneous motion (clearance, fixtures, drives, acquisition).
+13. Force source and stroke/LVDT source per cable, alignment, sign, sampling windows, limits rule, and
+    whether PULL1–3/PUSH1–3 are positions or repeated strokes.
+14. K04200/K04300, K0422/K0432, K04204/K04304 access; D04006 / M0850 meaning.
+15. Ladder quirks as printed: SH PUSH release step checks M0010A (p9); SH repeat cycle waits on M00061 (p12).
+
+## 10. Commissioning settings (`test.machine_profile`)
+
+| Item | Setting |
+|---|---|
+| Program confirmed, mapping, native reads, stop, sensors, units, fixture, rules, MT | `commissioning.*` = `"verified"` (recorded in the log at start) |
+| D-area mapping checked | `mapping.areas.D`, `mapping.verified` |
+| Allow writes / sole writer | `live_writes_enabled`, `command_owner_confirmed` |
+| Native M reads | `mapping.areas.M`, `internal_bits_enabled` |
+| Stroke completion | `stroke_completion` |
+| MT parallel | `mt_parallel_verified` |
+| Homing policy, fixture checks | `home_before_test`, `fixture_checks` |
+| Measurement | `measurement.*` |
+| Timeouts (s) | `timeouts.*` (incl. `alarm_reset_pulse`) |
+
+Log: `<Saved to>/plc_events_YYYYMMDD.log` — requests, echoes, state changes, timeouts, faults,
+parameter transfers, finalized and saved parts.
