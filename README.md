@@ -117,6 +117,16 @@ Each cable test uses a PLC handshake set in `settings.json` → `test.commands`:
 `start_select` / `start_shift` and waits (up to 5 min) for `done_select` / `done_shift` to turn ON.
 Until these addresses are set, the flow stops at the first test with a message saying so.
 
+**Temporary RUN address — `test.commands.test_run = M00029`** (the ladder's start request; see
+`TEMPORARY_COMMANDS` in `friction_tester/config.py`, used while the saved value is blank). When a
+cable has no `start_` / `done_` bits, RUN starts the machine with it instead: **one** 0.3 s pulse per
+machine cycle (MT: one for both cables; AT: one per stage), and the end of the cycle is read from the
+ladder (step D05010 back to 0 with one OK or NG counter increment; the PLC's verdict is the result).
+The pulse is written only when `test.integration.shared.mapping.verified` and `live_start_enabled`
+are both true — under the unverified mapping M00029 and the output P00029 are the same Modbus coil —
+otherwise the flow stops with a message and nothing is written. Nothing is retried; a cycle that
+ends without a counted result is not recorded. **ORIGIN** (`move_origin`) has no address yet.
+
 The machine buttons (Servo, Alarm Reset, Move Origin, Test Run, Test Stop) write PLC bits set in
 `settings.json` → `test.commands` (e.g. `"test_run": "M0100"`). They are empty by default; until
 an address is set, the button only reports that in the status box.

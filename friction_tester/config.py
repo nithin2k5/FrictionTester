@@ -42,7 +42,11 @@ DEFAULT_SETTINGS = {
         "commands": {
             "servo_select": "", "alarm_reset_select": "", "origin_select": "",
             "servo_shift": "", "alarm_reset_shift": "", "origin_shift": "",
-            "test_run": "", "test_stop": "", "move_origin": "",
+            # TEMPORARY: test_run = M00029, the ladder's start request (rung 2).
+            # Used by RUN when no start_<cable> bit is set: one 0.3 s pulse per
+            # machine cycle, written only through the verified Modbus mapping
+            # (see TEMPORARY_COMMANDS below). move_origin: not known yet.
+            "test_run": "M00029", "test_stop": "", "move_origin": "",
             # Test flow handshake per cable: the app pulses start_<cable> to
             # begin that cable's test and waits for done_<cable> to turn ON.
             "start_select": "", "done_select": "",
@@ -123,12 +127,23 @@ def _merge(defaults, loaded):
     return result
 
 
+# Temporary command addresses, used while the saved value is blank (an older
+# settings.json saved every command as ""). Remove an entry once the machine's
+# I/O list is confirmed and the address is set in settings.json.
+TEMPORARY_COMMANDS = {"test_run": "M00029"}
+
+
 def load_settings(path=SETTINGS_FILE):
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return _merge(DEFAULT_SETTINGS, json.load(f))
+            settings = _merge(DEFAULT_SETTINGS, json.load(f))
     except (FileNotFoundError, json.JSONDecodeError):
-        return deepcopy(DEFAULT_SETTINGS)
+        settings = deepcopy(DEFAULT_SETTINGS)
+    cmds = settings["test"]["commands"]
+    for key, addr in TEMPORARY_COMMANDS.items():
+        if not str(cmds.get(key) or "").strip():
+            cmds[key] = addr
+    return settings
 
 
 def save_settings(settings, path=SETTINGS_FILE):

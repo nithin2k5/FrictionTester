@@ -31,7 +31,7 @@ from .plot import LoadStrokePlot
 from ..config import save_settings
 from ..plc.modbus_map import ModbusMapping, ModbusPlcBackend
 from ..plc.part_flow import SharedCycleFlow, panel_assignments
-from ..plc.shared_cycle import STEP_NAMES, CycleTracker, SharedCycleMonitor
+from ..plc.shared_cycle import STEP_NAMES, CycleTracker, SharedCycleMonitor, read_snapshot
 
 NO_DATA = "—"      # shown for a value that was not measured (a measured zero shows 0)
 
@@ -1300,6 +1300,12 @@ class TestConsolePage(tk.Frame):
         self._pending = set(cables)
         names = " + ".join(self.SIDES[n][1] for n in cables)
         self._set_status(f"{names} test running…", theme.UPDATE)
+        if self._uses_test_run(cables):
+            for n in cables:
+                self.panels[n].reset_results()
+                self.panels[n].judge.config(text="TEST", fg=theme.BUSY)
+            self._run_machine_cycle(cables)
+            return
         for n in cables:
             if self._flow == "idle":          # an earlier start failed and aborted the flow
                 return
@@ -1344,6 +1350,93 @@ class TestConsolePage(tk.Frame):
                 self.after(0, lambda e=exc: self._abort_flow(f"{name}: {e}"))
 
         threading.Thread(target=run, daemon=True).start()
+
+    # ------------------------------------------- RUN through test_run (M00029)
+    def _uses_test_run(self, cables):
+        """True when RUN should start the machine with test.commands.test_run:
+        it is set and none of these cables has its own start/done bits."""
+        cmds = self.settings["test"]["commands"]
+        if not cmds.get("test_run", "").strip():
+            return False
+        key = lambda n, kind: cmds.get(f"{kind}_{self.SIDES[n][0]}", "").strip()
+        return not any(key(n, "start") or key(n, "done") for n in cables)
+
+    def _run_machine_cycle(self, cables):
+        """One pulse of test_run starts ONE ladder cycle (both channels), so an
+        MT part gets one pulse and each AT stage one. The end of the cycle is
+        read from the ladder (step D05010 back to 0 with one OK or NG counter
+        increment, as in shared-cycle mode).
+
+        The pulse is written only through the explicit Modbus mapping, and only
+        when it is verified and live start is enabled: with the legacy
+        word*16+bit assumption M00029 and the output P00029 land on the same
+        coil (docs/plc_shared_cycle.md). Nothing is retried.
+        """
+        addr = self.settings["test"]["commands"]["test_run"].strip()
+        shared = self.settings["test"]["integration"]["shared"]
+        if not self.plc.is_open:
+            self._abort_flow(f"RUN ({addr}): PLC not connected")
+            return
+        mapping = ModbusMapping(shared.get("mapping"))
+        backend = ModbusPlcBackend(self.plc, mapping, allow_writes=bool(shared.get("live_start_enabled")))
+        if not backend.can_write:
+            missing = [w for w, ok in (("the Modbus address mapping is verified", mapping.verified),
+                                       ("live start is enabled", shared.get("live_start_enabled"))) if not ok]
+            self._abort_flow(
+                f"RUN: {addr} was not written — PLC writes stay blocked until "
+                f"{' and '.join(missing)} (settings.json → test.integration.shared: mapping.verified, "
+                f"live_start_enabled). Under the unverified mapping {addr} and P00029 are the same coil.")
+            return
+        tracker = CycleTracker(start_timeout=float(shared.get("start_timeout", 10.0)))
+        stop = self._stop_event
+        names = " + ".join(self.SIDES[n][1] for n in cables)
+
+        def snapshot():
+            try:
+                return read_snapshot(backend)
+            except Exception:
+                return None
+
+        def run():
+            try:
+                tracker.observe(snapshot())               # baseline: current counters and step
+                if not tracker.connected:
+                    raise RuntimeError("PLC state could not be read")
+                if tracker.last.step != 0:
+                    raise RuntimeError(f"machine is already in a cycle (step {tracker.last.step}) — "
+                                       "wait for it to finish")
+                tracker.arm(names)
+                backend.write_bit(addr, True)
+                time.sleep(0.3)
+                backend.write_bit(addr, False)
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._abort_flow(f"RUN ({addr}): {e}"))
+                return
+            deadline = time.monotonic() + 300
+            while not stop.is_set():
+                for ev in tracker.observe(snapshot()):
+                    if ev.kind == "completed":
+                        ok = ev.data["verdict"] == "OK"
+                        self.after(0, lambda o=ok: self._machine_cycle_finished(cables, o))
+                        return
+                    if ev.kind in ("ended_without_result", "start_timeout", "ambiguous"):
+                        self.after(0, lambda m=ev.message: self._abort_flow(f"{names}: {m}"))
+                        return
+                if time.monotonic() > deadline:
+                    self.after(0, lambda: self._abort_flow(f"{names}: cycle did not finish within 5 minutes"))
+                    return
+                time.sleep(0.25)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _machine_cycle_finished(self, cables, ok):
+        """The PLC's overall verdict for the cycle applies to every cable it tested."""
+        for n in cables:
+            panel = self.panels[n]
+            panel.last_ok = ok
+            panel.judge.config(text="OK" if ok else "NG", fg=theme.PASS if ok else theme.FAIL)
+        for n in cables:
+            self._cable_test_finished(n)
 
     def _cable_test_finished(self, n):
         if not self._alive or n not in self._pending or self._stop_event.is_set():
