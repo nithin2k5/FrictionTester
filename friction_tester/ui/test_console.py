@@ -6,8 +6,8 @@ Two cable panels side by side:
     SHIFT CABLE  -> Loadcell 02
 each with its test conditions, test results (PULL1-3 / PUSH1-3, means,
 OK/NG), a Load-vs-Stroke graph and live LOAD / STROKE / SPEED readouts.
-Underneath, per cable: the front/rear sensor lamps read from the PLC and
-the clamp counter.
+Underneath, per cable: the cylinder forward/backward and part-presence
+lamps read from the PLC, and the clamp counter.
 
 The page polls connected devices for the live values: LOAD comes from the
 loadcell; STROKE and SPEED have no source yet and show "--". It does not
@@ -30,6 +30,7 @@ from . import theme
 from ..console_log import channel
 from .plot import LoadStrokePlot
 from ..config import save_settings
+from ..devices.plc_xgb import bit_address
 from ..plc.modbus_map import ModbusMapping, ModbusPlcBackend
 from ..plc.part_flow import SharedCycleFlow, panel_assignments
 from ..plc.shared_cycle import STEP_NAMES, CycleTracker, SharedCycleMonitor, read_snapshot
@@ -44,6 +45,8 @@ PULL_COLOR = "#4fc3f7"
 PUSH_COLOR = "#ff5252"
 LAMP_OFF = "#24402a"
 LAMP_ON = "#3cff6a"
+# Lamp name -> settings key (test.<cable>.<key>): cylinder position and part presence.
+SENSOR_LAMPS = {"Forward": "forward_sensor", "Backward": "backward_sensor", "Part": "part_sensor"}
 POLL_MS = 300
 SCREENSHOT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                               "screenshots")
@@ -838,9 +841,9 @@ class TestConsolePage(tk.Frame):
             sens = tk.Frame(box, bg=theme.PANEL)
             sens.pack(side="left", padx=6, pady=4)
             lamps = {}
-            for name in ("Front Sensor", "Rear Sensor"):
+            for j, name in enumerate(SENSOR_LAMPS):
                 row = tk.Frame(sens, bg=theme.PANEL)
-                row.pack(anchor="w", pady=1)
+                row.grid(row=j % 2, column=j // 2, sticky="w", pady=1, padx=(0, 8))
                 cv = tk.Canvas(row, width=16, height=16, bg=theme.PANEL, highlightthickness=0)
                 dot = cv.create_oval(2, 2, 14, 14, fill=LAMP_OFF, outline="#111")
                 cv.pack(side="left")
@@ -1833,18 +1836,38 @@ class TestConsolePage(tk.Frame):
                         pass
                 else:
                     snapshot["missing"].append(lc.name.split(" (")[0])
-                if self.plc.is_open:
-                    cfg = self.settings["test"][key]
-                    try:
-                        bits = self.plc.read_bits([cfg["front_sensor"], cfg["rear_sensor"]])
-                        side["lamps"] = {"Front Sensor": bits[0][1] is True, "Rear Sensor": bits[1][1] is True}
-                    except Exception:
-                        pass
                 snapshot["sides"].append(side)
+            if self.plc.is_open:
+                self._read_sensor_lamps(snapshot["sides"])
         finally:
             self._polling = False
         if self._alive:
             self.after(0, lambda: self._apply(snapshot))
+
+    def _read_sensor_lamps(self, sides):
+        """All sensor lamps of both cables in one Modbus read (worker thread)."""
+        try:
+            table = self.settings["test"].get("sensor_table", "discrete_inputs")
+            wanted = {}
+            for (key, _t, _s), side in zip(self.SIDES, sides):
+                cfg = self.settings["test"][key]
+                for name, setting in SENSOR_LAMPS.items():
+                    addr = str(cfg.get(setting, "")).strip()
+                    if addr:
+                        wanted[(id(side), name)] = (side, name, bit_address(addr))
+            if not wanted:
+                return
+            nums = [n for _s, _n, n in wanted.values()]
+            lo = min(nums)
+            bits = self.plc.read_table(table, lo, max(nums) - lo + 1)
+            for side, name, n in wanted.values():
+                side["lamps"][name] = bool(bits[n - lo])
+        except Exception as exc:
+            if str(exc) != getattr(self, "_lamp_error", None):
+                _ui.warning(f"sensor lamps not read: {exc}")
+            self._lamp_error = str(exc)
+        else:
+            self._lamp_error = None
 
     def _apply(self, snap):
         if not self._alive:

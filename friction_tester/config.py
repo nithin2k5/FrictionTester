@@ -38,10 +38,15 @@ DEFAULT_SETTINGS = {
     "test": {
         "select": {"model": "", "speed": None, "delay": None, "stroke": None, "positions": [None, None, None],
                    "load_min": None, "load_max": None, "clamp_count": 0,
-                   "front_sensor": "P0000", "rear_sensor": "P0001"},
+                   "forward_sensor": "P0006", "backward_sensor": "P0007", "part_sensor": "P000A"},
         "shift": {"model": "", "speed": None, "delay": None, "stroke": None, "positions": [None, None, None],
                   "load_min": None, "load_max": None, "clamp_count": 0,
-                  "front_sensor": "P0002", "rear_sensor": "P0003"},
+                  "forward_sensor": "P0001", "backward_sensor": "P0000", "part_sensor": "P000B"},
+        # Sensor lamps: cylinder forward/backward and part presence per cable,
+        # from the machine I/O list (also P000E START, P000F emergency stop).
+        # Modbus table the P inputs are read from: "discrete_inputs" (function 02)
+        # or "coils" (function 01) - confirm with tools/watch_inputs.py.
+        "sensor_table": "discrete_inputs",
         # PLC bits the Test Console buttons write (XGB addresses, e.g. "M0100").
         # Empty = not configured: the button only reports that. Fill these in
         # from the machine's I/O list.
