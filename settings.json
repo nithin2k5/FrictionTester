@@ -1,7 +1,7 @@
 {
   "settings_version": 6,
   "plc": {
-    "port": "COM10",
+    "port": "COM13",
     "baudrate": 57600,
     "station_id": 1,
     "bytesize": 8,
