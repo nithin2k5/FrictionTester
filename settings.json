@@ -81,7 +81,7 @@
     "model_type": "",
     "part_number": "",
     "integration": {
-      "mode": "kd",
+      "mode": "pc_interface",
       "shared": {
         "live_start_enabled": false,
         "poll_interval": 0.25,
