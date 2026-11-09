@@ -7,6 +7,9 @@
     python tools/plc_diag.py --raw 4 4000 1          one raw request: FC (1-4), offset, quantity
     python tools/plc_diag.py --profile pc            PLC_INFAC (plc.pdf) blocks instead of plc kd.pdf
     python tools/plc_diag.py --window                where the word areas stop answering (~50 single reads)
+    python tools/plc_diag.py --scan                  map all four Modbus tables and find where each
+                                                     Cnet area starts (read only, ~2 min; saves a JSON
+                                                     dump in data/) - see tools/plc_scan.py
 
 Close the app first: it holds the COM port.
 
@@ -95,6 +98,8 @@ def main(argv):
                     help=f"override a Cnet area base, AREA in {', '.join(CNET_AREAS)}")
     ap.add_argument("--raw", nargs=3, type=int, metavar=("FC", "OFFSET", "QTY"))
     ap.add_argument("--profile", choices=("kd", "pc"), default="kd")
+    ap.add_argument("--scan", action="store_true",
+                    help="read-only scan of FC01-FC04: extent, content, and where each area starts")
     ap.add_argument("--window", action="store_true",
                     help="single FC03/FC04 reads at offsets 0, 30, 130, 500, 990-1010, 4000, 5010 to find the word window")
     args = ap.parse_args(argv)
@@ -125,6 +130,14 @@ def main(argv):
           f"station {station}, timeout {cfg['timeout']} s")
     print(f"Mapping: {mapping.describe()}" + ("  [--base overrides, not saved]" if args.base else ""))
     try:
+        if args.scan:
+            import time
+            import plc_scan
+            out = ROOT / "data" / f"plc_scan_{time.strftime('%Y%m%d_%H%M%S')}.json"
+            out.parent.mkdir(exist_ok=True)
+            print("\nRead-only scan of the four Modbus tables (nothing is written):")
+            plc_scan.run(plc.read_table, out)
+            return
         if args.window:
             print("\nWord window (single registers, read only):")
             for fc, table in ((4, "input_registers"), (3, "holding_registers")):
