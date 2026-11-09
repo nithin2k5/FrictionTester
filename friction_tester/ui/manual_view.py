@@ -1,7 +1,8 @@
-"""Manual Operation view of the Test Console, laid out like the machine's original
-manual screen: per cable POSITION SET (left / right limit), JOG Control (speeds and
-jog buttons), Actuator Status lamps, PULL / PUSH position, live Stroke / Load and
-the fixture cylinders, with Return back to the measurement screen.
+"""Manual Operation view of the Test Console: per cable POSITION SET (left / right
+limit), JOG CONTROL (speeds and jog buttons), POSITION MOVE (PULL / PUSH),
+ACTUATOR STATUS lamps, LIVE stroke / load and the fixture CYLINDERS, with Return
+back to the measurement screen. Same look as the rest of the app: dark panels,
+side-panel style cards with an orange accent, magenta values.
 
 The view owns no PLC connection. It shows what the Test Console already reads
 (the P-input lamps, the PLC status of the PC interface, the loadcells) and sends
@@ -23,14 +24,18 @@ import tkinter as tk
 from . import theme
 from ..plc import pc_profile as pp
 
-PANEL = "#e9ecef"          # light panels, as on the original screen
-PANEL_FG = "#1f2a44"
-TITLE_BG = "#f2e6b3"
-FIELD_BG = "#fbf3d0"
-FIELD_FG = "#d63384"
+# Same look as the Test Console: dark panels, side-panel cards, magenta values.
+CARD = "#141922"
+CARD_HEAD = "#1b212c"
+FIELD_BG = "#0d1016"
+VALUE_FG = "#ff6fd8"
+LABEL_FG = "#c9d1dc"
+LINK_FG = "#4fa3ff"
+LAMP_OFF = "#24402a"
 LAMP_GREEN_ON = "#3cff6a"
-LAMP_RED_ON = "#ff3b30"
-LAMP_IDLE = "#1d3b24"
+LAMP_RED_ON = theme.FAIL
+BTN_BG, BTN_ACTIVE = "#2a313d", "#353d4b"
+BTN_OFF_BG = "#1c2029"
 NO_DATA = "—"
 
 # (lamp text, source, colour when ON). Source "lamp:<name>" = Test Console cable lamp,
@@ -39,18 +44,16 @@ STATUS_LAMPS = [
     ("SERVO ON", "lamp:Servo", LAMP_GREEN_ON),
     ("ALARM", "not:Drive OK", LAMP_RED_ON),
     ("Origin O.K", "lamp:Origin", LAMP_GREEN_ON),
-    ("Right(PUSH) Limit", "st:limit_right", LAMP_GREEN_ON),
-    ("Left(PULL) Limit", "st:limit_left", LAMP_GREEN_ON),
+    ("Right (PUSH) Limit", "st:limit_right", LAMP_GREEN_ON),
+    ("Left (PULL) Limit", "st:limit_left", LAMP_GREEN_ON),
 ]
 JOG_BUTTONS = [("⏪", "fast reverse"), ("◀", "reverse"), ("▶", "forward"), ("⏩", "fast forward")]
-CYLINDERS_LEFT = [("Clamp Cylinder", "clamp")]
-CYLINDERS_RIGHT = [("Removing Cylinder 1", "discharge1"), ("Removing Cylinder 2", "discharge2"),
-                   ("Loading Cylinder", "expand")]
+CYLINDERS = ["Clamp Cylinder", "Removing Cylinder 1", "Removing Cylinder 2", "Loading Cylinder"]
 PARAM_FIELDS = [("limit_left", "Left Limit"), ("limit_right", "Right Limit")]
 
 
 def _font(size, bold=False):
-    return ("Arial", size, "bold") if bold else ("Arial", size)
+    return (theme.FONT, size, "bold") if bold else (theme.FONT, size)
 
 
 def lamp_state(source, lamps, snap, axis):
@@ -80,117 +83,123 @@ class ManualView(tk.Frame):
         self.live = {}           # axis -> {"stroke": Label, "load": Label}
 
         foot = tk.Frame(self, bg=theme.BG)          # packed first: never squeezed out
-        foot.pack(side="bottom", fill="x", pady=(8, 2))
+        foot.pack(side="bottom", fill="x", pady=(6, 0))
+        tk.Button(foot, text="↩  Return", command=page.show_measurement, bg="#333", fg="white",
+                  activebackground="#444", activeforeground="white", bd=0, padx=22, pady=5,
+                  font=_font(10, True), cursor="hand2").pack()
         row = tk.Frame(self, bg=theme.BG)
         row.pack(fill="both", expand=True)
         for i, (axis, title, _short) in enumerate(sides):
-            self._cable(row, axis, title).grid(row=0, column=i, sticky="nsew", padx=(0, 6) if i == 0 else (6, 0))
+            self._cable(row, axis, title).grid(row=0, column=i, sticky="nsew", padx=(0, 4) if i == 0 else (4, 0))
             row.columnconfigure(i, weight=1, uniform="manual")
         row.rowconfigure(0, weight=1)
-
-        tk.Button(foot, text="↩  Return", command=page.show_measurement, bg="#e0e0e0", fg="black",
-                  activebackground="#f0f0f0", bd=0, padx=22, pady=5, font=_font(10, True),
-                  cursor="hand2").pack()
         self.refresh_params()
 
     # ----------------------------------------------------------- layout
-    def _button(self, parent, text, command, width=16, disabled_look=False):
-        bg = "#cfd3d8" if disabled_look else "#f4f5f7"
-        fg = "#7a808a" if disabled_look else "#1f2a44"
-        return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground="#ffffff",
-                         activeforeground=fg, relief="raised", bd=1, width=width, pady=3,
-                         font=_font(9, True), cursor="hand2")
+    def _card(self, parent, title):
+        """Side-panel style card: title strip with an orange accent, dark body."""
+        card = tk.Frame(parent, bg=CARD, highlightbackground=theme.BORDER, highlightthickness=1)
+        card.pack(fill="x", pady=(0, 6))
+        head = tk.Frame(card, bg=CARD_HEAD)
+        head.pack(fill="x")
+        tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
+        tk.Label(head, text=title.upper(), bg=CARD_HEAD, fg=LABEL_FG, font=_font(8, True)).pack(
+            side="left", padx=8, pady=4)
+        body = tk.Frame(card, bg=CARD)
+        body.pack(fill="x", padx=10, pady=8)
+        return body
+
+    def _button(self, parent, text, command, width=18, off=False):
+        bg, fg = (BTN_OFF_BG, theme.MUTED) if off else (BTN_BG, "white")
+        return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=BTN_ACTIVE,
+                         activeforeground="white", bd=0, width=width, pady=4, font=_font(9, True), cursor="hand2")
+
+    def _label(self, parent, text, fg=LABEL_FG, size=10, bold=False):
+        return tk.Label(parent, text=text, bg=CARD, fg=fg, font=_font(size, bold))
 
     def _field(self, parent, axis, key, spin=False):
-        common = dict(width=7, justify="center", font=_font(11), bg=FIELD_BG, fg=FIELD_FG,
-                      relief="solid", bd=1, insertbackground=FIELD_FG)
+        common = dict(width=7, justify="center", font=_font(11), bg=FIELD_BG, fg=VALUE_FG,
+                      relief="solid", bd=1, insertbackground="white")
         if spin:
-            w = tk.Spinbox(parent, from_=0, to=pp.param_max(key), increment=1, **common,
-                           command=lambda: self._param_edited(axis, key))
+            w = tk.Spinbox(parent, from_=0, to=pp.param_max(key), increment=1, buttonbackground="#333",
+                           command=lambda: self._param_edited(axis, key), **common)
         else:
-            w = tk.Entry(parent, **common)
+            w = tk.Entry(parent, highlightthickness=0, **common)
         w.bind("<Return>", lambda _e: self._param_edited(axis, key))
         w.bind("<FocusOut>", lambda _e: self._param_edited(axis, key))
         self.fields[(axis, key)] = w
         return w
 
     def _cable(self, parent, axis, title):
-        box = tk.Frame(parent, bg=PANEL, highlightbackground="#9aa1ab", highlightthickness=1)
-        tk.Label(box, text=f" {title} ", bg=TITLE_BG, fg="black", font=_font(12, True), bd=1,
-                 relief="solid").place(x=14, y=-2)
-        inner = tk.Frame(box, bg=PANEL)
-        inner.pack(fill="both", expand=True, padx=14, pady=(26, 10))
-        inner.columnconfigure(0, weight=1)
-        inner.columnconfigure(1, weight=1)
+        box = tk.Frame(parent, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
+        tk.Label(box, text=title, bg=theme.PANEL, fg="white", font=_font(14)).pack(pady=(6, 2))
+        tk.Frame(box, bg=theme.BORDER, height=1).pack(fill="x", padx=8)
+        cols = tk.Frame(box, bg=theme.PANEL)
+        cols.pack(fill="both", expand=True, padx=8, pady=8)
+        cols.columnconfigure(0, weight=1, uniform="cols")
+        cols.columnconfigure(1, weight=1, uniform="cols")
+        left = tk.Frame(cols, bg=theme.PANEL)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        right = tk.Frame(cols, bg=theme.PANEL)
+        right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
-        # ---- left column: POSITION SET, JOG Control
-        left = tk.Frame(inner, bg=PANEL)
-        left.grid(row=0, column=0, sticky="nw")
-        tk.Label(left, text="POSITION SET", bg=PANEL, fg=PANEL_FG, font=_font(10)).grid(
-            row=0, column=0, columnspan=3, pady=(0, 6))
-        for r, (key, label) in enumerate(PARAM_FIELDS, start=1):
-            tk.Label(left, text=label, bg=PANEL, fg="#2f6fd6", font=_font(10)).grid(row=r, column=0, sticky="e",
-                                                                                  padx=(0, 6), pady=2)
-            self._field(left, axis, key).grid(row=r, column=1, pady=2)
-            tk.Label(left, text="mm", bg=PANEL, fg=PANEL_FG, font=_font(9)).grid(row=r, column=2, sticky="w", padx=4)
+        # ---- POSITION SET
+        body = self._card(left, "Position set")
+        for r, (key, label) in enumerate(PARAM_FIELDS):
+            self._label(body, label).grid(row=r, column=0, sticky="e", padx=(0, 8), pady=2)
+            self._field(body, axis, key).grid(row=r, column=1, pady=2)
+            self._label(body, "mm", fg=theme.HEADER_FG, size=9).grid(row=r, column=2, sticky="w", padx=4)
 
-        tk.Label(left, text="JOG Control", bg=PANEL, fg=PANEL_FG, font=_font(10)).grid(
-            row=3, column=0, columnspan=3, pady=(16, 2))
-        tk.Label(left, text="Low", bg=PANEL, fg=PANEL_FG, font=_font(9)).grid(row=4, column=1)
-        tk.Label(left, text="High", bg=PANEL, fg=PANEL_FG, font=_font(9)).grid(row=4, column=2)
-        tk.Label(left, text="Jog Speed", bg=PANEL, fg=PANEL_FG, font=_font(10)).grid(row=5, column=0, sticky="e",
-                                                                                  padx=(0, 6))
-        self._field(left, axis, "jog_low", spin=True).grid(row=5, column=1, padx=2)
-        self._field(left, axis, "jog_high", spin=True).grid(row=5, column=2, padx=2)
-
-        jog = tk.Frame(left, bg=PANEL)
-        jog.grid(row=6, column=0, columnspan=3, pady=(14, 6))
+        # ---- JOG CONTROL
+        body = self._card(left, "Jog control")
+        self._label(body, "Low", fg=theme.HEADER_FG, size=9).grid(row=0, column=1)
+        self._label(body, "High", fg=theme.HEADER_FG, size=9).grid(row=0, column=2)
+        self._label(body, "Jog Speed").grid(row=1, column=0, sticky="e", padx=(0, 8))
+        self._field(body, axis, "jog_low", spin=True).grid(row=1, column=1, padx=2)
+        self._field(body, axis, "jog_high", spin=True).grid(row=1, column=2, padx=2)
+        jog = tk.Frame(body, bg=CARD)
+        jog.grid(row=2, column=0, columnspan=3, pady=(10, 0))
         for text, what in JOG_BUTTONS:
             tk.Button(jog, text=text, command=lambda w=what: self._not_driven(
                 axis, f"Jog {w}", "jog is not a PC command in PRINTING PROGRAM OLD - use the machine's touch panel"),
-                bg="#dfe6f3", fg="#1d4fbf", activebackground="#ffffff", relief="raised", bd=1, width=4,
-                font=_font(14, True), cursor="hand2").pack(side="left", padx=3)
+                bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE, activeforeground="white", bd=0, width=4,
+                pady=2, font=_font(14, True), cursor="hand2").pack(side="left", padx=3)
 
-        pp_row = tk.Frame(left, bg=PANEL)
-        pp_row.grid(row=7, column=0, columnspan=3, pady=(18, 4))
-        for text, what in (("⇦ Pull Position", "PULL"), ("Push Position ⇨", "PUSH")):
-            self._button(pp_row, text, lambda w=what: self._not_driven(
+        # ---- POSITION MOVE (PULL / PUSH run only inside a test in this program)
+        body = self._card(left, "Position move")
+        for c, (text, what) in enumerate((("⇦  Pull Position", "PULL"), ("Push Position  ⇨", "PUSH"))):
+            self._button(body, text, lambda w=what: self._not_driven(
                 axis, f"{w} position", f"{w} runs only inside a cable test (RUN) in this PLC program"),
-                width=14, disabled_look=True).pack(side="left", padx=3)
+                width=15, off=True).grid(row=0, column=c, padx=3)
 
-        for text, what in CYLINDERS_LEFT:
-            self._button(left, f"☰  {text}", lambda w=what, t=text: self._cylinder(axis, t)).grid(
-                row=8, column=0, columnspan=3, pady=(30, 0))
-
-        # ---- right column: Actuator Status, Stroke / Load, cylinders
-        right = tk.Frame(inner, bg=PANEL)
-        right.grid(row=0, column=1, sticky="nw", padx=(16, 0))
-        tk.Label(right, text="Actuator Status", bg=PANEL, fg=PANEL_FG, font=_font(10)).grid(
-            row=0, column=0, columnspan=3, pady=(0, 6), sticky="w")
+        # ---- ACTUATOR STATUS
+        body = self._card(right, "Actuator status")
         lamps = {}
-        for r, (text, _src, colour) in enumerate(STATUS_LAMPS, start=1):
-            cv = tk.Canvas(right, width=20, height=20, bg=PANEL, highlightthickness=0)
-            dot = cv.create_oval(2, 2, 18, 18, fill=LAMP_IDLE, outline="#333")
-            cv.grid(row=r, column=0, pady=3, sticky="w")
-            tk.Label(right, text=text, bg=PANEL, fg="#2f6fd6", font=_font(10)).grid(row=r, column=1, columnspan=2,
-                                                                                  sticky="w", padx=4)
+        for r, (text, _src, colour) in enumerate(STATUS_LAMPS):
+            cv = tk.Canvas(body, width=18, height=18, bg=CARD, highlightthickness=0)
+            dot = cv.create_oval(2, 2, 16, 16, fill=LAMP_OFF, outline="#111")
+            cv.grid(row=r, column=0, pady=2, sticky="w")
+            self._label(body, text, fg=LINK_FG).grid(row=r, column=1, sticky="w", padx=6)
             lamps[text] = (cv, dot, colour)
         self.status_lamps[axis] = lamps
 
+        # ---- LIVE
+        body = self._card(right, "Live")
         live = {}
-        for r, (key, label, unit) in enumerate((("stroke", "Stroke", "mm"), ("load", "Load", "Kgf")), start=7):
-            tk.Label(right, text=label, bg=PANEL, fg="#2f6fd6", font=_font(10)).grid(row=r, column=0, sticky="e",
-                                                                                  pady=(14 if r == 7 else 2, 2))
-            v = tk.Label(right, text=NO_DATA, width=8, bg=FIELD_BG, fg=FIELD_FG, font=_font(11), relief="solid", bd=1)
-            v.grid(row=r, column=1, padx=4, pady=(14 if r == 7 else 2, 2))
-            tk.Label(right, text=unit, bg=PANEL, fg=PANEL_FG, font=_font(9)).grid(row=r, column=2, sticky="w")
+        for r, (key, label, unit) in enumerate((("stroke", "STROKE", "mm"), ("load", "LOAD", "kgf"))):
+            self._label(body, label, fg="white", size=9, bold=True).grid(row=r, column=0, sticky="e",
+                                                                         padx=(0, 8), pady=2)
+            v = tk.Label(body, text=NO_DATA, width=9, bg=FIELD_BG, fg=VALUE_FG, font=_font(12, True),
+                         relief="solid", bd=1)
+            v.grid(row=r, column=1, pady=2)
+            self._label(body, unit, fg=theme.HEADER_FG, size=9).grid(row=r, column=2, sticky="w", padx=4)
             live[key] = v
         self.live[axis] = live
 
-        cyl = tk.Frame(right, bg=PANEL)
-        cyl.grid(row=9, column=0, columnspan=3, pady=(18, 0), sticky="w")
-        for text, _what in CYLINDERS_RIGHT:
-            self._button(cyl, f"⏏  {text}", lambda t=text: self._cylinder(axis, t), width=21).pack(pady=2)
+        # ---- CYLINDERS
+        body = self._card(right, "Cylinders")
+        for r, text in enumerate(CYLINDERS):
+            self._button(body, text, lambda t=text: self._cylinder(axis, t), width=20).grid(row=r, column=0, pady=2)
         return box
 
     # ---------------------------------------------------------- actions
@@ -212,13 +221,8 @@ class ManualView(tk.Frame):
         values = self._values()
         for (axis, key), w in self.fields.items():
             v = "" if values is None else values[pp.param_index(axis, key)]
-            text = "" if v is None else str(v)
-            if isinstance(w, tk.Spinbox):
-                w.delete(0, "end")
-                w.insert(0, text)
-            else:
-                w.delete(0, "end")
-                w.insert(0, text)
+            w.delete(0, "end")
+            w.insert(0, "" if v is None else str(v))
 
     def _param_edited(self, axis, key):
         w = self.fields[(axis, key)]
@@ -261,10 +265,10 @@ class ManualView(tk.Frame):
         """UI thread. sides: the Test Console poll result per cable ({"lamps", "load"})."""
         for (axis, _t, _s), side in zip(self.sides, sides):
             lamps = side.get("lamps") or {}
-            for text, src, colour in STATUS_LAMPS:
+            for text, src, _colour in STATUS_LAMPS:
                 cv, dot, on_colour = self.status_lamps[axis][text]
                 on = lamp_state(src, lamps, pc_snap, axis)
-                cv.itemconfig(dot, fill=on_colour if on else LAMP_IDLE)
+                cv.itemconfig(dot, fill=on_colour if on else LAMP_OFF)
             load = side.get("load")
             self.live[axis]["load"].config(text=NO_DATA if load is None else f"{load:.2f}")
             stroke = (strokes or {}).get(axis)
