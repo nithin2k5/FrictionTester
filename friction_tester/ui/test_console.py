@@ -45,7 +45,10 @@ PUSH_COLOR = "#ff5252"
 LAMP_OFF = "#24402a"
 LAMP_ON = "#3cff6a"
 # Lamp name -> settings key (test.<cable>.<key>): cylinder position and part presence.
-SENSOR_LAMPS = {"Forward": "forward_sensor", "Backward": "backward_sensor", "Part": "part_sensor"}
+SENSOR_LAMPS = {"Forward": "forward_sensor", "Backward": "backward_sensor", "Part": "part_sensor",
+                "Clamp ON": "clamp_on_sensor", "Clamp OFF": "clamp_off_sensor",
+                "Drive OK": "drive_ok_input", "Servo": "servo_input", "Origin": "origin_input"}
+LAMP_ROWS = 3
 POLL_MS = 300
 SCREENSHOT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                               "screenshots")
@@ -929,7 +932,7 @@ class TestConsolePage(tk.Frame):
             lamps = {}
             for j, name in enumerate(SENSOR_LAMPS):
                 row = tk.Frame(sens, bg=theme.PANEL)
-                row.grid(row=j % 2, column=j // 2, sticky="w", pady=1, padx=(0, 8))
+                row.grid(row=j % LAMP_ROWS, column=j // LAMP_ROWS, sticky="w", pady=1, padx=(0, 8))
                 cv = tk.Canvas(row, width=16, height=16, bg=theme.PANEL, highlightthickness=0)
                 dot = cv.create_oval(2, 2, 14, 14, fill=LAMP_OFF, outline="#111")
                 cv.pack(side="left")
@@ -950,6 +953,24 @@ class TestConsolePage(tk.Frame):
             sp.pack(side="left")
             tk.Label(row, text="times", bg=theme.PANEL, fg="white", font=_font(8)).pack(side="left", padx=3)
             self.clamps.append(sp)
+
+        # Machine-wide inputs/outputs (test.machine_lamps), read with the cable lamps;
+        # a narrow third column so the window does not get taller.
+        self.machine_lamps = {}
+        common = self.settings["test"].get("machine_lamps") or {}
+        if common:
+            box = tk.Frame(bottom, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
+            box.grid(row=0, column=len(self.SIDES), sticky="ns", padx=(8, 0))
+            tk.Label(box, text="Machine", bg=theme.PANEL, fg="white", font=_font(9)).grid(
+                row=0, column=0, rowspan=LAMP_ROWS, sticky="n", padx=(6, 2), pady=4)
+            for j, name in enumerate(common):
+                row = tk.Frame(box, bg=theme.PANEL)
+                row.grid(row=j % LAMP_ROWS, column=1 + j // LAMP_ROWS, sticky="w", padx=(6, 6), pady=1)
+                cv = tk.Canvas(row, width=16, height=16, bg=theme.PANEL, highlightthickness=0)
+                dot = cv.create_oval(2, 2, 14, 14, fill=LAMP_OFF, outline="#111")
+                cv.pack(side="left")
+                tk.Label(row, text=name, bg=theme.PANEL, fg="#4fa3ff", font=_font(9)).pack(side="left", padx=3)
+                self.machine_lamps[name] = (cv, dot)
 
     # ------------------------------------------------------- side panel
     # Same card style as the COM Setting page: a title strip with an orange
@@ -1920,7 +1941,7 @@ class TestConsolePage(tk.Frame):
         self.after(POLL_MS, self._poll)
 
     def _poll_worker(self):
-        snapshot = {"missing": [], "sides": []}
+        snapshot = {"missing": [], "sides": [], "common": {}}
         try:
             if not self.plc.is_open and not self.shared:
                 snapshot["missing"].append("PLC")      # shared mode: the PLC strip shows it
@@ -1937,7 +1958,7 @@ class TestConsolePage(tk.Frame):
                     snapshot["missing"].append(lc.name.split(" (")[0])
                 snapshot["sides"].append(side)
             if self.plc.is_open:
-                self._read_sensor_lamps(snapshot["sides"])
+                self._read_sensor_lamps(snapshot["sides"], snapshot["common"])
         finally:
             self._polling = False
         if self._alive:
@@ -1950,21 +1971,27 @@ class TestConsolePage(tk.Frame):
             self._lamp_be = ModbusPlcBackend(self.plc, mapping, allow_writes=False)
         return self._lamp_be
 
-    def _read_sensor_lamps(self, sides):
-        """All sensor lamps of both cables in as few Modbus reads as the mapping allows (worker thread)."""
+    def _read_sensor_lamps(self, sides, common=None):
+        """All lamps (both cables + machine row) in as few Modbus reads as the mapping allows
+        (worker thread). Each value goes into side["lamps"] or `common`."""
         try:
-            wanted = []
+            wanted = []        # (target dict, name, address)
             for (key, _t, _s), side in zip(self.SIDES, sides):
                 cfg = self.settings["test"][key]
                 for name, setting in SENSOR_LAMPS.items():
                     addr = str(cfg.get(setting, "")).strip().upper()
                     if addr:
-                        wanted.append((side, name, addr))
+                        wanted.append((side["lamps"], name, addr))
+            if common is not None:
+                for name, addr in (self.settings["test"].get("machine_lamps") or {}).items():
+                    addr = str(addr or "").strip().upper()
+                    if addr:
+                        wanted.append((common, name, addr))
             if not wanted:
                 return
-            bits = self._lamp_backend().read_bits(sorted({a for _s, _n, a in wanted}))
-            for side, name, addr in wanted:
-                side["lamps"][name] = bool(bits[addr])
+            bits = self._lamp_backend().read_bits(sorted({a for _t, _n, a in wanted}))
+            for target, name, addr in wanted:
+                target[name] = bool(bits[addr])
         except Exception as exc:
             if str(exc) != getattr(self, "_lamp_error", None):
                 _ui.warning(f"sensor lamps not read: {exc}")
@@ -1980,6 +2007,8 @@ class TestConsolePage(tk.Frame):
                 self.panels[i].set_live(load=side["load"])
             for name, (cv, dot) in self.lamps[i].items():
                 cv.itemconfig(dot, fill=LAMP_ON if side["lamps"].get(name) else LAMP_OFF)
+        for name, (cv, dot) in getattr(self, "machine_lamps", {}).items():
+            cv.itemconfig(dot, fill=LAMP_ON if snap.get("common", {}).get(name) else LAMP_OFF)
         if time.monotonic() < self._hold_until:
             return   # keep the last action's message on screen for a moment
         if snap["missing"]:
