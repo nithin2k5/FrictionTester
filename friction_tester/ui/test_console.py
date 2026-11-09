@@ -1290,6 +1290,30 @@ class TestConsolePage(tk.Frame):
 
         threading.Thread(target=run, daemon=True).start()
 
+    SERVO_OUT = {"shift": "P00030", "select": "P00034"}       # "Servo ON Output" (PLC backup 2026-11-08)
+
+    def _servo_explanation(self, key, n):
+        """PRINTING PROGRAM OLD: the PLC drives servo ON itself (automatic branch, M0700F OFF);
+        say what the lamps show instead of offering a button that cannot help."""
+        poll = getattr(self, "_last_poll", None) or {}
+        sides = poll.get("sides") or []
+        fb = (sides[n].get("lamps") or {}).get("Servo") if n < len(sides) else None
+        out_addr = self.SERVO_OUT[key]
+        names = {str(a).strip().upper(): name for name, a in (self.settings["test"].get("machine_lamps") or {}).items()}
+        out = (poll.get("common") or {}).get(names.get(out_addr)) if out_addr in names else None
+        axis = pp.AXIS_NAME[key]
+        if out and not fb:
+            return (f"{axis} servo: the PLC already sends servo ON ({out_addr} ON) but the drive does not confirm "
+                    f"it (servo status {'P00010' if key == 'shift' else 'P00014'} OFF) - check the servo drive at "
+                    "the machine (display, main power, reset after an emergency stop). The app cannot fix this.")
+        if out and fb:
+            return f"{axis} servo is ON (PLC output {out_addr} and drive status both ON)."
+        if out is False:
+            return (f"{axis} servo: the PLC is not sending servo ON ({out_addr} OFF) - the PLC switches it itself "
+                    "after start-up; check the machine (start-up, emergency stop, touch panel).")
+        return (f"{axis} servo: the PLC switches servo ON itself in this program; servo state not read yet "
+                "(PLC lamps not available).")
+
     def toggle_servo(self, key, n):
         """Servo ON/OFF: a maintained PLC bit."""
         _ui.info(f"servo toggle -> {key}")
@@ -1298,8 +1322,7 @@ class TestConsolePage(tk.Frame):
                              theme.BUSY, 6)
             return
         if self.pc:
-            self._set_status("Servo ON/OFF: not assigned in this PLC program (servo ON follows the PLC's own "
-                             "start-up logic) - see docs/plc_pc_interface.md", theme.BUSY, 6)
+            self._set_status(self._servo_explanation(key, n), theme.BUSY, 10)
             return
         label = f"{self.SIDES[n][1]} servo"
         addr = self._command_address(f"servo_{key}", label)
@@ -2051,6 +2074,7 @@ class TestConsolePage(tk.Frame):
     def _apply(self, snap):
         if not self._alive:
             return
+        self._last_poll = snap
         for i, side in enumerate(snap["sides"]):
             if not self.shared:                       # shared mode: the PLC monitor owns LOAD/STROKE
                 self.panels[i].set_live(load=side["load"])
