@@ -8,7 +8,7 @@ The indicator's ID Number (F-40) picks the mode:
 * ID 01-99 - command mode. The PC sends ID<nn><cmd> with no terminator:
       P = send current value   Z = zero   H = hold   R = release hold
   and the indicator answers a P with:
-      ID,01,+01234.5<CR><LF>
+      ID,01,+01234.5<CR><LF>     (some units: ID001,+01234.5<CR><LF>)
 
 The data field is 8 characters including the sign; the decimal point is
 wherever the indicator's F-00 setting puts it, so the number is used as sent.
@@ -17,6 +17,7 @@ The app has no ID setting: on connect it listens for stream frames, and if
 none arrive it uses command mode with ID = loadcell number (L1 = 01, L2 = 02).
 """
 
+import re
 import threading
 import time
 
@@ -45,6 +46,11 @@ def parse_frame(line, expected_id=None):
     line that isn't a recognisable frame.
     """
     fields = [f.strip() for f in line.strip().split(",")]
+    # Some AM-50LW units join the ID to the header: "ID001,+0000.01" (seen on the machine,
+    # 2026-11-07) instead of the manual's "ID,01,+0000.01".
+    joined = re.match(r"^ID(\d{1,3})$", fields[0].upper()) if len(fields) == 2 else None
+    if joined:
+        fields = ["ID", joined.group(1), fields[1]]
     if len(fields) < 3:
         raise IndicatorError(f"Unrecognised frame: {line!r}")
     head, mid, data = fields[0].upper(), fields[1].upper(), fields[2]
