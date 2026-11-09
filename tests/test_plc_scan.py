@@ -83,5 +83,36 @@ def test_extent_helpers():
     assert plc_scan.size_candidates(1004, "word")[0] == "P0020"
 
 
+
+def test_find_reports_the_answering_baud_parity_station(capsys):
+    import plc_diag
+
+    class Resp:
+        def __init__(self, bits=None, exc=None):
+            self.bits, self.exception_code = bits, exc
+
+        def isError(self):
+            return self.bits is None
+
+    class FakeClient:
+        def __init__(self, port, baudrate, parity, **kw):
+            self.baud, self.parity = baudrate, parity
+
+        def connect(self):
+            return True
+
+        def close(self):
+            pass
+
+        def read_discrete_inputs(self, offset, count, device_id):
+            if self.baud == 57600 and self.parity == "N" and device_id == 1:
+                return Resp(bits=[True, False] * 8)
+            return Resp()                                   # no reply
+
+    found = plc_diag.find_settings("COMX", client_cls=FakeClient)
+    assert found == [(57600, "N", 1)]
+    assert "station 1" in capsys.readouterr().out
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

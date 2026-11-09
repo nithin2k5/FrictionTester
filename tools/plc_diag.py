@@ -7,6 +7,8 @@
     python tools/plc_diag.py --raw 4 4000 1          one raw request: FC (1-4), offset, quantity
     python tools/plc_diag.py --profile pc            PLC_INFAC (plc.pdf) blocks instead of plc kd.pdf
     python tools/plc_diag.py --window                where the word areas stop answering (~50 single reads)
+    python tools/plc_diag.py --find --port COM13     which baud rate / station answers on a port
+                                                     (read only, ~1 min) - for "no response"
     python tools/plc_diag.py --scan                  map all four Modbus tables and find where each
                                                      Cnet area starts (read only, ~2 min; saves a JSON
                                                      dump in data/) - see tools/plc_scan.py
@@ -91,6 +93,50 @@ def check_block(plc, mapping, station, native, count, role):
             print(f"   single offset {off} (0x{off:04X}) [{name}]: {fmt_words(v) if e is None else e}")
 
 
+FIND_BAUDS = (57600, 115200, 38400, 19200, 9600)
+FIND_PARITIES = ("N", "E", "O")
+FIND_STATIONS = (1, 0, 2, 3)
+
+
+def find_settings(port, bauds=FIND_BAUDS, parities=FIND_PARITIES, stations=FIND_STATIONS, client_cls=None):
+    """Read-only: try FC02 (inputs P00000..) at each baud / parity / station. Any reply -
+    data or a Modbus exception - means a Modbus server answered with those settings."""
+    if client_cls is None:
+        from pymodbus.client import ModbusSerialClient as client_cls
+    print(f"Searching {port}: bauds {bauds}, parities {parities}, stations {stations} (read only)")
+    found = []
+    for baud in bauds:
+        for parity in parities:
+            client = client_cls(port=port, baudrate=baud, bytesize=8, parity=parity, stopbits=1,
+                                timeout=0.3, retries=0)
+            try:
+                if not client.connect():
+                    print(f"   could not open {port} - is the app (or another program) using it?")
+                    return found
+                for station in stations:
+                    try:
+                        resp = client.read_discrete_inputs(0, count=16, device_id=station)
+                    except Exception:
+                        continue
+                    if resp is None:
+                        continue
+                    if resp.isError() and getattr(resp, "exception_code", None) is None:
+                        continue                          # no reply / garbled
+                    what = (f"exception {resp.exception_code}" if resp.isError()
+                            else "inputs " + "".join("1" if b else "0" for b in resp.bits[:16]))
+                    print(f"   ANSWER  {baud} 8{parity}1 station {station}: {what}")
+                    found.append((baud, parity, station))
+            finally:
+                client.close()
+    if not found:
+        print("   no answer at any setting: the port is not wired to a Modbus port of the PLC "
+              "(check the adapter, A/B wires, and that it goes to CH2 RS-485, not CH1 RS-232C)")
+    else:
+        b, par, st = found[0]
+        print(f"   -> set COM Setting to {port}, {b}, 8{par}1, station {st}")
+    return found
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port")
@@ -98,6 +144,8 @@ def main(argv):
                     help=f"override a Cnet area base, AREA in {', '.join(CNET_AREAS)}")
     ap.add_argument("--raw", nargs=3, type=int, metavar=("FC", "OFFSET", "QTY"))
     ap.add_argument("--profile", choices=("kd", "pc"), default="kd")
+    ap.add_argument("--find", action="store_true",
+                    help="try common baud rates, parities and stations on the port (read only)")
     ap.add_argument("--scan", action="store_true",
                     help="read-only scan of FC01-FC04: extent, content, and where each area starts")
     ap.add_argument("--window", action="store_true",
@@ -119,6 +167,10 @@ def main(argv):
         areas.setdefault(name, {})["plc_base"] = base
     mcfg["cnet_areas"] = areas
     mapping = CnetAreaMap(mcfg)
+
+    if args.find:
+        find_settings(cfg["port"])
+        return
 
     plc = XGBPlc()
     try:
