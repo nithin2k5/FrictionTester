@@ -37,6 +37,10 @@ class FakePage:
     def show_measurement(self):
         pass
 
+    def jog(self, axis, op, repeat=False):
+        self.ctl.submit("jog", axis, op)
+        return True
+
 
 @pytest.fixture(scope="module")
 def root():
@@ -86,11 +90,26 @@ def test_bad_values_are_refused_without_a_write(view):
     assert v.fields[("select", "limit_right")].get() == "50"        # restored
 
 
-def test_jog_cylinders_and_pull_push_write_nothing(view):
+def test_cylinders_and_pull_push_write_nothing(view):
     v, page = view
-    v._not_driven("shift", "Jog forward", "x")
+    v._not_driven("shift", "PULL position", "x")
     v._cylinder("select", "Clamp Cylinder")
     assert page.ctl.sent == [] and len(page.messages) == 2
+
+
+def test_jog_button_holds_repeats_and_releases(view, root):
+    v, page = view
+    v.jog_press("shift", "jog_left_high")
+    assert page.ctl.sent == [("jog", "shift", "jog_left_high")]
+    root.after(450, lambda: None)
+    end = root.tk.call("clock", "milliseconds") + 450
+    while root.tk.call("clock", "milliseconds") < end:
+        root.update()
+    assert len(page.ctl.sent) >= 2 and all(c == ("jog", "shift", "jog_left_high") for c in page.ctl.sent)
+    v.jog_release()
+    assert page.ctl.sent[-1] == ("jog", "shift", None) and v._jog is None
+    v.jog_release()                                    # a second release sends nothing
+    assert page.ctl.sent[-1] == ("jog", "shift", None) and page.ctl.sent.count(("jog", "shift", None)) == 1
 
 
 def test_lamp_sources():

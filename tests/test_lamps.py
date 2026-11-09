@@ -43,7 +43,9 @@ def test_machine_scan_lights_the_expected_lamps_in_one_request():
     assert len(page.be.calls) == 1
     select, shift = (s["lamps"] for s in sides)
     assert set(select) == set(shift) == set(SENSOR_LAMPS)
-    assert select["Clamp ON"] and select["Drive OK"] and select["Forward"] and not select["Servo"]
+    # backup 2026-11-08: P00006 = SL Extension SOL Home -> "Backward" (P00007 End -> "Forward")
+    assert select["Clamp ON"] and select["Drive OK"] and select["Backward"] and not select["Forward"]
+    assert not select["Servo"]
     assert shift["Clamp ON"] and shift["Drive OK"] and shift["Backward"] and not shift["Origin"]
-    assert common == {"E-stop upper": True, "E-stop lower": True, "Start": False,
-                      "SH out P00030": True, "SL out P00034": True}
+    assert common == {"E-stop top": True, "E-stop bottom": True, "Start": False,
+                      "SH servo out": True, "SL servo out": True, "NG box": False}

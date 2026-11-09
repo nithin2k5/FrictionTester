@@ -59,6 +59,23 @@ copy; acceptance and completion are checked separately.
 | PULL (tension) | D04101.1 / M07011 | D04101.3 / M07013 | 5–8 |
 | PUSH (compression) | D04101.0 / M07010 | D04101.2 / M07012 | 8–11 |
 | Alarm reset | D04100.10 / M0700A → P00033 | D04100.14 / M0700E → P00037 | 27–28 |
+| Jog left high / left low | D04101.4 / .5 (M07014 / M07015) | D04101.8 / .9 (M07018 / M07019) | 17–19 |
+| Jog right low / right high | D04101.6 / .7 (M07016 / M07017) | D04101.10 / .11 (M0701A / M0701B) | 17–19 |
+
+**Jog** (names and "in use" from the PLC backup of 2026-11-08, logic from p17–19): the jog start
+K04291 / K04292 (SL K04391 / K04392) is ON while a jog request (touch M0010x or PC M0701x) is held
+AND servo-ON status P00010 / P00014 AND no-alarm P00013 / P00017 AND NOT axis error K04201 / K04301
+AND NOT the opposite request AND NOT the soft limit of that direction (M00123 / M00124, SL M00223 /
+M00224). The "high" bits select high jog speed (K04293). No M0700F condition. The PLC does **not**
+watch the PC link (M00010 "PC Communication Check" is unused), so a jog bit left ON keeps the axis
+moving until a soft limit. App (Manual view, `pc_flow._cmd_jog`): hold-to-jog; the button repeats the
+request every 0.2 s, release / leaving the button stops it, the controller drops the bit after
+`timeouts.jog_hold` (0.6 s) without a repeat, on STOP and on closing; after a lost link the bit is
+released when the link returns. Refused (nothing written) without the write gate, with a part or
+operation active, a fault latched, stale status, servo OFF, a drive alarm, an axis error or the soft
+limit of that direction reached. — implemented, simulated.
+
+**No PC stop:** M0701C / M0701D "SH / SL Operation Stop" are named in the comment table but not used.
 
 Alarm reset (p27–28): `P00033 = (M00105 AND M0010D) OR (NOT M00105 AND M0700A)`, `P00037 = (M00205 AND
 M0020D) OR (NOT M00205 AND M0700E)` — the PC branch works only while the local/PC selector M00105 /

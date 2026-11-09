@@ -253,6 +253,7 @@ class PcController:
         self.stale = []
         self.pending_release = set()
         self.manual = {}
+        self.jogs = {}                  # axis -> {"op", "bit", "last"}: PC jog bits the app holds
         self.routines = {}
         self.flow = "idle"
         self.part = None
@@ -276,7 +277,7 @@ class PcController:
         self._stop.set()
 
     def busy(self):
-        return bool(self.routines) or bool(self.manual) or self.flow != "idle"
+        return bool(self.routines) or bool(self.manual) or bool(self.jogs) or self.flow != "idle"
 
     @property
     def tests(self):                  # kept for callers of the first version
@@ -322,6 +323,7 @@ class PcController:
             self._link_failed(exc, "status read")
         self._connection(snap, now)
         self.snap = snap
+        self._check_jogs(now)
         self._check_params(snap, now)
         for axis, op in list(self.manual.items()):
             self._apply(op.observe(snap, now), op)
@@ -340,6 +342,13 @@ class PcController:
     def _connection(self, snap, now):
         if snap is None:
             if self.connected:
+                for axis, held in list(self.jogs.items()):      # cannot write now: drop on return
+                    self.pending_release.add(held["bit"])
+                    self.log.log("JOG", f"{pp.AXIS_NAME[axis]} link lost while jogging - released on reconnection")
+                if self.jogs:
+                    self._msg("PLC connection lost while jogging - the PLC keeps jogging until a soft limit or "
+                              "until the link returns (the bit is released then)", "fail")
+                self.jogs.clear()
                 self.connected = False
                 self.link.words = None
                 if self.busy():
@@ -506,6 +515,82 @@ class PcController:
         elif kind in ("home", "alarm_reset"):
             for axis in (pp.AXES if cmd[1] == "all" else [cmd[1]]):
                 self._cmd_manual(kind, axis, now)
+        elif kind == "jog":
+            self._cmd_jog(cmd[1], cmd[2], now)
+
+    # ------------------------------------------------------------ jog
+    # Hold-to-jog (PC jog bits M07014-M0701B, plc.pdf p17-19): the PLC jogs while the
+    # bit is ON and stops when it drops; it does not watch the PC link (M00010 unused),
+    # so the app holds a bit only while the operator holds the button. The UI repeats
+    # ("jog", axis, op) while the button is down and sends ("jog", axis, None) on
+    # release; without a repeat for timeouts.jog_hold seconds the bit is dropped.
+    def _jog_hold(self):
+        return float(self.timeouts.get("jog_hold", 0.6))
+
+    def _jog_blocker(self, axis, op):
+        a = pp.AXIS_NAME[axis]
+        if axis in self.manual or axis in self.routines or self.part is not None:
+            return "a part or operation is active"
+        if self.fault:
+            return f"fault latched ({self.fault}) - acknowledge with STOP first"
+        why = self._can_move()
+        if why:
+            return why
+        snap = self.snap
+        if not snap.st(axis, "servo_on"):
+            return f"{a} servo is not ON (P0001{'0' if axis == 'shift' else '4'})"
+        if not snap.st(axis, "alarm_normal"):
+            return f"{a} drive alarm"
+        if snap.st(axis, "axis_error"):
+            return f"{a} axis error"
+        limit = "limit_left" if "left" in op else "limit_right"
+        if snap.st(axis, limit):
+            return f"{a} {limit.replace('_', ' ')} reached"
+        return None
+
+    def _cmd_jog(self, axis, op, now):
+        if op is None:
+            self._jog_release(axis, "button released")
+            return
+        held = self.jogs.get(axis)
+        if held and held["op"] == op:
+            held["last"] = now                     # refresh while the button is held
+            return
+        if op not in pp.JOG_OPS:
+            self._msg(f"unknown jog {op!r}", "fail")
+            return
+        why = self._jog_blocker(axis, op)
+        if why:
+            self._jog_release(axis, "refused")
+            self._msg(f"{pp.AXIS_NAME[axis]} jog not started: {why}", "fail")
+            return
+        changes = {pp.COMMANDS[axis][o]: (o == op) for o in pp.JOG_OPS}
+        try:
+            self.link.set_bits(changes, f"{pp.AXIS_NAME[axis]} {op}")
+        except Exception as exc:
+            self.pending_release.update(pp.COMMANDS[axis][o] for o in pp.JOG_OPS)
+            self.jogs.pop(axis, None)
+            self._msg(f"{pp.AXIS_NAME[axis]} jog not started: {exc}", "fail")
+            return
+        self.jogs[axis] = {"op": op, "bit": pp.COMMANDS[axis][op], "last": now}
+        self.log.log("JOG", f"{pp.AXIS_NAME[axis]} {op}", bit=pp.command_name(axis, op))
+
+    def _jog_release(self, axis, reason):
+        held = self.jogs.pop(axis, None)
+        if held is None:
+            return
+        try:
+            self.link.set_bits({held["bit"]: False}, f"{pp.AXIS_NAME[axis]} jog release ({reason})")
+        except Exception as exc:
+            self.pending_release.add(held["bit"])
+            self.log.log("RELEASE-FAIL", f"jog {axis}: {exc}")
+        self.log.log("JOG", f"{pp.AXIS_NAME[axis]} released", reason=reason)
+
+    def _check_jogs(self, now):
+        for axis, held in list(self.jogs.items()):
+            if now - held["last"] > self._jog_hold():
+                self._jog_release(axis, "no refresh from the button")
+                self._msg(f"{pp.AXIS_NAME[axis]} jog stopped: the button stopped refreshing", "busy")
 
     def _cmd_manual(self, kind, axis, now):
         a = pp.AXIS_NAME[axis]
@@ -524,6 +609,8 @@ class PcController:
         self._msg(f"{op.name}…", "busy")
 
     def _cmd_stop(self, now):
+        for axis in list(self.jogs):
+            self._jog_release(axis, "STOP")
         cancelled = []
         for axis, op in list(self.manual.items()):
             self._apply(op.cancel(now), op)
@@ -799,7 +886,8 @@ class PcController:
             self._request_params(model, values)
 
     def _release_everything(self, reason):
-        changes = {}
+        changes = {held["bit"]: False for held in self.jogs.values()}
+        self.jogs.clear()
         for op in list(self.manual.values()) + [r.op for r in self.routines.values() if r.op]:
             if op and op.needs_release:
                 changes[(op.idx, op.n)] = False
@@ -816,6 +904,7 @@ class PcController:
             "connected": self.connected, "link_error": self.link_error, "link_state": self.link_state,
             "link_label": LINK_STATES.get(self.link_state, ""), "status_age": self._status_age(), "flow": self.flow, "params": dict(self.params),
             "ops": {a: (op.name, op.state) for a, op in self.manual.items()},
+            "jogs": {a: held["op"] for a, held in self.jogs.items()},
             "routines": {a: (r.op.name if r.op else "", r.op.state if r.op else r.state)
                          for a, r in self.routines.items()},
             "stale": list(self.stale), "fault": self.fault, "stop_state": self.stop_state,

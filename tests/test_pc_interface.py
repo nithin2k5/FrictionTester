@@ -552,3 +552,90 @@ def test_failed_save_retry_without_duplicates(tmp_path):
     assert store.pending() == [] and len(table) == 2
     assert store.events.get_nowait()[0] == "saved" and store.events.empty()
     assert store.submit(rec) is False and len(table) == 2           # duplicate submission ignored
+
+
+# ---------------------------------------------------------------- PC jog (backup 2026-11-08)
+def _jog_bit(r, axis, op):
+    idx, n = pp.COMMANDS[axis][op]
+    return bool((r.sim.D[4100 + idx] >> n) & 1)
+
+
+def _hold(r, axis, op, seconds):
+    """The UI repeats the jog command while the button is down (every 0.2 s)."""
+    for _ in range(int(seconds / 0.2)):
+        r.ctl.submit("jog", axis, op)
+        r.run(0.2)
+
+
+def test_jog_bits_follow_the_comment_table():
+    assert pp.command_name("shift", "jog_left_high").endswith("M07014")
+    assert pp.command_name("shift", "jog_right_high").endswith("M07017")
+    assert pp.command_name("select", "jog_left_high").endswith("M07018")
+    assert pp.command_name("select", "jog_right_high").endswith("M0701B")
+
+
+def test_jog_runs_while_held_and_stops_on_release():
+    r = Rig()
+    r.confirm_params()
+    start = r.sim.axes["shift"].pos
+    _hold(r, "shift", "jog_left_low", 1.0)
+    assert _jog_bit(r, "shift", "jog_left_low") and r.sim.axes["shift"].jogging == "left"
+    assert r.sim.axes["shift"].pos > start
+    r.ctl.submit("jog", "shift", None)
+    r.run(0.1)                                         # the PLC scans the released bit
+    assert not _jog_bit(r, "shift", "jog_left_low") and r.sim.axes["shift"].jogging is None
+    assert not r.ctl.jogs
+
+
+def test_jog_dead_man_drops_the_bit_without_refresh():
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("jog", "select", "jog_right_high")
+    r.step()
+    assert _jog_bit(r, "select", "jog_right_high")
+    r.run(1.0)                                         # no refresh (UI hung, button lost)
+    assert not _jog_bit(r, "select", "jog_right_high")
+    assert any("stopped refreshing" in m for m in r.messages())
+
+
+def test_jog_refused_at_limit_without_servo_or_with_alarm():
+    r = Rig()
+    r.confirm_params()                                 # SH left limit 500 -> origin + 50000
+    r.sim.axes["shift"].pos = 1_000_000 + 60_000       # beyond it
+    r.run(0.2)
+    r.ctl.submit("jog", "shift", "jog_left_high")
+    r.step()
+    assert "limit left reached" in r.messages()[-1] and not _jog_bit(r, "shift", "jog_left_high")
+    r.sim.axes["select"].servo = False
+    r.run(0.2)
+    r.ctl.submit("jog", "select", "jog_left_low")
+    r.step()
+    assert "servo is not ON" in r.messages()[-1] and not _jog_bit(r, "select", "jog_left_low")
+    r.sim.axes["select"].servo, r.sim.axes["select"].alarm_normal = True, False
+    r.run(0.2)
+    r.ctl.submit("jog", "select", "jog_left_low")
+    r.step()
+    assert "drive alarm" in r.messages()[-1]
+
+
+def test_jog_released_by_stop_and_on_reconnection_after_a_lost_link():
+    r = Rig()
+    r.confirm_params()
+    _hold(r, "shift", "jog_right_low", 0.4)
+    r.ctl.submit("stop")
+    r.step()
+    assert not _jog_bit(r, "shift", "jog_right_low")
+    _hold(r, "shift", "jog_right_low", 0.4)
+    r.sim.connected = False
+    r.run(0.3)
+    assert not r.ctl.jogs and _jog_bit(r, "shift", "jog_right_low")     # PLC keeps it while unreachable
+    r.sim.connected = True
+    r.run(0.5)
+    assert not _jog_bit(r, "shift", "jog_right_low")                    # released on reconnection
+
+
+def test_jog_needs_the_write_gate():
+    r = Rig(verified=False)
+    r.ctl.submit("jog", "shift", "jog_left_low")
+    r.step()
+    assert "not verified" in r.messages()[-1] and not _jog_bit(r, "shift", "jog_left_low")

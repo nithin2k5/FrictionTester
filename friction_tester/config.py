@@ -38,7 +38,8 @@ DEFAULT_SETTINGS = {
     "test": {
         "select": {"model": "", "speed": None, "delay": None, "stroke": None, "positions": [None, None, None],
                    "load_min": None, "load_max": None, "clamp_count": 0,
-                   "forward_sensor": "P0006", "backward_sensor": "P0007", "part_sensor": "P000A",
+                   # PLC backup 2026-11-08: P00007 SL Extension SOL End, P00006 Home, P0000A SL Product Detection
+                   "forward_sensor": "P00007", "backward_sensor": "P00006", "part_sensor": "P000A",
                    # SELECT axis inputs, PRINTING PROGRAM OLD (plc.pdf; docs/plc_pc_interface.md)
                    "clamp_on_sensor": "P00009", "clamp_off_sensor": "P00008",
                    "drive_ok_input": "P00017", "servo_input": "P00014", "origin_input": "P00016"},
@@ -50,10 +51,9 @@ DEFAULT_SETTINGS = {
                   "drive_ok_input": "P00013", "servo_input": "P00010", "origin_input": "P00012"},
         # Machine-wide lamps under the two cable panels: label -> P address (bit_read area,
         # FC02). Emergency inputs are ON = healthy (permission in plc.pdf); P00030 / P00034
-        # are outputs ON on the machine (2026-11-09) next to SHIFT / SELECT torque-limit,
-        # home and alarm-reset outputs - their meaning (servo ON command?) is not confirmed.
-        "machine_lamps": {"E-stop upper": "P0000F", "E-stop lower": "P0000D", "Start": "P0000E",
-                          "SH out P00030": "P00030", "SL out P00034": "P00034"},
+        # are the SH / SL "Servo ON Output" (PLC backup 2026-11-08); P0001A is the NG box input.
+        "machine_lamps": {"E-stop top": "P0000F", "E-stop bottom": "P0000D", "Start": "P0000E",
+                          "SH servo out": "P00030", "SL servo out": "P00034", "NG box": "P0001A"},
         # Sensor lamps: cylinder forward/backward and part presence per cable,
         # from the machine I/O list (also P000E START, P000F emergency stop).
         # Read through machine_profile.mapping (bit_read area, FC02 for P inputs).

@@ -16,6 +16,11 @@ mapping, allow_writes) and reproduces, per axis:
   P00037 only while the selector is OFF
 * measurement-start step bits M0204k / M0214k (bit k = step k, as BSFT)
 
+* PC jog M07014-M0701B [p17-19]: while a jog bit is held, with servo ON, alarm
+  normal, no error, no opposite request and the soft limit of that direction not
+  reached (left: CurPos >= origin + L*100, right: CurPos <= origin - R*100), the axis
+  moves (high 5000 / low 500 counts/s); status M0801C-F shows the limits
+
 Faults: connected=False (reads/writes raise), fail_next_write, stuck[axis]
 (the axis never reaches its target), ignore[axis] (requests echoed, never
 accepted), alarm on an axis (alarm_normal False; clearable or not).
@@ -33,6 +38,11 @@ STATUS = {
                "pull_active": (1, 8), "push_active": (1, 9), "permitted": (1, 11), "axis_error": (2, 1),
                "at_pull": (2, 4), "at_push": (2, 5), "at_meas_start": (2, 15)},
 }
+JOG = {"shift": {"jog_left_high": (1, 4), "jog_left_low": (1, 5), "jog_right_low": (1, 6), "jog_right_high": (1, 7)},
+       "select": {"jog_left_high": (1, 8), "jog_left_low": (1, 9), "jog_right_low": (1, 10),
+                  "jog_right_high": (1, 11)}}
+LIMIT_STATUS = {"shift": {"limit_left": (1, 12), "limit_right": (1, 13)},
+                "select": {"limit_left": (1, 14), "limit_right": (1, 15)}}
 COMPLETE = {"shift": {"pull": "M00051", "push": "M00052"}, "select": {"pull": "M00061", "push": "M00062"}}
 PARAM_ORDER = [("shift", k) for k in ("jog_low", "jog_high", "speed", "pull_travel", "limit_left", "limit_right")] + \
               [("select", k) for k in ("jog_low", "jog_high", "speed", "pull_travel", "limit_left", "limit_right")] + \
@@ -78,6 +88,7 @@ class Axis:
         self.seq = {k: Seq() for k in ("home", "pull", "push", "meas")}
         self.complete = {"pull": False, "push": False}
         self.params = {}
+        self.jogging = None              # "left" / "right" while the PLC jogs
 
 
 class PcLadderSim:
@@ -187,6 +198,7 @@ class PcLadderSim:
             self._stroke(axis, a, "push", a.meas_target, dt)
             self._meas(axis, a, dt)
             self._move(axis, a, dt)
+            self._jog(axis, a, dt)
         for i in range(3):
             self.D[4000 + i] = self.D[4100 + i]
         self._update_status()
@@ -279,6 +291,24 @@ class PcLadderSim:
         if done:
             s.go(st + 1)
 
+    def _limits(self, a):
+        p = a.params
+        left = bool(p.get("limit_left")) and a.pos >= ORIGIN + p["limit_left"] * 100
+        right = bool(p.get("limit_right")) and a.pos <= ORIGIN - p["limit_right"] * 100
+        return left, right
+
+    def _jog(self, axis, a, dt):
+        bit = lambda op: bool((self.D[4100 + JOG[axis][op][0]] >> JOG[axis][op][1]) & 1)
+        left = bit("jog_left_high") or bit("jog_left_low")
+        right = bit("jog_right_low") or bit("jog_right_high")
+        at_left, at_right = self._limits(a)
+        ok = self._ready(a) and not (left and right)
+        a.jogging = "left" if ok and left and not at_left else ("right" if ok and right and not at_right else None)
+        if a.jogging:
+            high = bit("jog_left_high") or bit("jog_right_high")
+            step = int((5000 if high else 500) * dt)
+            a.pos += step if a.jogging == "left" else -step
+
     def _update_status(self):
         words = [0, 0, 0]
         for axis in AXES:
@@ -294,6 +324,9 @@ class PcLadderSim:
             }
             for name, (idx, n) in STATUS[axis].items():
                 if vals[name]:
+                    words[idx] |= 1 << n
+            for on, (idx, n) in zip(self._limits(a), LIMIT_STATUS[axis].values()):
+                if on:
                     words[idx] |= 1 << n
         for i in range(3):
             self.D[4003 + i] = words[i]

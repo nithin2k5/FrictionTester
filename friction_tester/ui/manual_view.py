@@ -13,10 +13,13 @@ only what the PLC program accepts from the PC:
   value (Enter, or leaving the field) is sent with the model's other parameters
   through the controller's normal parameter write - the same gate as RUN
   (mapping verified, live writes enabled, command owner confirmed).
-* Jog, PULL / PUSH position and the cylinders have no PC command the app drives
-  in that program (jog runs from the touch panel; PULL / PUSH only inside a
-  cable routine; the fixture bits M0700x also feed the print trigger P00038).
-  Their buttons say so instead of writing anything.
+* Jog: hold-to-jog with the PC jog bits M07014-M0701B (PLC backup 2026-11-08,
+  plc.pdf p17-19). Press starts it, the button repeats the request every 0.2 s,
+  release (or leaving the button) stops it; the controller drops the bit if the
+  repeats stop. Same write gate as RUN.
+* PULL / PUSH position and the cylinders are not driven: PULL / PUSH run only
+  inside a cable routine, and the fixture bits M0700x also feed the print trigger
+  P00038. Their buttons say so instead of writing anything.
 """
 
 import tkinter as tk
@@ -47,7 +50,9 @@ STATUS_LAMPS = [
     ("Right (PUSH) Limit", "st:limit_right", LAMP_GREEN_ON),
     ("Left (PULL) Limit", "st:limit_left", LAMP_GREEN_ON),
 ]
-JOG_BUTTONS = [("⏪", "fast reverse"), ("◀", "reverse"), ("▶", "forward"), ("⏩", "fast forward")]
+# (glyph, PC jog op) - PRINTING PROGRAM OLD M07014-M0701B "Jog Left High / Left Low / Right Low / Right High"
+JOG_BUTTONS = [("⏪", "jog_left_high"), ("◀", "jog_left_low"), ("▶", "jog_right_low"), ("⏩", "jog_right_high")]
+JOG_REPEAT_MS = 200          # the controller drops the bit after timeouts.jog_hold (0.6 s) without a repeat
 CYLINDERS = ["Clamp Cylinder", "Removing Cylinder 1", "Removing Cylinder 2", "Loading Cylinder"]
 PARAM_FIELDS = [("limit_left", "Left Limit"), ("limit_right", "Right Limit")]
 
@@ -81,6 +86,7 @@ class ManualView(tk.Frame):
         self.fields = {}         # (axis, key) -> Entry
         self.status_lamps = {}   # axis -> {text: (canvas, dot, colour)}
         self.live = {}           # axis -> {"stroke": Label, "load": Label}
+        self._jog = None         # (axis, op, after-id) while a jog button is held
 
         # As on the original: the two group boxes as tall as their content, Return just below.
         row = tk.Frame(self, bg=theme.BG)
@@ -155,11 +161,13 @@ class ManualView(tk.Frame):
         self._field(f, axis, "jog_high").grid(row=1, column=2)
         f.grid(row=5, column=0, rowspan=2, pady=PAD)
         f = self._row(g)
-        for text, what in JOG_BUTTONS:
-            tk.Button(f, text=text, command=lambda w=what: self._not_driven(
-                axis, f"Jog {w}", "jog is not a PC command in PRINTING PROGRAM OLD - use the machine's touch panel"),
-                bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE, activeforeground="white", bd=0, width=4,
-                pady=2, font=_font(15, True), cursor="hand2").pack(side="left", padx=4)
+        for text, op in JOG_BUTTONS:             # hold to jog, release to stop
+            b = tk.Button(f, text=text, bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE,
+                          activeforeground="white", bd=0, width=4, pady=2, font=_font(15, True), cursor="hand2")
+            b.bind("<ButtonPress-1>", lambda _e, o=op: self.jog_press(axis, o))
+            b.bind("<ButtonRelease-1>", lambda _e: self.jog_release())
+            b.bind("<Leave>", lambda _e: self.jog_release())
+            b.pack(side="left", padx=4)
         f.grid(row=7, column=0, pady=(12, 0))
 
         lamps = {}                                      # evenly spaced, as on the original
@@ -207,6 +215,31 @@ class ManualView(tk.Frame):
         return box
 
     # ---------------------------------------------------------- actions
+    def jog_press(self, axis, op):
+        """Start a PC jog and keep repeating it while the button is held."""
+        self.jog_release()
+        if not self.page.jog(axis, op):
+            return
+        self._jog = (axis, op, self.after(JOG_REPEAT_MS, self._jog_repeat))
+
+    def _jog_repeat(self):
+        if self._jog is None:
+            return
+        axis, op, _id = self._jog
+        self.page.jog(axis, op, repeat=True)
+        self._jog = (axis, op, self.after(JOG_REPEAT_MS, self._jog_repeat))
+
+    def jog_release(self):
+        if self._jog is None:
+            return
+        axis, _op, after_id = self._jog
+        self._jog = None
+        try:
+            self.after_cancel(after_id)
+        except Exception:
+            pass
+        self.page.jog(axis, None)
+
     def _not_driven(self, axis, what, why):
         self.page._set_status(f"{pp.AXIS_NAME[axis]} {what}: {why}", theme.BUSY, 6)
 

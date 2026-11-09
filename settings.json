@@ -36,8 +36,8 @@
       "load_min": null,
       "load_max": null,
       "clamp_count": 0,
-      "forward_sensor": "P0006",
-      "backward_sensor": "P0007",
+      "forward_sensor": "P00007",
+      "backward_sensor": "P00006",
       "part_sensor": "P000A"
     },
     "shift": {

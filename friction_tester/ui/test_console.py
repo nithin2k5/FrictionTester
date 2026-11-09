@@ -1948,7 +1948,18 @@ class TestConsolePage(tk.Frame):
         self.screen_tag.config(text="🕹  Manual Operation")
         self.manual_btn.config(text="📈  Measurement")
 
+    def jog(self, axis, op, repeat=False):
+        """Manual view: start / refresh (op) or stop (None) a PC jog. Returns False if not sent."""
+        if not (self.pc and self.ctl is not None):
+            if op is not None and not repeat:
+                self._set_status(f"{pp.AXIS_NAME[axis]} jog: PC jog exists only in the PRINTING PROGRAM OLD "
+                                 "profile (mode pc_interface)", theme.BUSY, 5)
+            return False
+        self.ctl.submit("jog", axis, op)
+        return True
+
     def show_measurement(self):
+        self.manual.jog_release()
         self.manual.pack_forget()
         self.measure_view.pack(fill="both", expand=True)
         self.screen_tag.config(text="📈  Measurement Screen")

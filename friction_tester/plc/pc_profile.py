@@ -13,6 +13,16 @@ Params    (pages 30, 25-27, 32):  D04200..D04213 -> M0750..M0763 -> D020xx/D021x
                                   (word + upper word cleared), echo M0750..M0763 -> D04007..D04020
 
 Bit n of a word is zero-based: D04101 bit 3 is M07013.
+
+PLC backup 2026-11-08 (PLCBCKUP_SURESH08_11_2026.pdf, XG5000 variable/comment table
+of the program read from the machine's PLC; docs/plc_backup_2026-11-08.md): the
+installed program has this interface - D04000-D04020 transmit, D04100-D04102 receive
+bits, D04200-D04213 receive words, M0700-M0702 / M0750-M0763 / M0800-M0802 - with
+English names for every bit, and an "in use" flag per device. Used: the PC jog bits
+M07014-M0701B (pages 17-19: held request + servo ON + no alarm + no axis error + no
+opposite request + soft limit not reached -> K04291/K04292 jog start). Listed but
+NOT used: M0701C / M0701D "Operation Stop" (still no PC stop), M00010 "PC
+Communication Check" (the PLC does not watch the PC link), D04103-D04119, D04214-D04219.
 """
 
 PROFILE_ID = "printing_program_old_pc_words"
@@ -37,6 +47,11 @@ COMMANDS = {
         "pull": (1, 1),         # M07011 [p5-6]:  SET M02010 when M0201 = 0, M00120, M00122
         "push": (1, 0),         # M07010 [p8-9]:  SET M02020 when M0202 = 0, M00120, M00122
         "alarm_reset": (0, 10), # M0700A [p27]: P00033 = (M00105 AND M0010D) OR (NOT M00105 AND M0700A)
+        # PC jog [p17-18], held requests (backup 2026-11-08: "From PC - SH Jog ...", in use)
+        "jog_left_high": (1, 4),   # M07014
+        "jog_left_low": (1, 5),    # M07015
+        "jog_right_low": (1, 6),   # M07016
+        "jog_right_high": (1, 7),  # M07017
     },
     "select": {
         "home": (0, 13),        # M0700D [p4]
@@ -44,6 +59,10 @@ COMMANDS = {
         "pull": (1, 3),         # M07013 [p7-8]
         "push": (1, 2),         # M07012 [p10-11]
         "alarm_reset": (0, 14), # M0700E [p28]: P00037 = (M00205 AND M0020D) OR (NOT M00205 AND M0700E)
+        "jog_left_high": (1, 8),   # M07018 [p18-19]
+        "jog_left_low": (1, 9),    # M07019
+        "jog_right_low": (1, 10),  # M0701A
+        "jog_right_high": (1, 11), # M0701B
     },
 }
 
@@ -90,13 +109,13 @@ STATUS = {
         "expansion_end": (0, 7, "P00007"),
     },
 }
-# Neutral names: physical meaning / polarity not verified against wiring.
+# Names from the PLC backup's comment table (2026-11-08); keys kept for compatibility.
 COMMON_STATUS = {
-    "m0800a_cond": (0, 10, "NOT M00026; M00026 = NOT P0000B AND P00018 [p23-24] - product detection? unverified"),
-    "m0800b_cond": (0, 11, "NOT M00025; M00025 = NOT P0000A AND P00019 [p23-24] - product detection? unverified"),
-    "meas_start_switch": (0, 12, "P0000E conditioned [p24]"),
-    "p0000f_input": (0, 13, "P0000F upper emergency input, ON = permission in the shown logic [p27-28]"),
-    "p0000d_input": (2, 6, "P0000D lower emergency input, ON = permission in the shown logic [p25]"),
+    "m0800a_cond": (0, 10, "M0800A 'To PC - SL Product Detection' (NOT M00026; P0000A / P00018) [p23-24]"),
+    "m0800b_cond": (0, 11, "M0800B 'To PC - SH Product Detection' (NOT M00025; P0000B / P00019) [p23-24]"),
+    "meas_start_switch": (0, 12, "M0800C 'To PC - Measurement Start Switch' (P0000E) [p24]"),
+    "p0000f_input": (0, 13, "M0800D 'To PC - Emergency Stop Switch' = P0000F 'Emergency Stop Top', ON = healthy"),
+    "p0000d_input": (2, 6, "M08026 'To PC - Emergency Stop Bottom' = P0000D, ON = healthy"),
 }
 
 # Local/PC selector per axis (touch-operation select): ON = local branch, the PC
@@ -116,7 +135,8 @@ MEAS_RELEASE_STEP = 7          # step 7 waits for the request to be released
 
 # Bits that drive more than one thing - never exposed as a simple control.
 COUPLED_BITS = {
-    "M07008": "SHIFT torque-limit P00031 (with M0700F) AND green lamp P0002D [p27, p29] - not alarm reset",
+    "M07008": "SHIFT torque-limit P00031 (with M0700F) AND green lamp P0002D [p27, p29] - backup comment "
+              "'Indicator Lamp - Green' - not alarm reset",
     "M0700C": "SELECT torque-limit P00035 (with M0700F) [p28]",
     "M0700F": "PC manual/automatic branch: servo-enable paths, torque limits, D00490 (+100 PULL target) [p20, p27-28]",
     "M07007": "SHIFT servo enable in the manual PC branch only (M0700F ON) [p27]",
@@ -178,7 +198,9 @@ FIXTURE_COMMANDS = {
     "select_clamp": (2, 1, "P0002F"),
 }
 
-# Request bits the app must never leave set by accident (motion requests and
+JOG_OPS = ("jog_left_high", "jog_left_low", "jog_right_low", "jog_right_high")
+
+# Request bits the app must never leave set by accident (motion requests, jog and
 # alarm reset).
 MOTION_BITS = {(axis, op): COMMANDS[axis][op] for axis in AXES for op in COMMANDS[axis]}
 
@@ -201,17 +223,19 @@ def command_name(axis, op):
 
 
 UNRESOLVED = [
-    "Program identity: confirm PRINTING PROGRAM OLD.xgwx is the program installed on the machine.",
+    "Program identity: the PLC backup of 2026-11-08 (comment table) matches this interface; the ladder "
+    "itself is still from plc.pdf (2026-11-06) - compare when a ladder printout of the backup is available.",
     "Communication: PLC model, protocol, station, serial settings and the Modbus mapping of the D area "
     "(table, offset, register width, word order). Live writes stay off until verified.",
     "Native M reads (M00051/52/61/62, selectors M00105/M00205, measurement-start steps M0204x/M0214x): "
     "needed for PULL/PUSH completion and verified measurement-start acceptance.",
     "Command-word ownership: no other program may write D04100-D04102 while this app runs.",
-    "Stop: no PC stop command and no verified abort procedure in this program.",
-    "M0800A/M0800B: conditioned, inverted signals (NOT M00026 / NOT M00025, from P0000A/P0000B and "
-    "unlabelled P00018/P00019); M00025/M00026 are also SELECT-cycle PULL/PUSH requests [p7, p10, p14, p23]. "
-    "Physical assignment and presence semantics unverified - diagnostic only.",
-    "Emergency inputs P0000F/P0000D: polarity and wiring unverified (shown raw).",
+    "Stop: no PC stop command - M0701C / M0701D 'Operation Stop' are named but not used (backup 2026-11-08).",
+    "PC link watchdog: M00010 'PC Communication Check' is not used - the PLC does not notice a lost PC link. "
+    "A held jog bit stops only at a soft limit; the app releases it on button release, after "
+    "timeouts.jog_hold without a refresh, and on reconnection.",
+    "M0800A/M0800B: SL / SH product detection per the backup; they come from NOT M00026 / NOT M00025 "
+    "(P0000A/P0000B and P00018/P00019) [p23-24] - polarity on the machine still to be seen.",
     "Home / PULL / PUSH sequences have no PLC timeout (T0100-T0102 unused); a stuck sequence must be "
     "cleared at the machine. Timer units (presets 1, 5, 10, 50) depend on timer configuration.",
     "Units: speeds/travel/limits are scaled x100 and measurement start x10 into positioning counts; "
