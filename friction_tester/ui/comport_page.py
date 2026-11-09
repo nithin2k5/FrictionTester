@@ -5,7 +5,7 @@ the right. Every device row has the same columns:
 
     Device | COM Port | Baud Rate | ID | actions | status
 
-* PLC — LS XGB over RS232, Modbus RTU 8N1 (as in the EOL tester): CONNECT /
+* PLC — LS XGB built-in Cnet CH2, RS-485 (USB adapter), Modbus RTU 8N1: CONNECT /
   TEST, plus test bits and a D-register read.
 * Loadcells — two KOMEIN AM-50LW indicators: CONNECT / TEST / ZERO.
 * NI DAQ — NI USB-6210 analog input: TEST.
@@ -180,7 +180,7 @@ class ComPortPage(tk.Frame):
     # ================================================================ PLC
     def _build_plc_card(self, parent):
         cfg = self.settings["plc"]
-        body = self._card(parent, "PLC", "LS XGB  ·  RS232  ·  Modbus RTU 8N1")
+        body = self._card(parent, "PLC", "LS XGB  ·  CH2 RS-485  ·  Modbus RTU 8N1")
         self._table_header(body, COLS)
 
         def actions(p):

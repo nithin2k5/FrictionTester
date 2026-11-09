@@ -1,4 +1,6 @@
-"""LS XGB PLC over RS232, using Modbus RTU (8N1), as in the EOL tester.
+"""LS XGB PLC over a serial port, Modbus RTU (8N1). On this machine: built-in Cnet CH2, RS-485,
+through a USB-RS485 adapter (COM10, station 1); the adapter switches the RS-485 direction, so the
+port is used like any COM port.
 
 Bit devices are named XGB style: a device letter, the word number in decimal,
 then the bit within that word as one hex digit. M0067 is word 6 bit 7, so the
