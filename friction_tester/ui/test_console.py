@@ -434,7 +434,11 @@ class TestConsolePage(tk.Frame):
         left.grid(row=0, column=0, sticky="nsew")
         if self.shared or self.pc or self.kd:
             self._build_plc_strip(left)      # left column only, so the side panel keeps its height
-        panels = tk.Frame(left, bg=theme.BG)
+        # Measurement view (cable panels + bottom bar) and the Manual Operation view share
+        # the left column; the Manual button in the status bar switches between them.
+        self.measure_view = tk.Frame(left, bg=theme.BG)
+        self.measure_view.pack(fill="both", expand=True)
+        panels = tk.Frame(self.measure_view, bg=theme.BG)
         panels.pack(fill="both", expand=True, pady=(0, 6))
         self.panels = []
         for i, (key, title, _) in enumerate(self.SIDES):
@@ -443,7 +447,10 @@ class TestConsolePage(tk.Frame):
             panels.columnconfigure(i, weight=1, uniform="panel")
             self.panels.append(p)
         panels.rowconfigure(0, weight=1)
-        self._build_bottom(left)
+        self._build_bottom(self.measure_view)
+        from .manual_view import ManualView
+        self.manual = ManualView(left, self, self.SIDES)       # packed by show_manual()
+        self._pc_snap = None
 
         self._build_side_panel(body).grid(row=0, column=1, sticky="ns", padx=(8, 0))
         self._show_current_model()
@@ -468,8 +475,9 @@ class TestConsolePage(tk.Frame):
         bar.pack(fill="x")
         tag = tk.Frame(bar, bg=theme.PANEL, highlightbackground=theme.TITLE_FG, highlightthickness=0)
         tag.pack(side="left")
-        tk.Label(tag, text="📈  Measurement Screen", bg=theme.PANEL, fg="white", font=_font(14),
-                 padx=16, pady=6).pack()
+        self.screen_tag = tk.Label(tag, text="📈  Measurement Screen", bg=theme.PANEL, fg="white", font=_font(14),
+                                   padx=16, pady=6)
+        self.screen_tag.pack()
         tk.Frame(tag, bg=theme.TITLE_FG, height=3).pack(fill="x")
 
         tk.Button(bar, text="⏻  EXIT", command=self.exit_app, bg="#b71c1c", fg="white",
@@ -481,6 +489,10 @@ class TestConsolePage(tk.Frame):
         tk.Button(bar, text="Clear Results", command=self.clear_results, bg="#333", fg="white",
                   activebackground="#444", activeforeground="white", bd=0, padx=14, pady=5,
                   font=_font(10, True), cursor="hand2").pack(side="right", padx=8)
+        self.manual_btn = tk.Button(bar, text="🕹  Manual", command=self.toggle_manual, bg="#2a313d", fg="white",
+                                    activebackground="#353d4b", activeforeground="white", bd=0, padx=14, pady=5,
+                                    font=_font(10, True), cursor="hand2")
+        self.manual_btn.pack(side="right", padx=(8, 0))
 
         self.status = tk.Label(bar, text="System initialization", bg=FIELD_BG, fg="white", font=_font(11),
                                relief="solid", bd=1, padx=12, pady=5, anchor="w")
@@ -722,6 +734,7 @@ class TestConsolePage(tk.Frame):
         self.store.submit(record)
 
     def _show_pc_status(self, snap, summary):
+        self._pc_snap = snap
         p = summary["params"]
         badge = {"confirmed": theme.PASS, "writing": theme.UPDATE, "pending": theme.BUSY}.get(p["state"], theme.FAIL)
         if snap is None:
@@ -1421,6 +1434,8 @@ class TestConsolePage(tk.Frame):
         self.settings["test"]["plc_params"] = values
         if self.pc and self.ctl is not None:
             self.ctl.submit("params", row["MM_MODEL"], values)
+        if getattr(self, "manual", None) is not None:
+            self.manual.refresh_params()
         model_type = (row.get("MM_TYPE") or "").strip().upper()
         self.settings["test"]["model_type"] = model_type
         self.settings["test"]["part_number"] = (row.get("MM_PART_NUMBER") or "").strip()
@@ -1922,6 +1937,29 @@ class TestConsolePage(tk.Frame):
         except Exception:
             pass
 
+    # ------------------------------------------------------- manual view
+    def manual_shown(self):
+        return getattr(self, "manual", None) is not None and self.manual.winfo_ismapped()
+
+    def show_manual(self):
+        self.measure_view.pack_forget()
+        self.manual.refresh_params()
+        self.manual.pack(fill="both", expand=True)
+        self.screen_tag.config(text="🕹  Manual Operation")
+        self.manual_btn.config(text="📈  Measurement")
+
+    def show_measurement(self):
+        self.manual.pack_forget()
+        self.measure_view.pack(fill="both", expand=True)
+        self.screen_tag.config(text="📈  Measurement Screen")
+        self.manual_btn.config(text="🕹  Manual")
+
+    def toggle_manual(self):
+        if self.manual_shown():
+            self.show_measurement()
+        else:
+            self.show_manual()
+
     def _set_status(self, text, color="white", hold=3):
         """Show an action's message; polling won't overwrite it for `hold` seconds."""
         if text and text != getattr(self, "_last_status", None):
@@ -2009,6 +2047,10 @@ class TestConsolePage(tk.Frame):
                 cv.itemconfig(dot, fill=LAMP_ON if side["lamps"].get(name) else LAMP_OFF)
         for name, (cv, dot) in getattr(self, "machine_lamps", {}).items():
             cv.itemconfig(dot, fill=LAMP_ON if snap.get("common", {}).get(name) else LAMP_OFF)
+        if self.manual_shown():
+            latest = getattr(self.sampler, "latest", None) or {}
+            strokes = {k: v[1] for k, v in latest.items() if isinstance(v, (tuple, list)) and len(v) > 1}
+            self.manual.update_view(snap["sides"], self._pc_snap, strokes)
         if time.monotonic() < self._hold_until:
             return   # keep the last action's message on screen for a moment
         if snap["missing"]:
