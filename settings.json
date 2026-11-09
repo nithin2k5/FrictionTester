@@ -146,8 +146,8 @@
       },
       "mapping": {
         "schema": "xgb_cnet_areas",
-        "verified": true,
-        "verified_note": "Set 2026-11-09 at the user's request, without the live comparison (D00150-154 / M0000C-D vs HMI) or an XG5000 read-back. Basis: plc kd All.pdf p134 CH2 Modbus areas P00000/M00000/D00000/D00000; D00500 reads answer on the machine.",
+        "verified": false,
+        "verified_note": "Withdrawn 2026-11-09: on the machine FC04 offset 5000 (D05000) -> exception 02, word window ~1004 registers - the live Cnet areas do not match plc kd All.pdf (word base likely P0020). Fix the CH2 Modbus areas in XG5000 (P00000/M00000/D00000/D00000), then re-verify.",
         "cnet_areas": {
           "bit_read": {
             "plc_base": "P00000",
