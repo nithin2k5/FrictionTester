@@ -96,26 +96,33 @@ class ManualView(tk.Frame):
         self.refresh_params()
 
     # ----------------------------------------------------------- layout
-    def _card(self, parent, title):
-        """Side-panel style card: title strip with an orange accent, dark body."""
+    # Each cable is a 2 x 3 grid of cards; the two cards of a row share its height,
+    # the rows share the panel height, and every card centres its content.
+    LABEL_W = 10             # characters: right-aligned labels of equal width line the fields up
+
+    def _card(self, parent, title, row, col):
+        """Side-panel style card in grid cell (row, col); returns the centred content frame."""
         card = tk.Frame(parent, bg=CARD, highlightbackground=theme.BORDER, highlightthickness=1)
-        card.pack(fill="x", pady=(0, 6))
+        card.grid(row=row, column=col, sticky="nsew", padx=(0, 4) if col == 0 else (4, 0), pady=(0, 8))
         head = tk.Frame(card, bg=CARD_HEAD)
         head.pack(fill="x")
         tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
         tk.Label(head, text=title.upper(), bg=CARD_HEAD, fg=LABEL_FG, font=_font(8, True)).pack(
             side="left", padx=8, pady=4)
         body = tk.Frame(card, bg=CARD)
-        body.pack(fill="x", padx=10, pady=8)
-        return body
+        body.pack(fill="both", expand=True, padx=12, pady=10)
+        content = tk.Frame(body, bg=CARD)
+        content.pack(expand=True)            # centred horizontally and vertically
+        return content
 
-    def _button(self, parent, text, command, width=18, off=False):
+    def _button(self, parent, text, command, width=16, off=False):
         bg, fg = (BTN_OFF_BG, theme.MUTED) if off else (BTN_BG, "white")
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=BTN_ACTIVE,
-                         activeforeground="white", bd=0, width=width, pady=4, font=_font(9, True), cursor="hand2")
+                         activeforeground="white", bd=0, width=width, pady=5, font=_font(9, True), cursor="hand2")
 
-    def _label(self, parent, text, fg=LABEL_FG, size=10, bold=False):
-        return tk.Label(parent, text=text, bg=CARD, fg=fg, font=_font(size, bold))
+    def _label(self, parent, text, fg=LABEL_FG, size=10, bold=False, width=None, anchor="center"):
+        kw = {"width": width} if width else {}
+        return tk.Label(parent, text=text, bg=CARD, fg=fg, font=_font(size, bold), anchor=anchor, **kw)
 
     def _field(self, parent, axis, key, spin=False):
         common = dict(width=7, justify="center", font=_font(11), bg=FIELD_BG, fg=VALUE_FG,
@@ -134,72 +141,70 @@ class ManualView(tk.Frame):
         box = tk.Frame(parent, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
         tk.Label(box, text=title, bg=theme.PANEL, fg="white", font=_font(14)).pack(pady=(6, 2))
         tk.Frame(box, bg=theme.BORDER, height=1).pack(fill="x", padx=8)
-        cols = tk.Frame(box, bg=theme.PANEL)
-        cols.pack(fill="both", expand=True, padx=8, pady=8)
-        cols.columnconfigure(0, weight=1, uniform="cols")
-        cols.columnconfigure(1, weight=1, uniform="cols")
-        left = tk.Frame(cols, bg=theme.PANEL)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-        right = tk.Frame(cols, bg=theme.PANEL)
-        right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        grid = tk.Frame(box, bg=theme.PANEL)
+        grid.pack(fill="both", expand=True, padx=10, pady=(10, 2))
+        for c in (0, 1):
+            grid.columnconfigure(c, weight=1, uniform="col")
+        for r in (0, 1, 2):
+            grid.rowconfigure(r, weight=1)
+        lw = self.LABEL_W
 
-        # ---- POSITION SET
-        body = self._card(left, "Position set")
+        # row 0: POSITION SET | ACTUATOR STATUS
+        c = self._card(grid, "Position set", 0, 0)
         for r, (key, label) in enumerate(PARAM_FIELDS):
-            self._label(body, label).grid(row=r, column=0, sticky="e", padx=(0, 8), pady=2)
-            self._field(body, axis, key).grid(row=r, column=1, pady=2)
-            self._label(body, "mm", fg=theme.HEADER_FG, size=9).grid(row=r, column=2, sticky="w", padx=4)
+            self._label(c, label, width=lw, anchor="e").grid(row=r, column=0, padx=(0, 8), pady=4)
+            self._field(c, axis, key).grid(row=r, column=1, pady=4)
+            self._label(c, "mm", fg=theme.HEADER_FG, size=9, width=4, anchor="w").grid(row=r, column=2, padx=(6, 0))
 
-        # ---- JOG CONTROL
-        body = self._card(left, "Jog control")
-        self._label(body, "Low", fg=theme.HEADER_FG, size=9).grid(row=0, column=1)
-        self._label(body, "High", fg=theme.HEADER_FG, size=9).grid(row=0, column=2)
-        self._label(body, "Jog Speed").grid(row=1, column=0, sticky="e", padx=(0, 8))
-        self._field(body, axis, "jog_low", spin=True).grid(row=1, column=1, padx=2)
-        self._field(body, axis, "jog_high", spin=True).grid(row=1, column=2, padx=2)
-        jog = tk.Frame(body, bg=CARD)
-        jog.grid(row=2, column=0, columnspan=3, pady=(10, 0))
-        for text, what in JOG_BUTTONS:
-            tk.Button(jog, text=text, command=lambda w=what: self._not_driven(
-                axis, f"Jog {w}", "jog is not a PC command in PRINTING PROGRAM OLD - use the machine's touch panel"),
-                bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE, activeforeground="white", bd=0, width=4,
-                pady=2, font=_font(14, True), cursor="hand2").pack(side="left", padx=3)
-
-        # ---- POSITION MOVE (PULL / PUSH run only inside a test in this program)
-        body = self._card(left, "Position move")
-        for c, (text, what) in enumerate((("⇦  Pull Position", "PULL"), ("Push Position  ⇨", "PUSH"))):
-            self._button(body, text, lambda w=what: self._not_driven(
-                axis, f"{w} position", f"{w} runs only inside a cable test (RUN) in this PLC program"),
-                width=15, off=True).grid(row=0, column=c, padx=3)
-
-        # ---- ACTUATOR STATUS
-        body = self._card(right, "Actuator status")
+        c = self._card(grid, "Actuator status", 0, 1)
         lamps = {}
         for r, (text, _src, colour) in enumerate(STATUS_LAMPS):
-            cv = tk.Canvas(body, width=18, height=18, bg=CARD, highlightthickness=0)
+            cv = tk.Canvas(c, width=18, height=18, bg=CARD, highlightthickness=0)
             dot = cv.create_oval(2, 2, 16, 16, fill=LAMP_OFF, outline="#111")
-            cv.grid(row=r, column=0, pady=2, sticky="w")
-            self._label(body, text, fg=LINK_FG).grid(row=r, column=1, sticky="w", padx=6)
+            cv.grid(row=r, column=0, pady=2)
+            self._label(c, text, fg=LINK_FG, width=17, anchor="w").grid(row=r, column=1, padx=(8, 0))
             lamps[text] = (cv, dot, colour)
         self.status_lamps[axis] = lamps
 
-        # ---- LIVE
-        body = self._card(right, "Live")
+        # row 1: JOG CONTROL | LIVE
+        c = self._card(grid, "Jog control", 1, 0)
+        self._label(c, "Low", fg=theme.HEADER_FG, size=9).grid(row=0, column=1)
+        self._label(c, "High", fg=theme.HEADER_FG, size=9).grid(row=0, column=2)
+        self._label(c, "Jog Speed", width=lw, anchor="e").grid(row=1, column=0, padx=(0, 8))
+        self._field(c, axis, "jog_low", spin=True).grid(row=1, column=1, padx=3)
+        self._field(c, axis, "jog_high", spin=True).grid(row=1, column=2, padx=3)
+        jog = tk.Frame(c, bg=CARD)
+        jog.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        for i, (text, what) in enumerate(JOG_BUTTONS):
+            jog.columnconfigure(i, weight=1, uniform="jog")
+            tk.Button(jog, text=text, command=lambda w=what: self._not_driven(
+                axis, f"Jog {w}", "jog is not a PC command in PRINTING PROGRAM OLD - use the machine's touch panel"),
+                bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE, activeforeground="white", bd=0,
+                pady=2, font=_font(14, True), cursor="hand2").grid(row=0, column=i, sticky="ew", padx=3)
+
+        c = self._card(grid, "Live", 1, 1)
         live = {}
         for r, (key, label, unit) in enumerate((("stroke", "STROKE", "mm"), ("load", "LOAD", "kgf"))):
-            self._label(body, label, fg="white", size=9, bold=True).grid(row=r, column=0, sticky="e",
-                                                                         padx=(0, 8), pady=2)
-            v = tk.Label(body, text=NO_DATA, width=9, bg=FIELD_BG, fg=VALUE_FG, font=_font(12, True),
+            self._label(c, label, fg="white", size=9, bold=True, width=8, anchor="e").grid(row=r, column=0,
+                                                                                        padx=(0, 8), pady=4)
+            v = tk.Label(c, text=NO_DATA, width=9, bg=FIELD_BG, fg=VALUE_FG, font=_font(13, True),
                          relief="solid", bd=1)
-            v.grid(row=r, column=1, pady=2)
-            self._label(body, unit, fg=theme.HEADER_FG, size=9).grid(row=r, column=2, sticky="w", padx=4)
+            v.grid(row=r, column=1, pady=4)
+            self._label(c, unit, fg=theme.HEADER_FG, size=9, width=4, anchor="w").grid(row=r, column=2, padx=(6, 0))
             live[key] = v
         self.live[axis] = live
 
-        # ---- CYLINDERS
-        body = self._card(right, "Cylinders")
-        for r, text in enumerate(CYLINDERS):
-            self._button(body, text, lambda t=text: self._cylinder(axis, t), width=20).grid(row=r, column=0, pady=2)
+        # row 2: POSITION MOVE | CYLINDERS
+        c = self._card(grid, "Position move", 2, 0)
+        for r, (text, what) in enumerate((("⇦  Pull Position", "PULL"), ("Push Position  ⇨", "PUSH"))):
+            self._button(c, text, lambda w=what: self._not_driven(
+                axis, f"{w} position", f"{w} runs only inside a cable test (RUN) in this PLC program"),
+                width=20, off=True).grid(row=r, column=0, pady=3)
+
+        c = self._card(grid, "Cylinders", 2, 1)
+        for i, text in enumerate(CYLINDERS):
+            self._button(c, text, lambda t=text: self._cylinder(axis, t), width=20).grid(
+                row=i, column=0, pady=3)
         return box
 
     # ---------------------------------------------------------- actions
