@@ -1,4 +1,5 @@
 {
+  "settings_version": 6,
   "plc": {
     "port": "",
     "baudrate": 9600,
@@ -35,8 +36,9 @@
       "load_min": null,
       "load_max": null,
       "clamp_count": 0,
-      "front_sensor": "P0000",
-      "rear_sensor": "P0001"
+      "forward_sensor": "P0006",
+      "backward_sensor": "P0007",
+      "part_sensor": "P000A"
     },
     "shift": {
       "model": "",
@@ -51,8 +53,9 @@
       "load_min": null,
       "load_max": null,
       "clamp_count": 0,
-      "front_sensor": "P0002",
-      "rear_sensor": "P0003"
+      "forward_sensor": "P0001",
+      "backward_sensor": "P0000",
+      "part_sensor": "P000B"
     },
     "commands": {
       "servo_select": "",
@@ -69,9 +72,16 @@
       "start_shift": "",
       "done_shift": ""
     },
+    "skip_scan": true,
+    "label_rule": {
+      "mode": "contains_part_number",
+      "select": "",
+      "shift": ""
+    },
     "model_type": "",
+    "part_number": "",
     "integration": {
-      "mode": "independent",
+      "mode": "kd",
       "shared": {
         "live_start_enabled": false,
         "poll_interval": 0.25,
@@ -93,20 +103,135 @@
             }
           }
         },
-        "at_cable_selection": "",
+        "at_cable_selection": "operator_fixture",
         "mt_one_cycle_tests_both": false,
         "channel_cable": {
-          "1": "",
-          "2": ""
+          "1": "select",
+          "2": "shift"
         },
         "direction_role": {
-          "forward": "",
-          "return": ""
+          "forward": "push",
+          "return": "pull"
         },
         "force_scale": 0.0,
         "force_unit": "",
         "position_scale": 0.0,
         "position_unit": ""
+      }
+    },
+    "kd_profile": {
+      "live_writes_enabled": true,
+      "command_owner_confirmed": true,
+      "poll_interval": 0.2,
+      "timeouts": {
+        "freshness": 1.0,
+        "accept": 3.0,
+        "home": 60.0,
+        "move": 30.0
+      }
+    },
+    "machine_profile": {
+      "id": "printing_program_old_pc_words",
+      "version": 2,
+      "commissioning": {
+        "program_installed": "unverified",
+        "protocol_mapping": "unverified",
+        "native_m_reads": "unverified",
+        "stop_behavior": "unverified",
+        "sensor_assignment": "unverified",
+        "unit_scaling": "unverified",
+        "fixture_sequence": "unverified",
+        "measurement_rules": "unverified",
+        "mt_concurrency": "unverified"
+      },
+      "mapping": {
+        "schema": "xgb_cnet_areas",
+        "verified": true,
+        "verified_note": "Set 2026-11-09 at the user's request, without the live comparison (D00150-154 / M0000C-D vs HMI) or an XG5000 read-back. Basis: plc kd All.pdf p134 CH2 Modbus areas P00000/M00000/D00000/D00000; D00500 reads answer on the machine.",
+        "cnet_areas": {
+          "bit_read": {
+            "plc_base": "P00000",
+            "accessible_count": null
+          },
+          "bit_write": {
+            "plc_base": "M00000",
+            "accessible_count": null
+          },
+          "word_read": {
+            "plc_base": "D00000",
+            "accessible_count": null
+          },
+          "word_write": {
+            "plc_base": "D00000",
+            "accessible_count": null
+          }
+        },
+        "word_read_order": [
+          "word_read",
+          "word_write"
+        ]
+      },
+      "live_writes_enabled": false,
+      "command_owner_confirmed": false,
+      "internal_bits_enabled": false,
+      "stroke_completion": "internal_flags",
+      "mt_parallel_verified": false,
+      "home_before_test": "if_not_referenced",
+      "fixture_checks": {
+        "select": [],
+        "shift": []
+      },
+      "poll_interval": 0.1,
+      "timeouts": {
+        "freshness": 1.0,
+        "echo": 1.5,
+        "accept": 3.0,
+        "stroke": 30.0,
+        "home": 60.0,
+        "meas_start": 8.0,
+        "release": 3.0,
+        "meas_dwell": 1.0,
+        "meas_settle": 0.5,
+        "stroke_min_hold": 1.5,
+        "params": 3.0,
+        "params_settle": 0.5,
+        "part": 600.0,
+        "alarm_reset_pulse": null,
+        "alarm_reset_check": 3.0
+      },
+      "measurement": {
+        "force_source": "serial",
+        "loadcell": {
+          "select": 1,
+          "shift": 2
+        },
+        "daq_force": {
+          "select": "Loadcell 1",
+          "shift": "Loadcell 2"
+        },
+        "stroke": {
+          "select": "",
+          "shift": ""
+        },
+        "calibration": {
+          "select": {
+            "scale": 1.0,
+            "offset": 0.0,
+            "unit": "",
+            "verified": false
+          },
+          "shift": {
+            "scale": 1.0,
+            "offset": 0.0,
+            "unit": "",
+            "verified": false
+          }
+        },
+        "judge": "",
+        "force_sign": "",
+        "limit_bounds": "",
+        "min_samples": 3,
+        "strokes_per_test": 1
       }
     },
     "counters": {
@@ -161,5 +286,10 @@
         "unit": "mm"
       }
     ]
-  }
+  },
+  "migrated": [
+    "integration.mode independent -> pc_interface (plc.pdf profile)",
+    "integration.mode pc_interface -> kd (client's updated reference program plc kd.pdf)",
+    "integration.shared: at_cable_selection=operator_fixture, channel_cable 1=select 2=shift, direction_role forward=push return=pull (AT one cable at a time; channels/directions from the plc Auto.pdf labels)"
+  ]
 }
