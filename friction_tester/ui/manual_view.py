@@ -78,133 +78,132 @@ class ManualView(tk.Frame):
         super().__init__(master, bg=theme.BG)
         self.page = page
         self.sides = sides
-        self.fields = {}         # (axis, key) -> Entry / Spinbox
+        self.fields = {}         # (axis, key) -> Entry
         self.status_lamps = {}   # axis -> {text: (canvas, dot, colour)}
         self.live = {}           # axis -> {"stroke": Label, "load": Label}
 
-        foot = tk.Frame(self, bg=theme.BG)          # packed first: never squeezed out
-        foot.pack(side="bottom", fill="x", pady=(6, 0))
-        tk.Button(foot, text="↩  Return", command=page.show_measurement, bg="#333", fg="white",
-                  activebackground="#444", activeforeground="white", bd=0, padx=22, pady=5,
-                  font=_font(10, True), cursor="hand2").pack()
+        # As on the original: the two group boxes as tall as their content, Return just below.
         row = tk.Frame(self, bg=theme.BG)
-        row.pack(fill="both", expand=True)
+        row.pack(fill="x", pady=(4, 0))
         for i, (axis, title, _short) in enumerate(sides):
             self._cable(row, axis, title).grid(row=0, column=i, sticky="nsew", padx=(0, 4) if i == 0 else (4, 0))
             row.columnconfigure(i, weight=1, uniform="manual")
-        row.rowconfigure(0, weight=1)
+        foot = tk.Frame(self, bg=theme.BG)
+        foot.pack(fill="x", pady=(14, 0))
+        tk.Button(foot, text="↩  Return", command=page.show_measurement, bg="#333", fg="white",
+                  activebackground="#444", activeforeground="white", bd=0, padx=22, pady=5,
+                  font=_font(10, True), cursor="hand2").pack()
         self.refresh_params()
 
     # ----------------------------------------------------------- layout
-    # Each cable is a 2 x 3 grid of cards; the two cards of a row share its height,
-    # the rows share the panel height, and every card centres its content.
-    LABEL_W = 10             # characters: right-aligned labels of equal width line the fields up
+    # Row for row as the machine's original manual screen: a group box per cable with
+    # its title tab; the left half holds POSITION SET, JOG Control, Pull / Push Position
+    # and Clamp Cylinder, the right half Actuator Status, Stroke / Load and the other
+    # cylinders. Rows are shared, so items that sit side by side on the original
+    # (Pull / Push with Stroke / Load, Clamp with Removing Cylinder 2) line up here too.
+    LABEL_W = 10             # left-half labels, right-aligned
+    VALUE_LABEL_W = 7        # Stroke / Load labels
 
-    def _card(self, parent, title, row, col):
-        """Side-panel style card in grid cell (row, col); returns the centred content frame."""
-        card = tk.Frame(parent, bg=CARD, highlightbackground=theme.BORDER, highlightthickness=1)
-        card.grid(row=row, column=col, sticky="nsew", padx=(0, 4) if col == 0 else (4, 0), pady=(0, 8))
-        head = tk.Frame(card, bg=CARD_HEAD)
-        head.pack(fill="x")
-        tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
-        tk.Label(head, text=title.upper(), bg=CARD_HEAD, fg=LABEL_FG, font=_font(8, True)).pack(
-            side="left", padx=8, pady=4)
-        body = tk.Frame(card, bg=CARD)
-        body.pack(fill="both", expand=True, padx=12, pady=10)
-        content = tk.Frame(body, bg=CARD)
-        content.pack(expand=True)            # centred horizontally and vertically
-        return content
-
-    def _button(self, parent, text, command, width=16, off=False):
+    def _button(self, parent, text, command, width=18, off=False):
         bg, fg = (BTN_OFF_BG, theme.MUTED) if off else (BTN_BG, "white")
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=BTN_ACTIVE,
-                         activeforeground="white", bd=0, width=width, pady=5, font=_font(9, True), cursor="hand2")
+                         activeforeground="white", bd=0, width=width, pady=4, font=_font(9, True), cursor="hand2")
 
     def _label(self, parent, text, fg=LABEL_FG, size=10, bold=False, width=None, anchor="center"):
         kw = {"width": width} if width else {}
-        return tk.Label(parent, text=text, bg=CARD, fg=fg, font=_font(size, bold), anchor=anchor, **kw)
+        return tk.Label(parent, text=text, bg=theme.PANEL, fg=fg, font=_font(size, bold), anchor=anchor, **kw)
 
-    def _field(self, parent, axis, key, spin=False):
+    def _field(self, parent, axis, key):
         common = dict(width=7, justify="center", font=_font(11), bg=FIELD_BG, fg=VALUE_FG,
                       relief="solid", bd=1, insertbackground="white")
-        if spin:
-            w = tk.Spinbox(parent, from_=0, to=pp.param_max(key), increment=1, buttonbackground="#333",
-                           command=lambda: self._param_edited(axis, key), **common)
-        else:
-            w = tk.Entry(parent, highlightthickness=0, **common)
+        w = tk.Entry(parent, highlightthickness=0, **common)
         w.bind("<Return>", lambda _e: self._param_edited(axis, key))
         w.bind("<FocusOut>", lambda _e: self._param_edited(axis, key))
         self.fields[(axis, key)] = w
         return w
 
+    def _row(self, parent):
+        return tk.Frame(parent, bg=theme.PANEL)
+
     def _cable(self, parent, axis, title):
-        box = tk.Frame(parent, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
-        tk.Label(box, text=title, bg=theme.PANEL, fg="white", font=_font(14)).pack(pady=(6, 2))
-        tk.Frame(box, bg=theme.BORDER, height=1).pack(fill="x", padx=8)
-        grid = tk.Frame(box, bg=theme.PANEL)
-        grid.pack(fill="both", expand=True, padx=10, pady=(10, 2))
-        for c in (0, 1):
-            grid.columnconfigure(c, weight=1, uniform="col")
-        for r in (0, 1, 2):
-            grid.rowconfigure(r, weight=1)
-        lw = self.LABEL_W
+        box = tk.LabelFrame(parent, text=f"  {title}  ", bg=theme.PANEL, fg=theme.TITLE_FG,
+                            font=_font(13, True), bd=1, relief="solid", labelanchor="nw",
+                            highlightbackground=theme.BORDER)
+        g = tk.Frame(box, bg=theme.PANEL)
+        g.pack(fill="both", expand=True, padx=14, pady=(6, 10))
+        g.columnconfigure(0, weight=1, uniform="half")
+        g.columnconfigure(1, weight=1, uniform="half")
+        lw, PAD = self.LABEL_W, 3
+        L = dict(column=0, pady=PAD)
+        R = dict(column=1, sticky="w", padx=(24, 0), pady=PAD)
 
-        # row 0: POSITION SET | ACTUATOR STATUS
-        c = self._card(grid, "Position set", 0, 0)
-        for r, (key, label) in enumerate(PARAM_FIELDS):
-            self._label(c, label, width=lw, anchor="e").grid(row=r, column=0, padx=(0, 8), pady=4)
-            self._field(c, axis, key).grid(row=r, column=1, pady=4)
-            self._label(c, "mm", fg=theme.HEADER_FG, size=9, width=4, anchor="w").grid(row=r, column=2, padx=(6, 0))
+        # rows 0-7: POSITION SET + JOG Control | Actuator Status
+        self._label(g, "POSITION SET", fg="white", size=10).grid(row=0, **L)
+        self._label(g, "Actuator Status", fg="white", size=10, anchor="w").grid(row=0, **R)
+        for r, (key, label) in enumerate(PARAM_FIELDS, start=1):
+            f = self._row(g)
+            self._label(f, label, fg=LINK_FG, width=lw, anchor="e").pack(side="left", padx=(0, 8))
+            self._field(f, axis, key).pack(side="left")
+            self._label(f, "mm", fg=theme.HEADER_FG, size=9, width=4, anchor="w").pack(side="left", padx=(6, 0))
+            f.grid(row=r, **L)
+        self._label(g, "JOG Control", fg="white", size=10).grid(row=4, column=0, pady=(16, PAD))
+        f = self._row(g)                                # Low / High headings over their fields
+        self._label(f, "Low", fg=theme.HEADER_FG, size=9).grid(row=0, column=1)
+        self._label(f, "High", fg=theme.HEADER_FG, size=9).grid(row=0, column=2)
+        self._label(f, "Jog Speed", fg=LINK_FG, width=lw, anchor="e").grid(row=1, column=0, padx=(0, 8))
+        self._field(f, axis, "jog_low").grid(row=1, column=1, padx=(0, 6))
+        self._field(f, axis, "jog_high").grid(row=1, column=2)
+        f.grid(row=5, column=0, rowspan=2, pady=PAD)
+        f = self._row(g)
+        for text, what in JOG_BUTTONS:
+            tk.Button(f, text=text, command=lambda w=what: self._not_driven(
+                axis, f"Jog {w}", "jog is not a PC command in PRINTING PROGRAM OLD - use the machine's touch panel"),
+                bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE, activeforeground="white", bd=0, width=4,
+                pady=2, font=_font(15, True), cursor="hand2").pack(side="left", padx=4)
+        f.grid(row=7, column=0, pady=(12, 0))
 
-        c = self._card(grid, "Actuator status", 0, 1)
-        lamps = {}
-        for r, (text, _src, colour) in enumerate(STATUS_LAMPS):
-            cv = tk.Canvas(c, width=18, height=18, bg=CARD, highlightthickness=0)
+        lamps = {}                                      # evenly spaced, as on the original
+        col = self._row(g)
+        for text, _src, colour in STATUS_LAMPS:
+            f = self._row(col)
+            cv = tk.Canvas(f, width=18, height=18, bg=theme.PANEL, highlightthickness=0)
             dot = cv.create_oval(2, 2, 16, 16, fill=LAMP_OFF, outline="#111")
-            cv.grid(row=r, column=0, pady=2)
-            self._label(c, text, fg=LINK_FG, width=17, anchor="w").grid(row=r, column=1, padx=(8, 0))
+            cv.pack(side="left")
+            self._label(f, text, fg=LINK_FG, anchor="w").pack(side="left", padx=(8, 0))
+            f.pack(anchor="w", pady=4)
             lamps[text] = (cv, dot, colour)
+        col.grid(row=1, rowspan=6, column=1, sticky="nw", padx=(24, 0))
         self.status_lamps[axis] = lamps
 
-        # row 1: JOG CONTROL | LIVE
-        c = self._card(grid, "Jog control", 1, 0)
-        self._label(c, "Low", fg=theme.HEADER_FG, size=9).grid(row=0, column=1)
-        self._label(c, "High", fg=theme.HEADER_FG, size=9).grid(row=0, column=2)
-        self._label(c, "Jog Speed", width=lw, anchor="e").grid(row=1, column=0, padx=(0, 8))
-        self._field(c, axis, "jog_low", spin=True).grid(row=1, column=1, padx=3)
-        self._field(c, axis, "jog_high", spin=True).grid(row=1, column=2, padx=3)
-        jog = tk.Frame(c, bg=CARD)
-        jog.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(12, 0))
-        for i, (text, what) in enumerate(JOG_BUTTONS):
-            jog.columnconfigure(i, weight=1, uniform="jog")
-            tk.Button(jog, text=text, command=lambda w=what: self._not_driven(
-                axis, f"Jog {w}", "jog is not a PC command in PRINTING PROGRAM OLD - use the machine's touch panel"),
-                bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE, activeforeground="white", bd=0,
-                pady=2, font=_font(14, True), cursor="hand2").grid(row=0, column=i, sticky="ew", padx=3)
+        g.rowconfigure(8, minsize=34)                   # gap, as on the original
 
-        c = self._card(grid, "Live", 1, 1)
+        # rows 9-10: Pull / Push Position | Stroke / Load
+        f = self._row(g)
+        for text, what in (("⇦  Pull Position", "PULL"), ("Push Position  ⇨", "PUSH")):
+            self._button(f, text, lambda w=what: self._not_driven(
+                axis, f"{w} position", f"{w} runs only inside a cable test (RUN) in this PLC program"),
+                width=14, off=True).pack(side="left", padx=4)
+        f.grid(row=9, column=0, rowspan=2)
         live = {}
-        for r, (key, label, unit) in enumerate((("stroke", "STROKE", "mm"), ("load", "LOAD", "kgf"))):
-            self._label(c, label, fg="white", size=9, bold=True, width=8, anchor="e").grid(row=r, column=0,
-                                                                                        padx=(0, 8), pady=4)
-            v = tk.Label(c, text=NO_DATA, width=9, bg=FIELD_BG, fg=VALUE_FG, font=_font(13, True),
+        for r, (key, label, unit) in enumerate((("stroke", "Stroke", "mm"), ("load", "Load", "Kgf")), start=9):
+            f = self._row(g)
+            self._label(f, label, fg=LINK_FG, width=self.VALUE_LABEL_W, anchor="e").pack(side="left", padx=(0, 8))
+            v = tk.Label(f, text=NO_DATA, width=9, bg=FIELD_BG, fg=VALUE_FG, font=_font(12, True),
                          relief="solid", bd=1)
-            v.grid(row=r, column=1, pady=4)
-            self._label(c, unit, fg=theme.HEADER_FG, size=9, width=4, anchor="w").grid(row=r, column=2, padx=(6, 0))
+            v.pack(side="left")
+            self._label(f, unit, fg=theme.HEADER_FG, size=9, width=4, anchor="w").pack(side="left", padx=(6, 0))
+            f.grid(row=r, **R)
             live[key] = v
         self.live[axis] = live
 
-        # row 2: POSITION MOVE | CYLINDERS
-        c = self._card(grid, "Position move", 2, 0)
-        for r, (text, what) in enumerate((("⇦  Pull Position", "PULL"), ("Push Position  ⇨", "PUSH"))):
-            self._button(c, text, lambda w=what: self._not_driven(
-                axis, f"{w} position", f"{w} runs only inside a cable test (RUN) in this PLC program"),
-                width=20, off=True).grid(row=r, column=0, pady=3)
+        g.rowconfigure(11, minsize=28)                  # gap
 
-        c = self._card(grid, "Cylinders", 2, 1)
-        for i, text in enumerate(CYLINDERS):
-            self._button(c, text, lambda t=text: self._cylinder(axis, t), width=20).grid(
-                row=i, column=0, pady=3)
+        # rows 12-14: Clamp Cylinder (level with Removing Cylinder 2) | the other cylinders
+        self._button(g, "☰  Clamp Cylinder", lambda: self._cylinder(axis, "Clamp Cylinder"),
+                     width=18).grid(row=13, column=0, pady=PAD)
+        for r, (icon, text) in enumerate((("⏏", "Removing Cylinder 1"), ("⏏", "Removing Cylinder 2"),
+                                          ("☰", "Loading Cylinder")), start=12):
+            self._button(g, f"{icon}  {text}", lambda t=text: self._cylinder(axis, t), width=20).grid(row=r, **R)
         return box
 
     # ---------------------------------------------------------- actions
