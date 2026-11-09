@@ -33,6 +33,8 @@ ORIGIN = M00050 with the PLC's homing state D05000; RUN = software start M00029,
 test (step D05010) and the app takes the verdict M0000C/M0000D and results. Writes stay off until
 the PLC's Cnet Modbus areas are verified. Details and open
 items: [docs/plc_kd_profile.md](docs/plc_kd_profile.md); read-only check: `python tools/plc_diag.py`.
+Everything in the full project printout (`plc kd All.pdf`: hardware, parameters, Cnet, comment
+table, both programs): [docs/nlf_project_reference.md](docs/nlf_project_reference.md).
 
 ## PLC profile: PRINTING PROGRAM OLD
 

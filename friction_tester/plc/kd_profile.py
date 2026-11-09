@@ -12,17 +12,21 @@ companion block "plc Auto.pdf" (same project): start P00002 or M00029, step
 word D05010 - followed by plc.shared_cycle / plc.part_flow. This module covers
 the manual side: homing (M00050) and position moves (M00030-M00034).
 
-Homing [p3-4, steps 209-236], state word D05000:
-    M00050 AND D05000 = 0      -> D05000 := 10
-    D05000 = 10                -> T0000 (2 s), then D05000 := 20 (driver reset P00003 meanwhile)
-    D05000 = 20                -> homing instruction on slot 2 axis 0
-    homing status D00500.4 ... -> D05000 := 0, RESET M00050 (and P00022)
-  so the PLC clears M00050 itself when homing is finished. The exact contacts
-  of steps 212 and 228 are only partly legible in the text extraction (a T0030
-  / P00003 branch may also start homing) - verify in XG5000.
+Homing [plc kd All.pdf p26-27, steps 209-236], state word D05000 (read from the rendered ladder):
+    209  always                                     -> TON T0030 4 s (runs once after RUN)
+    212  D05000 = 0 AND (M00050 OR T0030 rising OR P00003 Reset) -> D05000 := 10
+    220  D05000 = 10                                -> TON T0000 2 s; T0000 AND P0000A (driver
+                                                       homing done) -> D05000 := 20
+    228  D05000 = 20                                -> FLT slot 2 axis 0 (floating origin);
+                                                       D00500.4 homing status -> D05000 := 0
+    236  D05000 = 10 AND NOT M00050 AND NOT P00003  -> P00022 (homing command to the servo driver)
+  M00050 appears only at steps 212 (NO) and 236 (NC): NO rung resets it. While it
+  stays ON the driver is never commanded (P00022 OFF), and back at 0 it would start
+  homing again - so the app releases M00050 as soon as D05000 leaves 0. The PLC
+  also homes by itself 4 s after RUN and on the Reset input P00003.
 
-Moves [p5, steps 283-327]: NOT P00000 (EMG) AND M0003x AND NOT D00500.0 (busy)
-AND NOT P00004 (external emergency) -> DST slot 2 axis 0 to the position value
+Moves [p27-28, steps 283-327]: P00000 (EMG, NO contact) AND M0003x AND NOT D00500.0
+(busy) AND P00004 (external emergency, NO contact) -> DST slot 2 axis 0 to the position value
 at the given speed. The PLC never resets M0003x.
 """
 
@@ -63,7 +67,7 @@ STEP_WORD = 8                          # D00508 step number
 MCODE_WORD = 9                         # D00509
 ERROR_CODE_WORD = 10                   # D00510 error code
 
-HOME_STATE = "D05000"                  # 0 idle, 10 driver reset/wait, 20 homing [p4]
+HOME_STATE = "D05000"                  # 0 idle, 10 driver homing (P00022), 20 floating origin [p27]
 HOME_REQUEST = "M00050"
 
 # Move requests [p5] -> (request bit, position register (DINT), description)
@@ -92,9 +96,9 @@ COMMAND_BITS = ["M00020", "M00021", "M00022", "M00023", "M00030", "M00031", "M00
 # Project cross-check (plc kd All.pdf): variable/comment table p1-5 confirms D00500-D00503 bit names,
 # D00030 "Select Load Cell Value", D00130 "Shift Load Cell Value", positions D00735/D00745/D00755,
 # total D00730, home position D00740, speed D00750, measurement count D00781.
-# Inputs used as interlocks by the ladder; contact type / polarity NOT verified - shown raw.
-INTERLOCK_INPUTS = {"P00000": "Emergency stop (EMG) - in move/jog interlocks",
-                    "P00004": "External emergency stop - in move/jog interlocks"}
+# Inputs used as interlocks by the ladder (NO contacts in the move rungs, NC in the abort rung).
+INTERLOCK_INPUTS = {"P00000": "Emergency stop (EMG) - must be ON for moves/jog/cycle",
+                    "P00004": "External emergency stop - must be ON for moves/jog/cycle"}
 
 # Load cells [p1, steps 1-60]: (value, value+100) - DINT, scaling unverified
 LOADS = {"select": "D00030", "shift": "D00130"}
@@ -108,9 +112,9 @@ UNRESOLVED = [
     "Modbus RTU server, station 1, areas P00000 / M00000 / D00000 / D00000. Which channel the PC is "
     "wired to and whether the live PLC holds these parameters is not confirmed; on the machine FC04 "
     "offset 500 answers but 5000 returns exception 02 (a word window of about 1000 registers).",
-    "Homing start/finish contacts (steps 212, 228): T0030 / P00003 branch, '= 10' vs '= 20' compare.",
     "Whether DST runs on the rising edge of M0003x (the app releases the bit once the axis is busy).",
-    "P00000 / P00004 contact type (NO/NC) and wiring.",
+    "P00000 / P00004 are NO contacts in the move/jog rungs and NC in the cycle abort rung (healthy = ON); "
+    "the wiring is not confirmed.",
     "Load-cell scaling (D00010/D00110 factors) and the meaning of value+100 (D00040/D00140).",
     "Who writes D00900-D00950 (position load values copied to D01200..): PC or HMI?",
     "Auto cycle: ageing M02000; P0000A / P0000B are 'Driver Homing' / 'Driver Alarm Status' in the "

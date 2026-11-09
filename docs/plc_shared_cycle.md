@@ -29,14 +29,14 @@ D05010 is the step.
 |---|---|
 | 0 | Rung 2: `D05010 = 0 AND (P00002 OR M00029) → MOVP 10 D05010`. MOVP acts on the **rising edge**: if M00029 stayed ON, the cycle would restart as soon as it returned to 0. The app therefore pulses M00029 (ON, 0.3 s, OFF). |
 | 10 | Gated by D00500.0 OFF. Starts T0010 (0.1 s); clears D05100, D05110, **D00900–D01099** (FMOVP 200) and **D01200–D01259** (FMOVP 60). Rung 613 resets **M00000, M00003, M0000C, M0000D** while D05010 = 10. After T0010: M02000 OFF → 40, M02000 ON → 20 (pre-cycling 20↔30, D05100 vs D00780). |
-| 33 / 34 | Prepare / approach (repeat loop entry). |
+| 32 / 33 / 34 | 32: 0.2 s. 33: wait D00795 (stop waiting time), D00302 = D00720 + 200. 34: `DST D00302` at speed 1000 (repeat loop entry). |
 | 40 | First-direction stroke (DST to D00730). Samples taken while D00504 is inside a window (see below). |
-| 41 / 42 | Turn-around. |
+| 41 / 42 | 41: wait D00795, D00300 = D00730 − 200. 42: `DST D00300` at speed 1000. |
 | 50 | Return stroke (DST to D00720). Samples again; `ADDP D05110 +1`. |
 | 51 | Final-value chain (below). Back to 33 until D05110 = D00781 (M02003 selects the repeat behaviour). |
 | 52 | Same repeat check after T0041. |
-| 60 | Home (DST 0 → 1500). |
-| 70 | Limit check: D01250 below D00782 (Select Pull Lower) or above D00784 (Select Pull Upper) → SET M00000; D01253 below D00786 (Shift Pull Lower) or above D00788 (Shift Pull Upper) → SET M00003. Limit names from the project's variable/comment table (plc kd All.pdf p5). |
+| 60 | Home (`DST 2 0 0 15000`: position 0 at speed 15000). |
+| 70 | Limit check (rung 501, rendered p36): `D01250 < D00784` OR `D01250 > D00782` → SET M00000; `D01253 < D00788` OR `D01253 > D00786` → SET M00003. So D00784/D00788 act as **lower** and D00782/D00786 as **upper** bounds. The comment table (p6) names them the other way round; read that way, every part would be NG. The app follows the ladder. |
 | (any) | Rung 524: `NOT(NOT M00000 AND NOT M00003) → SET M0000C` (overall NG if either channel is out of limits). |
 | 80 | `NOT M0000C → SET M0000D`; `ADDP D00150 +1` if M0000D, `ADDP D00152 +1` if M0000C; then 0. |
 | always | `D00154 = D00150 + D00152`. M01120 / M01121 / M01122 zero the counters. |
@@ -184,4 +184,4 @@ channels at once and one overall verdict (plus the per-channel limit flags M0000
 | Units and scale of D00504 | positioning module parameters | `position_scale`, `position_unit` |
 | AT: how the active cable is loaded/selected | fixture procedure | `at_cable_selection` |
 | MT: one cycle tests both cables? | machine | `mt_one_cycle_tests_both` |
-| Repetitions (D00781) and limits (D00782–D00788) per model | recipe D00080 / D02000+ | display only (read from PLC) |
+| Repetitions (D00781) and limits (D00782–D00788) per model | recipe D00080 / D02000+ | display only (read from PLC); confirm on the HMI which value goes into D00782 vs D00784 |

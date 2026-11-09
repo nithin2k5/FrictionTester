@@ -8,9 +8,11 @@ Runs on its own thread; the UI only submits commands and drains events
 HOME (M00050, state word D05000) - see kd_profile:
   start     axis idle, no error, D05000 = 0, M00050 read back OFF, writes allowed
   request   set M00050 (FC05)
-  accepted  D05000 leaves 0 (fresh evidence - an echo of M00050 alone is not acceptance)
-  done      D05000 back to 0 AND the PLC has cleared M00050 AND homing status D00500.4 ON,
-            no error. The app never clears M00050 after acceptance (the PLC does).
+  accepted  D05000 leaves 0 (fresh evidence - an echo of M00050 alone is not acceptance);
+            the app then releases M00050 at once. No rung of the program resets it, and
+            the driver's homing command P00022 is only ON while M00050 is OFF (step 236);
+            left ON it would also restart homing when D05000 returns to 0.
+  done      D05000 back to 0 AND M00050 OFF AND homing status D00500.4 ON, no error.
   not accepted in time -> the app clears M00050 itself while D05000 is still 0,
             so a late start cannot happen.
 MOVE (M00030-M00034, DST):
@@ -99,7 +101,7 @@ class HomeOp(KdOp):
             if snap.home_state not in (0, None):
                 self.evidence.append(f"D05000 = {snap.home_state}")
                 self._set("homing", now)
-                return []
+                return [(self.bit, False)]          # release: P00022 needs M00050 OFF [step 236]
             if self._elapsed(now) > self.t["accept"]:
                 self._finish("failed", f"{self.name}: PLC did not start homing (D05000 stayed 0)", now)
                 return [(self.bit, False)] if snap.cmd(self.bit) is not False else []
@@ -110,7 +112,7 @@ class HomeOp(KdOp):
                                     now)
             if snap.home_state == 0 and snap.cmd(self.bit) is False:
                 if snap.st("homed"):
-                    self.evidence.append("D05000 = 0, M00050 cleared by the PLC, D00500.4 ON")
+                    self.evidence.append("D05000 = 0, M00050 OFF, D00500.4 ON")
                     return self._finish("done", f"{self.name} complete", now)
                 return self._finish("failed", f"{self.name}: sequence ended without homing status D00500.4", now)
             if self._elapsed(now) > self.t["home"]:
@@ -272,10 +274,8 @@ class KdController:
 
     def _release_pending(self, snap):
         for address in list(self.pending_release):
-            # M00050 is only cleared while the sequence has not started (D05000 = 0)
-            if address == kp.HOME_REQUEST and snap.home_state != 0:      # also None: unknown, leave it
-                self.pending_release.discard(address)
-                continue
+            # Releasing is always safe: M00050 only starts homing at D05000 = 0 and blocks the
+            # driver command P00022 while ON - a stuck M00050 is the hazard, not its release.
             if snap.cmd(address) is False:
                 self.pending_release.discard(address)
                 continue

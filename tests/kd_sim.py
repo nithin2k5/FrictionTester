@@ -1,11 +1,13 @@
 """Simulator of the plc kd.pdf homing / move logic, for the automated tests only.
 
 Implements the backend interface used by plc.kd_link (read_words, read_bits,
-write_bit, mapping, allow_writes). Reproduces: D05000 0 -> 10 (2 s) -> 20
-(homing 1 s) -> 0 with M00050 reset and D00500.4 set; DST moves on a rising
-edge of M00030-M00034 (busy 1 s, then positioning complete). The PLC never
-resets M0003x. Faults: connected=False, ignore_home, axis_error, refuse_bits
-(bit area not readable).
+write_bit, mapping, allow_writes). Reproduces steps 212-236 of plc kd All.pdf
+p27: D05000 = 0 AND M00050 -> 10; P00022 (driver homing command) = state 10 AND
+NOT M00050; the driver homes for 1.5 s and then sets P0000A; T0000 (2 s) AND
+P0000A -> 20; FLT -> D00500.4 ON -> 0. The PLC never resets M00050 (nor M0003x),
+so a request left ON never commands the driver and re-triggers at state 0.
+DST moves on a rising edge of M00030-M00034 (busy 1 s, then positioning complete).
+Faults: connected=False, ignore_home, axis_error, refuse_bits (bit area not readable).
 """
 
 from friction_tester.plc import kd_profile as kp
@@ -30,7 +32,8 @@ class KdSim:
         for reg, val in (("D00735", 1000), ("D00745", 2000), ("D00755", 3000), ("D00730", 4000), ("D00740", 0)):
             self.D[int(reg[1:])] = val
         self.M = {a: False for a in kp.COMMAND_BITS}
-        self.P = {"P00000": False, "P00004": False}
+        self.P = {"P00000": False, "P00004": False, "P0000A": False, "P00022": False}
+        self._drv = None                 # time the driver's homing completes (P0000A)
         self.writes = []
         self.home_started = 0
         self.moves_started = []
@@ -76,18 +79,26 @@ class KdSim:
         self._t += dt
         # homing [steps 212-236]
         s = self.D[5000]
-        if s == 0 and self.M["M00050"] and not self.ignore_home:
+        if s == 0 and self.M["M00050"] and not self.ignore_home:            # step 212
             self.D[5000], self._h = 10, self._t
             self.home_started += 1
-        elif s == 10 and self._t - self._h >= 2.0:
-            self.D[5000], self._h = 20, self._t
-            self._set_status("busy", True)
-        elif s == 20 and self._t - self._h >= 1.0:
-            self._set_status("busy", False)
+        elif s == 10:
+            p22 = not self.M["M00050"]                                      # step 236
+            if p22 and not self.P["P00022"]:                                # driver starts homing
+                self.P["P0000A"], self._drv = False, self._t + 1.5
+                self._set_status("homed", False)
+                self._set_status("busy", True)
+            self.P["P00022"] = p22
+            if self._drv is not None and self._t >= self._drv:
+                self.P["P0000A"], self._drv = True, None
+                self._set_status("busy", False)
+                self.position = 0
+            if self._t - self._h >= 2.0 and self.P["P0000A"]:              # step 220
+                self.D[5000] = 20
+        elif s == 20:                                                       # step 228: FLT
+            self.P["P00022"] = False
             self._set_status("homed", True)
-            self.position = 0
             self.D[5000] = 0
-            self.M["M00050"] = False
         # DST moves on a rising edge [steps 283-327]
         for move, (bit, reg, _label) in kp.MOVES.items():
             if self.M[bit] and not self._prev[bit] and self._busy_until is None:

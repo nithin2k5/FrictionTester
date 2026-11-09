@@ -42,8 +42,8 @@ POINTS = {
     "idle": ("P00029", "bit", "read", "output: cycle idle (step = 0)", 16),
     "ok": ("M0000D", "bit", "read", "overall OK (latched)", 15),
     "ng": ("M0000C", "bit", "read", "overall NG (latched)", 15),
-    "ch1_ng": ("M00000", "bit", "read", "channel 1 (SELECT) final outside D00782..D00784", 15),
-    "ch2_ng": ("M00003", "bit", "read", "channel 2 (SHIFT) final outside D00786..D00788", 15),
+    "ch1_ng": ("M00000", "bit", "read", "channel 1 (SELECT) final below D00784 or above D00782", 15),
+    "ch2_ng": ("M00003", "bit", "read", "channel 2 (SHIFT) final below D00788 or above D00786", 15),
     "ok_count": ("D00150", "uint16", "read", "PLC OK count", 15),
     "ng_count": ("D00152", "uint16", "read", "PLC NG count", 15),
     "total_count": ("D00154", "uint16", "read", "PLC total (D00150 + D00152)", 15),
@@ -54,12 +54,20 @@ POINTS = {
     "position": ("D00504", "int16", "read", "position word used by the sample windows (low word)", 5),
     "final_ch1": ("D01250", "int16", "read", "final calculated value, channel 1", 14),
     "final_ch2": ("D01253", "int16", "read", "final calculated value, channel 2", 14),
-    # Variable/comment table (plc kd All.pdf p5): D00782 "Select Pull Lower Limit",
-    # D00784 "Select Pull Upper Limit", D00786 "Shift Pull Lower Limit", D00788 "Shift Pull Upper Limit"
-    "ch1_upper": ("D00784", "int16", "read", "channel 1 (SELECT) pull upper limit", 15),
-    "ch1_lower": ("D00782", "int16", "read", "channel 1 (SELECT) pull lower limit", 15),
-    "ch2_upper": ("D00788", "int16", "read", "channel 2 (SHIFT) pull upper limit", 15),
-    "ch2_lower": ("D00786", "int16", "read", "channel 2 (SHIFT) pull lower limit", 15),
+    # Step 70 (plc kd All.pdf p36, rung 501; cross-reference p121-133): SET M00000 when
+    # D01250 < D00784 OR D01250 > D00782, SET M00003 when D01253 < D00788 OR D01253 > D00786.
+    # So the ladder uses D00784 / D00788 as the LOWER bounds and D00782 / D00786 as the UPPER ones.
+    # The project's comment table (p6) names them the other way round (D00782 "Select Pull Lower
+    # Limit", D00784 "... Upper", D00786 "Shift Pull Lower", D00788 "... Upper"); read that way the
+    # OR is true for every value and every part would be NG. The app follows the ladder.
+    "ch1_upper": ("D00782", "int16", "read", "channel 1 (SELECT) upper bound used at step 70 "
+                  "(comment table: 'Select Pull Lower Limit')", 15),
+    "ch1_lower": ("D00784", "int16", "read", "channel 1 (SELECT) lower bound used at step 70 "
+                  "(comment table: 'Select Pull Upper Limit')", 15),
+    "ch2_upper": ("D00786", "int16", "read", "channel 2 (SHIFT) upper bound used at step 70 "
+                  "(comment table: 'Shift Pull Lower Limit')", 15),
+    "ch2_lower": ("D00788", "int16", "read", "channel 2 (SHIFT) lower bound used at step 70 "
+                  "(comment table: 'Shift Pull Upper Limit')", 15),
 }
 
 START_REQUEST = POINTS["start_request"][0]

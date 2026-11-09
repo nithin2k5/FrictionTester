@@ -18,7 +18,7 @@ Mode `test.integration.mode = "kd"` (settings version 5 switches `pc_interface` 
 | p1, 1-60 | Analog module (slot 1) -> SELECT load D00030 (+100 -> D00040), SHIFT load D00130 (-> D00140); scaling D00010 / D00110 |
 | p2, 63 | `SRD` slot 2 axis 0 -> D00500-D00510 (X-axis status), copies to D00600.. |
 | p3, 167 | Position value limits: D00735/D00745/D00755 +-20 -> D00800..D00825, +980/+1020 -> D01400.. |
-| p3-4, 209-236 | Origin setting: homing state machine D05000 driven by **M00050** |
+| p3-4, 209-236 | Origin setting: homing state machine D05000 (M00050, auto 4 s after RUN, P00003); driver homes on P00022, then `FLT` |
 | p4, 242-276 | D00250.. scaling; jog M00020 (CCW) / M00022 (CW), speed M00021 / M00023 |
 | p5, 283-327 | `DST` slot 2 axis 0 on M00030..M00034 |
 | p6-10, 338-553 | Load values D00900.. -> D01200.., absolute values D01500.., results D01600-D01619, D01300.. (+100) |
@@ -62,24 +62,33 @@ D00130 "Shift Load Cell", step 50 samples "PULL1-3"). Confirm both on the machin
 
 ## ORIGIN (homing) - implemented, simulated
 
-PLC [steps 212-236]: M00050 AND D05000 = 0 -> D05000 := 10; 10 -> T0000 2 s (driver reset P00003)
--> 20; 20 -> homing instruction; with homing status D00500.4 -> D05000 := 0 and **the PLC resets
-M00050**. (A T0030 / P00003 branch at step 212 and the compare at step 228 are only partly legible -
-verify in XG5000.)
+PLC (rendered ladder, `plc kd All.pdf` p26-27; full table in [nlf_project_reference.md](nlf_project_reference.md)):
+
+| Step | Logic |
+|---|---|
+| 209 | TON T0030 4 s, always: the PLC **homes by itself 4 s after RUN** |
+| 212 | D05000 = 0 AND (M00050 OR T0030 rising OR P00003 Reset) -> D05000 := 10 |
+| 220 | D05000 = 10 -> T0000 2 s; T0000 AND P0000A (driver homing done) -> 20 |
+| 228 | D05000 = 20 -> `FLT 2 0` (floating origin); D00500.4 -> D05000 := 0 |
+| 236 | D05000 = 10 AND NOT M00050 AND NOT P00003 -> P00022 (homing command to the driver) |
+
+**No rung resets M00050.** While M00050 is ON, P00022 stays OFF (the driver is never commanded), and
+back at state 0 a held M00050 starts homing again. (Earlier notes said the PLC resets M00050. That
+was wrong.)
 
 App (`HomeOp`): refuses unless the status is fresh, axis idle, no error, D05000 = 0 and M00050 reads
-back OFF. Sets M00050 (FC05). Accepted only when D05000 leaves 0. Done when D05000 is back to 0, the
-PLC has cleared M00050 and D00500.4 is ON. If D05000 never leaves 0 the app clears M00050 itself
-(no late start). After acceptance the app never touches M00050; STOP cannot stop homing (no PC stop
-in this program). A lost connection fails the operation; nothing is re-sent; a request that was
-never accepted is cleared when the link returns, only while D05000 = 0. Failures latch a fault until
-STOP acknowledges it. Every ORIGIN button homes the single X axis.
+back OFF. Sets M00050 (FC05). Accepted only when D05000 leaves 0, and **then releases M00050 at
+once**. Done when D05000 is back to 0, M00050 is OFF and D00500.4 is ON. If D05000 never leaves 0, the
+app clears M00050 (no late start). A release that could not be written is retried when the link
+returns (releasing is always safe). STOP cannot stop homing (no PC stop in this program). A lost
+connection fails the operation and nothing is re-sent. Failures latch a fault until STOP acknowledges
+it. Every ORIGIN button homes the single X axis.
 
 ## Moves - implemented, simulated, no UI yet
 
 M00030 position 1 (D00735), M00031 position 2 (D00745), M00032 position 3 (D00755), M00033 total
-distance (D00730), M00034 home position (D00740); speed D00750. Ladder: NOT busy and the
-emergency interlocks P00000 / P00004 -> DST. The PLC never resets M0003x. App (`MoveOp`): requires
+distance (D00730), M00034 home position (D00740); speed D00750. Ladder: P00000 AND P00004 (NO contacts: both emergency inputs must be ON) AND
+NOT busy -> DST. The PLC never resets M0003x. App (`MoveOp`): requires
 homing; sets the bit, releases it once the axis is busy, done on busy OFF + positioning complete.
 
 ## Not driven by the app
@@ -102,6 +111,6 @@ cycle's sampling windows.
 
 ## Unresolved
 
-See `kd_profile.UNRESOLVED`: installed program, Cnet areas of the PC's channel, homing contacts at
-steps 212/228, DST edge behaviour, P00000/P00004 polarity, load scaling and the +100 values, the
+See `kd_profile.UNRESOLVED`: installed program, Cnet areas of the PC's channel, DST edge behaviour,
+P00000/P00004 wiring, load scaling and the +100 values, the
 writer of D00900-D00950, the AT/MT test sequence, recipe numbering.

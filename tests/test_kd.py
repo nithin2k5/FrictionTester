@@ -57,17 +57,30 @@ class Rig:
         return [e[1] for e in self.events if e[0] == "message"]
 
 
-def test_home_sets_m00050_and_waits_for_the_plc_to_finish():
+def test_home_pulses_m00050_and_waits_for_the_plc_to_finish():
     r = Rig()
     r.ctl.submit("home")
     r.step()
     assert r.sim.writes == [(r.sim.writes[0][0], "M00050", True)]
     r.run(1.0)
     assert r.ctl.op.state == "homing"                      # accepted: D05000 left 0
+    # released on acceptance: no rung resets M00050 and P00022 needs it OFF [kd All p27, step 236]
+    assert [w[1:] for w in r.sim.writes] == [("M00050", True), ("M00050", False)]
+    assert r.sim.P["P00022"] is True
     r.run(3.0)
     assert r.ctl.op is None and r.messages()[-1] == "X ORIGIN complete"
     assert r.sim.M["M00050"] is False and r.sim.home_started == 1
-    assert len(r.sim.writes) == 1                          # the app never cleared M00050 itself
+    r.run(5.0)
+    assert r.sim.home_started == 1 and r.sim.D[5000] == 0  # no re-trigger at state 0
+
+
+def test_simulated_ladder_hangs_while_m00050_is_held():
+    # Documents why the app must release M00050: held ON, the driver is never commanded.
+    sim = KdSim()
+    sim.M["M00050"] = True
+    for _ in range(100):
+        sim.advance(0.1)
+    assert sim.D[5000] == 10 and sim.P["P00022"] is False and sim.home_started == 1
 
 
 def test_home_not_accepted_clears_the_request():
@@ -145,7 +158,7 @@ def test_stop_during_homing_does_not_claim_a_machine_stop():
     r.run(1.0)
     r.ctl.submit("stop")
     r.step()
-    assert "no PC stop command" in r.messages()[-1] and len(r.sim.writes) == 1
+    assert "no PC stop command" in r.messages()[-1] and len(r.sim.writes) == 2   # set + release only
 
 
 def test_move_requires_homing_then_releases_its_bit():
