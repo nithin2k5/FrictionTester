@@ -717,3 +717,12 @@ def test_plc_params_from_cable_conditions():
     # jog low = speed / 2, jog high = speed, speed, PULL = stroke, left = P3, right = -P1; start = -P2 x 10
     assert values == [5, 10, 10, 5, 30, 30] * 2 + [50, 50]
     assert not validate_params(values) and not target_problems(derived_targets(values, False))
+
+
+def test_db_schema_names_defined():
+    """init_database needs these module names (a lost SCHEMA broke the Model page once)."""
+    from friction_tester import db
+    for name in ("SCHEMA", "RESULTS_SCHEMA", "ADMIN_SCHEMA", "LOGIN_HISTORY_SCHEMA", "RENAMED_COLUMNS",
+                 "RETIRED_COLUMNS"):
+        assert getattr(db, name), name
+    assert "MM_SELECT_POSITION_1" in db.SCHEMA

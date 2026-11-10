@@ -140,6 +140,20 @@ def plc_params_from_row(row):
         out[pp.param_index(axis, "jog_low")] = None if speed is None else max(1, round(speed / 2))
     return out
 
+SCHEMA = (f"CREATE TABLE IF NOT EXISTS {TABLE} (ID INT AUTO_INCREMENT PRIMARY KEY, "
+          + ", ".join(f"{c} {sql}" for c, _l, _u, sql in FIELDS) + ")")
+
+# Columns from earlier versions, renamed with their data kept:
+#   MM_<attr>      (single condition)  -> MM_SELECT_<attr>
+#   MM_C1_<attr>   (condition 1)       -> MM_SELECT_<attr>
+#   MM_C2_<attr>   (condition 2)       -> MM_SHIFT_<attr>
+RENAMED_COLUMNS = {}
+for _attr, _l, _u, _sql in CONDITION_FIELDS:
+    RENAMED_COLUMNS[f"MM_{_attr}"] = (cond_col("SELECT", _attr), _sql)
+    RENAMED_COLUMNS[f"MM_C1_{_attr}"] = (cond_col("SELECT", _attr), _sql)
+    RENAMED_COLUMNS[f"MM_C2_{_attr}"] = (cond_col("SHIFT", _attr), _sql)
+RETIRED_COLUMNS = ["MM_TEST_CABLE", "MM_SAVED_TO", "MM_DATE", "MM_TEST_RESULT"]
+
 
 def available():
     return mysql is not None
