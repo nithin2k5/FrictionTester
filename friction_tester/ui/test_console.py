@@ -1045,16 +1045,16 @@ class TestConsolePage(tk.Frame):
         """A card with a title strip; `right` builds an optional widget on the strip.
         expand=True: the card takes the panel's spare height."""
         card = tk.Frame(parent, bg=self.CARD, highlightbackground=theme.BORDER, highlightthickness=1)
-        card.pack(fill="both" if expand else "x", expand=expand, pady=(0, 5))
+        card.pack(fill="both" if expand else "x", expand=expand, pady=(0, 4))
         head = tk.Frame(card, bg=self.CARD_HEAD)
         head.pack(fill="x")
         tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
         tk.Label(head, text=title.upper(), bg=self.CARD_HEAD, fg="#c9d1dc", font=_font(8, True)).pack(
-            side="left", padx=8, pady=4)
+            side="left", padx=8, pady=2)
         if right:
             right(head).pack(side="right", padx=6)
         body = tk.Frame(card, bg=self.CARD)
-        body.pack(fill="both" if expand else "x", expand=expand, padx=8, pady=6)
+        body.pack(fill="both" if expand else "x", expand=expand, padx=8, pady=4)
         return body
 
     def _link(self, parent, text, command, fg=theme.HEADER_FG):
@@ -1066,8 +1066,8 @@ class TestConsolePage(tk.Frame):
         """A number tile: big value with a small caption under it. Returns the value label."""
         t = tk.Frame(parent, bg=self.TILE, highlightbackground="#232a36", highlightthickness=1)
         val = tk.Label(t, text=str(value), bg=self.TILE, fg=color, font=_font(size, True))
-        val.pack(pady=(2, 0))
-        tk.Label(t, text=caption, bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 3))
+        val.pack(pady=(1, 0))
+        tk.Label(t, text=caption, bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 2))
         return t, val
 
     def _build_side_panel(self, parent):
@@ -1081,7 +1081,7 @@ class TestConsolePage(tk.Frame):
         ctl.pack(fill="x", side="bottom", pady=(3, 0))
         # The test flow's current step, right above the buttons that drive it
         self.flow_lbl = tk.Label(ctl, text="Press RUN", bg=self.CARD, fg=theme.MUTED, font=_font(9, True),
-                                 pady=4, highlightbackground=theme.BORDER, highlightthickness=1)
+                                 pady=2, highlightbackground=theme.BORDER, highlightthickness=1)
         self.flow_lbl.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 3))
         # One row: RUN | STOP | ORIGIN
         for col in range(3):
@@ -1091,45 +1091,32 @@ class TestConsolePage(tk.Frame):
                 ("■ STOP", self.stop_flow, theme.FAIL, "#e53935"),
                 ("↺ ORIGIN", lambda: self.plc_pulse("move_origin", "Move origin"), "#2a313d", "#353d4b"))):
             tk.Button(ctl, text=text, command=cmd, bg=bg, fg="white", activebackground=abg, activeforeground="white",
-                      bd=0, pady=9, font=_font(11, True), cursor="hand2").grid(
+                      bd=0, pady=7, font=_font(11, True), cursor="hand2").grid(
                 row=1, column=col, sticky="nsew", padx=(0 if col == 0 else 3, 0))
 
         # ---- Model -----------------------------------------------------
-        body = self._side_card(side, "Model", expand=True)
-        # The loaded model (name / type) and its part number
+        # The loaded model (name / type) in the box, its part number on the title strip
+        def part_label(head):
+            self.part_lbl = tk.Label(head, text="Part —", bg=self.CARD_HEAD, fg="#c9d1dc", font=_font(8))
+            return self.part_lbl
+
+        body = self._side_card(side, "Model", right=part_label)
         self.current_model = tk.Label(body, text=self.settings["test"]["select"].get("model") or "No model loaded",
                                       bg=self.TILE, fg=theme.TITLE_FG, font=_font(12, True), anchor="w",
                                       padx=8, pady=3, highlightbackground="#232a36", highlightthickness=1)
-        self.current_model.pack(fill="x")
-        self.part_lbl = tk.Label(body, text="Part —", bg=self.CARD, fg="#c9d1dc", font=_font(9), anchor="w")
-        self.part_lbl.pack(fill="x", pady=(2, 6))
-        # Model number box: type or scan a model number + Enter to fetch it from the database
+        self.current_model.pack(fill="x", pady=(0, 4))
+        # Model number: type or scan it, or pick it from the drop-down list of models,
+        # then Enter or MODEL CHANGE fetches it from the database.
         mrow = tk.Frame(body, bg=self.CARD)
         mrow.pack(fill="x")
         tk.Label(mrow, text="MODEL NO", bg=self.CARD, fg=theme.MUTED, font=_font(8, True)).pack(side="left")
-        self.model_entry = tk.Entry(mrow, bg=self.TILE, fg="white", insertbackground="white", font=_font(10),
-                                    relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36",
-                                    highlightcolor=theme.UPDATE)
-        self.model_entry.pack(side="left", fill="x", expand=True, padx=(6, 0), ipady=2)
-        self.model_entry.bind("<Return>", lambda _e: self.fetch_model(self.model_entry.get()))
-        lb_frame = tk.Frame(body, bg=self.CARD)
-        lb_frame.pack(fill="both", expand=True, pady=(4, 4))
-        self.model_list = tk.Listbox(lb_frame, height=3, bg=self.TILE, fg="#d6dbe4", font=_font(9),
-                                     selectbackground="#2a4a7a", selectforeground="white", relief="flat", bd=0,
-                                     highlightthickness=1, highlightbackground="#232a36", highlightcolor="#2a4a7a",
-                                     activestyle="none", exportselection=False)
-        sb = ttk.Scrollbar(lb_frame, orient="vertical", command=self.model_list.yview)
-        self.model_list.config(yscrollcommand=sb.set)
-        self.model_list.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-        self.model_list.bind("<Double-Button-1>", lambda _e: self.model_change())
+        self.model_entry = ttk.Combobox(mrow, values=[], font=_font(10), height=15)
+        self.model_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        self.model_entry.bind("<Return>", lambda _e: self.model_change())
         self._models = []
         tk.Button(body, text="MODEL CHANGE", command=self.model_change, bg=theme.UPDATE, fg="white",
                   activebackground="#1e88e5", activeforeground="white", bd=0, pady=4, font=_font(9, True),
-                  cursor="hand2").pack(fill="x", side="bottom")
-        # Re-packed last: on a short screen the list loses rows, not the button or the model box.
-        lb_frame.pack_forget()
-        lb_frame.pack(fill="both", expand=True, pady=(4, 4))
+                  cursor="hand2").pack(fill="x", pady=(4, 0))
 
         # ---- Production: target / complete + progress bar ----------------
         body = self._side_card(side, "Production")
@@ -1139,7 +1126,7 @@ class TestConsolePage(tk.Frame):
         tgt = tk.Frame(row, bg=self.TILE, highlightbackground="#232a36", highlightthickness=1)
         tgt.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
         # Plain text box, whole numbers only; empty = target not set (RUN refuses to start)
-        self.target = tk.Entry(tgt, width=7, justify="center", font=_font(16, True), bg=self.TILE, fg="white",
+        self.target = tk.Entry(tgt, width=7, justify="center", font=_font(14, True), bg=self.TILE, fg="white",
                                relief="flat", bd=0, insertbackground="white", highlightthickness=1,
                                highlightbackground=self.TILE, highlightcolor=theme.UPDATE)
         digits_only = self.target.register(lambda p: p == "" or (p.isdigit() and len(p) <= 6))
@@ -1149,12 +1136,12 @@ class TestConsolePage(tk.Frame):
         self.target.bind("<Return>", lambda _e: self.set_target())
         self.target.bind("<KP_Enter>", lambda _e: self.set_target())
         self.target.bind("<FocusOut>", lambda _e: self._discard_target_edit())
-        self.target.pack(pady=(2, 0), padx=6, fill="x")
-        tk.Label(tgt, text="TARGET", bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 3))
-        t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], "#4fa3ff", size=16)
+        self.target.pack(pady=(1, 0), padx=6, fill="x")
+        tk.Label(tgt, text="TARGET", bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 2))
+        t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], "#4fa3ff", size=14)
         t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
         prow = tk.Frame(body, bg=self.CARD)
-        prow.pack(fill="x", pady=(6, 0))
+        prow.pack(fill="x", pady=(4, 0))
         self.progress_lbl = tk.Label(prow, text="", bg=self.CARD, fg=theme.MUTED, font=_font(8, True))
         self.progress_lbl.pack(side="right", padx=(6, 0))
         self.progress = tk.Canvas(prow, height=8, bg=self.TILE, highlightthickness=0)
@@ -1166,13 +1153,13 @@ class TestConsolePage(tk.Frame):
         row = tk.Frame(body, bg=self.CARD)
         row.pack(fill="x")
         row.columnconfigure((0, 1), weight=1, uniform="res")
-        t, ok_day = self._tile(row, "O.K  TODAY", c["ok_day"], theme.PASS, size=20)
+        t, ok_day = self._tile(row, "O.K  TODAY", c["ok_day"], theme.PASS, size=16)
         t.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
-        t, ng_day = self._tile(row, "N.G  TODAY", c["ng_day"], theme.FAIL, size=20)
+        t, ng_day = self._tile(row, "N.G  TODAY", c["ng_day"], theme.FAIL, size=16)
         t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
         # Cumulative counts on the left, the reset links on the right of the same line
         tot = tk.Frame(body, bg=self.CARD)
-        tot.pack(fill="x", pady=(6, 0))
+        tot.pack(fill="x", pady=(3, 0))
         self._link(tot, "↺ TOTAL", lambda: self.reset_counts("total"), fg="#4fa3ff").pack(side="right")
         self._link(tot, "↺ TODAY", lambda: self.reset_counts("day"), fg="#4fa3ff").pack(side="right", padx=(0, 6))
         tk.Label(tot, text="Total", bg=self.CARD, fg=theme.MUTED, font=_font(8)).pack(side="left")
@@ -1185,34 +1172,33 @@ class TestConsolePage(tk.Frame):
         self.lbl_ng = [ng_day, ng_total]
 
         # ---- Saved data --------------------------------------------------
-        body = self._side_card(side, "Saved Data",
-                               right=lambda p: self._link(p, "📂 OPEN", self.open_saved, fg="#4fa3ff"))
+        # Title strip: saved counts per cable, then OPEN
+        def saved_head(head):
+            f = tk.Frame(head, bg=self.CARD_HEAD)
+            self._link(f, "📂 OPEN", self.open_saved, fg="#4fa3ff").pack(side="right", padx=(10, 0))
+            self.lbl_saved = []
+            for name, value in (("SH", c["saved_shift"]), ("SL", c["saved_select"])):   # SHIFT / SELECT
+                lbl = tk.Label(f, text=str(value), bg=self.CARD_HEAD, fg="white", font=_font(9, True))
+                lbl.pack(side="right")
+                tk.Label(f, text=name, bg=self.CARD_HEAD, fg=theme.MUTED, font=_font(7, True)).pack(
+                    side="right", padx=(8, 3))
+                self.lbl_saved.insert(0, lbl)      # keep order: [SELECT, SHIFT]
+            return f
+
+        body = self._side_card(side, "Saved", right=saved_head)
         self.save_dir = tk.Entry(body, bg=self.TILE, fg="#d6dbe4", insertbackground="white", font=_font(9),
                                  relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36")
         self.save_dir.insert(0, self.settings["test"]["save_dir"])
         self.save_dir.bind("<FocusOut>", lambda _e: self._save_counters())
-        self.save_dir.pack(fill="x", ipady=3)
-        # Saved counts on one compact line: "Saved   SELECT 23   SHIFT 23"
-        row = tk.Frame(body, bg=self.CARD)
-        row.pack(fill="x", pady=(5, 0))
-        tk.Label(row, text="Saved", bg=self.CARD, fg=theme.MUTED, font=_font(8)).pack(side="left")
-        self.lbl_saved = []
-        for name, value in (("SHIFT", c["saved_shift"]), ("SELECT", c["saved_select"])):
-            lbl = tk.Label(row, text=str(value), bg=self.CARD, fg="white", font=_font(11, True))
-            lbl.pack(side="right")
-            tk.Label(row, text=name, bg=self.CARD, fg=theme.MUTED, font=_font(8, True)).pack(
-                side="right", padx=(12, 4))
-            self.lbl_saved.insert(0, lbl)          # keep order: [SELECT, SHIFT]
+        self.save_dir.pack(fill="x", ipady=2)
 
         # ---- Scan results (barcode scanner input, one per cable) ---------
-        # Not shown while label scanning is skipped (test.skip_scan): nothing is scanned then.
         body = self._side_card(side, "Scan Result")
-        scan_card = body.master
         body.columnconfigure(1, weight=1)
         self.scan_entries = {}
         for r, (key, label) in enumerate((("select", "SELECT"), ("shift", "SHIFT"))):
             tk.Label(body, text=label, bg=self.CARD, fg=theme.MUTED, font=_font(8, True), width=7,
-                     anchor="w").grid(row=r, column=0, sticky="w", pady=2)
+                     anchor="w").grid(row=r, column=0, sticky="w", pady=1)
             e = tk.Entry(body, bg=self.TILE, fg="white", insertbackground="white", font=_font(10),
                          relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36",
                          highlightcolor=theme.UPDATE)
@@ -1221,17 +1207,6 @@ class TestConsolePage(tk.Frame):
             e.bind("<Return>", lambda _e, k=key: self.on_scan(k))
             self.scan_entries[key] = e
 
-        # Pack the cards from the bottom up and the Model card last: when the screen is short,
-        # the Model card (its list) gives up height instead of the counters being cut off.
-        cards = [w for w in side.pack_slaves() if w is not ctl]
-        for w in cards:
-            w.pack_forget()
-        model_card, *rest = cards
-        for w in reversed(rest):
-            if w is scan_card and self._skip_scan():
-                continue                       # nothing is scanned while test.skip_scan is on
-            w.pack(fill="x", side="bottom", pady=(0, 5))
-        model_card.pack(fill="both", expand=True, side="top", pady=(0, 5))
         self.after(50, self._draw_progress)
         return side
 
@@ -1448,29 +1423,22 @@ class TestConsolePage(tk.Frame):
         if not self._alive:
             return
         self._models = rows
-        self.model_list.delete(0, "end")
         if error is not None:
-            self.model_list.insert("end", "(database unavailable)")
+            self.model_entry.config(values=[])
+            self._set_status(f"Model list not loaded - database unavailable ({error})", theme.FAIL, 8)
             return
-        for r in rows:
-            part = r.get("MM_PART_NUMBER") or ""
-            self.model_list.insert("end", f"{r['MM_MODEL']}   {part}".rstrip())
-        current = self.settings["test"]["select"].get("model")
-        for i, r in enumerate(rows):
-            if r["MM_MODEL"] == current:
-                self.model_list.selection_set(i)
-                self.model_list.see(i)
+        self.model_entry.config(values=[r["MM_MODEL"] for r in rows])
 
     def model_change(self):
         """Load the selected model: its SELECT CABLE and SHIFT CABLE conditions."""
         if self._flow != "idle":
             self._set_status("Model Change: press STOP first — a test is in progress", theme.BUSY)
             return
-        sel = self.model_list.curselection()
-        if not sel or sel[0] >= len(self._models):
-            self._set_status("Model Change: select a model in the list first", theme.BUSY)
+        model = self.model_entry.get().strip()
+        if not model:
+            self._set_status("Model Change: type, scan or pick a model number first", theme.BUSY)
             return
-        self.fetch_model(self._models[sel[0]]["MM_MODEL"])
+        self.fetch_model(model)
 
     def fetch_model(self, model):
         """Fetch a model's part and specifications from TBL_MODEL_MASTER, then load them."""
@@ -1540,7 +1508,7 @@ class TestConsolePage(tk.Frame):
         model, mtype = t["select"].get("model"), t.get("model_type", "")
         self.current_model.config(text=(f"{model}  ·  {mtype}" if mtype else model) if model else "No model loaded")
         part = t.get("part_number", "")
-        self.part_lbl.config(text=(f"Part  {part}" if part else "Part —") + (f"   ·   Type  {mtype}" if mtype else ""))
+        self.part_lbl.config(text=f"Part  {part}" if part else "Part —")
         self.model_entry.delete(0, "end")
         if model:
             self.model_entry.insert(0, model)

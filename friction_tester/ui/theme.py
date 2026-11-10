@@ -27,7 +27,7 @@ def apply_style(root):
     style.theme_use("clam")
     style.configure(
         "TCombobox", fieldbackground="#111", background="#111", foreground="white",
-        bordercolor="#444", arrowcolor="white", lightcolor="#111", darkcolor="#111",
+        bordercolor="#444", arrowcolor="white", lightcolor="#111", darkcolor="#111", insertcolor="white",
     )
     style.map(
         "TCombobox",
