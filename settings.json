@@ -230,11 +230,11 @@
             "verified": false
           }
         },
-        "judge": "peak",
+        "judge": "strokes",
         "force_sign": "absolute",
         "limit_bounds": "inclusive",
         "min_samples": 3,
-        "strokes_per_test": 1
+        "strokes_per_test": 3
       }
     },
     "counters": {
