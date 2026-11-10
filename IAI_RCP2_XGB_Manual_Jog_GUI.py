@@ -247,7 +247,7 @@ class ManualJogApp:
         self.root = root
         self.root.title("IAI RCP2 | XGB PLC Manual Jog")
         self.root.geometry("1200x880")
-        self.root.minsize(1100, 820)
+        self.root.minsize(1000, 700)
         self.plc = None
         self.connected = False
         self.polling = False
@@ -261,7 +261,19 @@ class ManualJogApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<FocusOut>", self._on_focus_out)
         self._refresh_ports()
+        # Start full screen. F11 toggles, Esc leaves full screen (window stays maximised).
+        self.root.bind("<F11>", lambda e: self._set_fullscreen(not self.root.attributes("-fullscreen")))
+        self.root.bind("<Escape>", lambda e: self._set_fullscreen(False))
+        self._set_fullscreen(True)
         self._log("Manual jog GUI started. Log file: " + self._log_path())
+
+    def _set_fullscreen(self, on):
+        self.root.attributes("-fullscreen", bool(on))
+        if not on:
+            try:
+                self.root.state("zoomed")   # Windows: maximised with title bar and taskbar
+            except tk.TclError:
+                pass
 
     def _build(self):
         style = ttk.Style()
