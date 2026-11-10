@@ -165,3 +165,27 @@ def test_help_page_renders_every_chapter_and_searches():
         assert page.current == len(hp.CHAPTERS) - 1          # already on the last chapter: stays
     finally:
         root.destroy()
+
+
+def test_contact_page_and_sidebar_entries():
+    from friction_tester.ui import app as app_mod
+    from friction_tester.ui import contact_page as cp
+    keys = [p for _i, _c, p, _t in app_mod.App.PAGES]
+    assert keys[-2:] == ["help", "contact"]
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        page = cp.ContactPage(root)
+        texts = [w.get("1.0", "end").strip() for w in _all(page) if isinstance(w, tk.Text)]
+        assert "+91 93467 40314" in texts and "Friction Tester" in texts
+    finally:
+        root.destroy()
+
+
+def _all(w):
+    for c in w.winfo_children():
+        yield c
+        yield from _all(c)
