@@ -354,10 +354,13 @@ class ManualJogApp:
         self.root.bind("<FocusOut>", self._on_focus_out)
         self._refresh_ports()
         # Start full screen. F11 toggles, Esc leaves full screen (window stays maximised).
-        self.root.bind("<F11>", lambda e: self._set_fullscreen(not self.root.attributes("-fullscreen")))
+        self.root.bind("<F11>", lambda e: self._toggle_fullscreen())
         self.root.bind("<Escape>", lambda e: self._set_fullscreen(False))
         self._set_fullscreen(True)
         self._log("Manual jog GUI started. Log file: " + self._log_path())
+
+    def _toggle_fullscreen(self):
+        self._set_fullscreen(not self.root.attributes("-fullscreen"))
 
     def _set_fullscreen(self, on):
         self.root.attributes("-fullscreen", bool(on))
@@ -366,6 +369,7 @@ class ManualJogApp:
                 self.root.state("zoomed")   # Windows: maximised with title bar and taskbar
             except tk.TclError:
                 pass
+        self.fullscreen_btn.configure(text="Exit full screen (F11)" if on else "Full screen (F11)")
 
     def _build(self):
         style = ttk.Style()
@@ -388,8 +392,14 @@ class ManualJogApp:
         header = ttk.Frame(outer)
         header.pack(fill="x")
         ttk.Label(header, text="IAI RCP2  |  MANUAL JOG CONTROL", style="Title.TLabel").pack(side="left")
+        # Full screen has no title bar, so the window controls live here.
+        tk.Button(header, text="✕  EXIT", command=self.on_close, bg="#dc2626", fg="white",
+                  activebackground="#b91c1c", activeforeground="white", relief="flat",
+                  font=("Segoe UI", 10, "bold"), padx=14, pady=4).pack(side="right")
+        self.fullscreen_btn = ttk.Button(header, text="Exit full screen (F11)", command=self._toggle_fullscreen)
+        self.fullscreen_btn.pack(side="right", padx=8)
         self.connection_label = ttk.Label(header, text="DISCONNECTED", foreground="#b45309")
-        self.connection_label.pack(side="right")
+        self.connection_label.pack(side="right", padx=8)
 
         # Connection settings
         conn = ttk.LabelFrame(outer, text="1. RS-485 / PLC communication settings", padding=10)
