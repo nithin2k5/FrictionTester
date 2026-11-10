@@ -822,7 +822,7 @@ class FakeDaq:
         return dict(self.volts)
 
 
-def _sampler_settings(force_source="serial", stroke=None):
+def _sampler_settings(force_source="serial", stroke=None, graph_force="result"):
     return {"daq": {"device": "Dev1", "terminal_config": "Differential", "sample_rate": 1000.0,
                     "samples_per_channel": 100,
                     "sensors": [{"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": 2.0,
@@ -830,7 +830,8 @@ def _sampler_settings(force_source="serial", stroke=None):
                                 {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": 5.0,
                                  "offset_v": 1.0, "unit": "mm"}]},
             "test": {"machine_profile": {"measurement": {
-                "force_source": force_source, "loadcell": {"select": 1, "shift": 2},
+                "force_source": force_source, "graph_force": graph_force,
+                "loadcell": {"select": 1, "shift": 2},
                 "daq_force": {"select": "Loadcell 1", "shift": ""},
                 "stroke": stroke if stroke is not None else {"select": "LVDT 1", "shift": ""}}}}}
 
@@ -884,20 +885,66 @@ def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
         from friction_tester.config import DEFAULT_SETTINGS
         panel = CablePanel(root, "SELECT CABLE", copy.deepcopy(DEFAULT_SETTINGS["test"]["select"]))
         pull = Capture("select", "pull", "t", 1)
-        pull.samples += [(10.0, 0.1, -5.0, 0, 0), (10.1, None, -4.0, 0, 0), (10.2, 0.3, -3.0, 0, 0)]
+        pull.graph += [(10.0, 0.1, -5.0), (10.1, None, -4.0), (10.2, 0.3, -3.0)]
         panel.draw_capture(pull)
         assert panel.plot.series["PULL"]["x"] == [-5.0, -3.0] and panel.plot.xlabel == "Stroke [mm]"
-        pull.samples.append((10.3, 0.4, -2.0, 0, 0))
+        pull.graph.append((10.3, 0.4, -2.0))
         panel.draw_capture(pull)                                     # only the new sample is added
         assert panel.plot.series["PULL"]["y"] == [0.1, 0.3, 0.4]
         push = Capture("select", "push", "t", 1)
-        push.samples += [(11.0, -0.2, 6.0, 0, 0), (11.5, -0.1, None, 0, 0)]
+        push.graph += [(11.0, -0.2, 6.0), (11.5, -0.1, None)]
         panel.draw_capture(push)                                     # same stroke: PULL stays
         assert panel.plot.series["PULL"]["y"] and panel.plot.series["PUSH"]["x"] == [6.0]
         pull2 = Capture("select", "pull", "t", 2)                    # next stroke: fresh graph
-        pull2.samples += [(20.0, 0.2, None, 0, 0), (20.5, 0.3, None, 0, 0)]
+        pull2.graph += [(20.0, 0.2, None), (20.5, 0.3, None)]
         panel.draw_capture(pull2)
         assert not panel.plot.series["PUSH"]["x"] and panel.plot.series["PULL"]["x"] == [0.0, 0.5]
         assert panel.plot.xlabel == "Time [s]"                       # no LVDT reading: Load vs time
     finally:
         root.destroy()
+
+
+def test_sampler_retries_the_ni_card_after_a_failed_open():
+    from friction_tester.plc.pc_measure import Sampler
+    daq = FakeDaq({"ai0": 0.25, "ai2": 3.0}, fail="Dev1 not found")
+    s = Sampler([_Lc(), _Lc()], daq, _sampler_settings("daq"))
+    s.DAQ_RETRY_S = 0.0
+    try:
+        s.read_once("select")
+        raise AssertionError("NI force read should fail while the card is missing")
+    except RuntimeError as exc:
+        assert "Dev1 not found" in str(exc)
+    daq.fail = None                                        # card plugged in / device selected
+    assert s.read_once("select")[0] == 0.5 and s.daq_error is None
+
+
+def test_results_from_serial_graph_from_the_ni_card():
+    from friction_tester.plc.pc_measure import Sampler
+    daq = FakeDaq({"ai0": 0.25, "ai2": 3.0})
+    s = Sampler([_Lc(), _Lc()], daq, _sampler_settings("serial", graph_force="daq"), period=0.005)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.04)
+    s.stop(cap)
+    assert cap.samples[0][1:4] == (0.5, 10.0, "ID001,+0000.50")   # result: serial loadcell
+    assert cap.graph[0][1:] == (0.5, 10.0)                          # graph: NI 0.25 V x 2.0, LVDT
+    assert daq.reads == len(cap.samples)                            # one NI block per sample
+    daq.volts["ai0"] = 0.1
+    g = {}
+    assert s.read_once("select", g)[0] == 0.5 and g == {"load": 0.2, "stroke": 10.0}
+
+
+def test_graph_keeps_the_ni_point_when_the_serial_read_fails():
+    from friction_tester.plc.pc_measure import Sampler
+
+    class Bad:
+        is_open = True
+
+        def read(self):
+            raise TimeoutError("no reply")
+
+    s = Sampler([Bad(), Bad()], FakeDaq({"ai0": 0.25, "ai2": 3.0}),
+                _sampler_settings("serial", graph_force="daq"), period=0.005)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.03)
+    s.stop(cap)
+    assert cap.samples[0][1] is None and cap.graph[0][1:] == (0.5, 10.0)

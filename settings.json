@@ -204,6 +204,7 @@
       },
       "measurement": {
         "force_source": "serial",
+        "graph_force": "daq",
         "loadcell": {
           "select": 1,
           "shift": 2

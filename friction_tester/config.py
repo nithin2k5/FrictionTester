@@ -191,6 +191,7 @@ DEFAULT_SETTINGS = {
             },
             "measurement": {
                 "force_source": "serial",          # "serial" (KOMEIN) or "daq"
+                "graph_force": "result",           # graph load: "result" (same as force_source) or "daq"
                 "loadcell": {"select": 1, "shift": 2},
                 "daq_force": {"select": "Loadcell 1", "shift": "Loadcell 2"},
                 "stroke": {"select": "", "shift": ""},   # DAQ sensor name of the LVDT, "" = none

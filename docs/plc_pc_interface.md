@@ -239,9 +239,13 @@ is recorded as invalid (no substitute sensor). Positions and repetition count ar
 NI card: the Sampler opens the NI DAQ task itself (device, wiring and sensor rows from the COM Port
 page) for the rows named by `stroke` / `daq_force`, with a ~10 ms averaging block; load and stroke
 come from the same acquisition. If the card cannot be opened the stroke is missing but a serial force
-sample still counts (retried each stroke). This machine (settings.json): SELECT stroke = `LVDT 1` (ai2), SHIFT = `LVDT 2` (ai3).
+sample still counts (retried each stroke). This machine (settings.json): results use the serial loadcells (`force_source` = `serial`); the
+graph uses the NI card (`graph_force` = `daq`) — SELECT `Loadcell 1` (ai0) + `LVDT 1` (ai2), SHIFT
+`Loadcell 2` (ai1) + `LVDT 2` (ai3). NI load = (V − offset_v) × scale of the sensor row. Each sample
+stores the result tuple and a separate graph point (`Capture.graph`), so a failed serial read still
+plots. A failed NI open is retried every 5 s.
 
-Graph (Test Console): each measuring stroke is drawn live, PULL and PUSH on a fresh graph per stroke
+Graph (Test Console): each measuring stroke is drawn live from `Capture.graph`, PULL and PUSH on a fresh graph per stroke
 number, Load against the LVDT stroke in mm — or against time since the stroke began when no stroke
 reading is available. The view grows to fit the data; **Fit** zooms to it.
 

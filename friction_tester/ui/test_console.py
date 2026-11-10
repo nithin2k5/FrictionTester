@@ -288,8 +288,9 @@ class CablePanel(tk.Frame):
         self._gcap, self._gstroke = None, None
 
     def draw_capture(self, cap):
-        """Add a measuring stroke's new samples to the graph: Load against the LVDT
-        stroke (NI card), or against time since the stroke began when no stroke is read.
+        """Add a measuring stroke's new graph points (Capture.graph: the NI card load when
+        graph_force = "daq") to the graph: Load against the LVDT stroke (NI card), or
+        against time since the stroke began when no stroke is read.
         Each stroke number starts a fresh graph; its PULL and PUSH share it."""
         name = "PULL" if cap.kind == "pull" else "PUSH"
         if cap is not self._gcap:
@@ -299,10 +300,10 @@ class CablePanel(tk.Frame):
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
             self._gcap, self._gn, self._gt0 = cap, 0, None
-        new = cap.samples[self._gn:]
+        new = cap.graph[self._gn:]
         self._gn += len(new)
         series = self.plot.series[name]
-        for t, load, stroke, *_raw in new:
+        for t, load, stroke in new:
             if load is None:
                 continue
             if self._gmode is None:          # chosen once per stroke: PULL and PUSH share the x axis
@@ -635,7 +636,9 @@ class TestConsolePage(tk.Frame):
             else:
                 src = f"NI DAQ {(m.get('daq_force') or {}).get(key, '?')}"
             stroke = (m.get("stroke") or {}).get(key) or "not configured"
-            panel.set_source(f"Source: {src} · stroke {stroke} · {pp.PROFILE_TITLE}")
+            graph = (f" · graph NI DAQ {(m.get('daq_force') or {}).get(key, '?')}"
+                     if m.get("graph_force") == "daq" else "")
+            panel.set_source(f"Source: {src} · stroke {stroke}{graph} · {pp.PROFILE_TITLE}")
             panel.set_result_labels("PULL", "PUSH", "", "Max")
         values = self.settings["test"].get("plc_params")
         if values and self.settings["test"]["select"].get("model"):
@@ -2076,11 +2079,21 @@ class TestConsolePage(tk.Frame):
         try:
             if not self.plc.is_open and not self.shared:
                 snapshot["missing"].append("PLC")      # shared mode: the PLC strip shows it
+            m = self.settings["test"]["machine_profile"].get("measurement") or {}
+            ni = self.sampler is not None and m.get("force_source", "serial") == "daq"
             for i, (key, _t, _s) in enumerate(self.SIDES):
-                side = {"load": None, "lamps": {}}
+                side = {"load": None, "stroke": None, "lamps": {}}
                 lc = self.loadcells[i]
                 capturing = self.sampler is not None and key in self.sampler.active_axes()
-                if lc.is_open and not capturing:
+                if capturing:
+                    side["capturing"] = True           # the capture owns the readouts
+                elif ni:                               # load (and stroke) from the NI card
+                    try:
+                        side["load"], side["stroke"] = self.sampler.read_once(key)[:2]
+                    except Exception:
+                        if "NI card" not in snapshot["missing"]:
+                            snapshot["missing"].append("NI card")
+                elif lc.is_open:
                     try:
                         side["load"] = lc.read()[2]
                     except Exception:
@@ -2135,8 +2148,8 @@ class TestConsolePage(tk.Frame):
             return
         self._last_poll = snap
         for i, side in enumerate(snap["sides"]):
-            if not self.shared:                       # shared mode: the PLC monitor owns LOAD/STROKE
-                self.panels[i].set_live(load=side["load"])
+            if not self.shared and not side.get("capturing"):   # shared: the PLC monitor owns them
+                self.panels[i].set_live(load=side["load"], stroke=side.get("stroke"))
             for name, (cv, dot) in self.lamps[i].items():
                 cv.itemconfig(dot, fill=LAMP_ON if side["lamps"].get(name) else LAMP_OFF)
         for name, (cv, dot) in getattr(self, "machine_lamps", {}).items():

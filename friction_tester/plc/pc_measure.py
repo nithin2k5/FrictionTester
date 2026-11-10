@@ -6,6 +6,8 @@ machine_profile.measurement:
     loadcell:      {"select": 1, "shift": 2}        serial loadcell number per cable
     daq_force:     {"select": "Loadcell 1", "shift": "Loadcell 2"}   DAQ sensor names
     stroke:        {"select": "", "shift": ""}      DAQ sensor name of the LVDT, "" = none
+    graph_force:   "result" (graph = the result load) or "daq" (graph = the NI card daq_force row,
+                   results stay on force_source)
 The NI card task is opened here (device / wiring / sensor rows from the COM Port
 page) for the rows these name, with a ~10 ms averaging block per sample.
 The cable assignment, calibration, units and sign are NOT established by the
@@ -27,6 +29,7 @@ class Capture:
     def __init__(self, axis, kind, test_id, stroke_no):
         self.axis, self.kind, self.test_id, self.stroke_no = axis, kind, test_id, stroke_no
         self.samples = []
+        self.graph = []                # [(t, graph load, stroke), ...] for the Test Console graph
         self.errors = 0
         self.last_error = None         # text of the last failed read (why samples are invalid)
         self.stop_event = threading.Event()
@@ -34,6 +37,8 @@ class Capture:
 
 
 class Sampler:
+    DAQ_RETRY_S = 5.0
+
     def __init__(self, loadcells, daq, settings, period=0.02):
         self.loadcells = loadcells
         self.daq = daq
@@ -42,7 +47,8 @@ class Sampler:
         self.latest = {}               # axis -> (load, stroke) for the screen
         self._active = set()           # axes being captured (the screen's poll leaves them alone)
         self.captures = {}             # axis -> the latest Capture (the graph draws its samples)
-        self.daq_error = None          # why the NI card could not be opened (retried each stroke)
+        self.daq_error = None          # why the NI card could not be opened (retried each stroke
+        self._daq_failed_at = 0.0      # and every DAQ_RETRY_S seconds)
         self._daq_lock = threading.Lock()
 
     @property
@@ -61,7 +67,7 @@ class Sampler:
     def _daq_names(self):
         m = self.mcfg
         names = [(m.get("stroke") or {}).get(a, "") for a in ("select", "shift")]
-        if m.get("force_source", "serial") == "daq":
+        if m.get("force_source", "serial") == "daq" or m.get("graph_force") == "daq":
             names += [(m.get("daq_force") or {}).get(a, "") for a in ("select", "shift")]
         return [n for n in names if n]
 
@@ -72,7 +78,7 @@ class Sampler:
             return False
         if self.daq.is_open:
             return True
-        if self.daq_error:
+        if self.daq_error and time.monotonic() - self._daq_failed_at < self.DAQ_RETRY_S:
             return False
         d = self.settings.get("daq") or {}
         chans = []
@@ -89,7 +95,9 @@ class Sampler:
                               "channels": chans})
         except Exception as exc:
             self.daq_error = str(exc) or type(exc).__name__
+            self._daq_failed_at = time.monotonic()
             return False
+        self.daq_error = None
         return True
 
     def _daq_value(self, name, block=None):
@@ -115,18 +123,24 @@ class Sampler:
             force = {"source": "serial loadcell", "channel": f"L{(m.get('loadcell') or {}).get(axis, '?')}",
                      "unit": cal.get("unit", "")}
         stroke = (m.get("stroke") or {}).get(axis, "")
-        return {"force": force, "stroke": stroke or None,
+        graph = (f"NI DAQ {(m.get('daq_force') or {}).get(axis, '')}" if m.get("graph_force") == "daq"
+                 else "result force")
+        return {"force": force, "stroke": stroke or None, "graph_force": graph,
                 "calibration": {"scale": cal.get("scale", 1.0), "offset": cal.get("offset", 0.0),
                                 "unit": cal.get("unit", ""), "verified": bool(cal.get("verified"))},
                 "period_s": self.period}
 
-    def read_once(self, axis):
+    def read_once(self, axis, graph=None):
+        """(load, stroke, raw_load, raw_stroke) for the result. With graph_force = "daq"
+        the graph load is the NI card's daq_force row (the result load stays the serial
+        loadcell); `graph`, a dict, receives {"load", "stroke"} even if the result read fails."""
         m = self.mcfg
         raw_load = stroke = raw_stroke = None
         name = (m.get("stroke") or {}).get(axis, "")
         block = None
         force_daq = m.get("force_source", "serial") == "daq"
-        if force_daq or name:
+        graph_daq = m.get("graph_force") == "daq"
+        if force_daq or graph_daq or name:
             with self._daq_lock:
                 try:
                     if not self._ensure_daq():
@@ -136,6 +150,12 @@ class Sampler:
                     if force_daq:
                         raise
                     block = {}         # NI card read failed: no stroke, the serial force still counts
+        if name:
+            stroke, raw_stroke = self._daq_value(name, block)
+        if graph is not None:
+            graph["stroke"] = stroke
+            graph["load"] = (self._daq_value((m.get("daq_force") or {}).get(axis, ""), block)[0]
+                             if graph_daq else None)
         if force_daq:
             value, raw_load = self._daq_value((m.get("daq_force") or {}).get(axis, ""), block)
         else:
@@ -147,8 +167,8 @@ class Sampler:
             _sent, raw_load, value = lc.read()
         cal = (m.get("calibration") or {}).get(axis) or {}
         load = None if value is None else value * float(cal.get("scale", 1.0)) + float(cal.get("offset", 0.0))
-        if name:
-            stroke, raw_stroke = self._daq_value(name, block)
+        if graph is not None and not graph_daq:
+            graph["load"] = load
         return load, stroke, raw_load, raw_stroke
 
     def start(self, axis, kind, test_id, stroke_no):
@@ -161,13 +181,15 @@ class Sampler:
             try:
                 while not cap.stop_event.is_set():
                     t = time.monotonic()
+                    g = {}
                     try:
-                        load, stroke, raw_load, raw_stroke = self.read_once(axis)
+                        load, stroke, raw_load, raw_stroke = self.read_once(axis, g)
                     except Exception as exc:
                         load = stroke = raw_load = raw_stroke = None
                         cap.errors += 1
                         cap.last_error = str(exc) or type(exc).__name__
                     cap.samples.append((t, load, stroke, raw_load, raw_stroke))
+                    cap.graph.append((t, g.get("load"), g.get("stroke")))
                     self.latest[axis] = (load, stroke)
                     cap.stop_event.wait(self.period)
             finally:
