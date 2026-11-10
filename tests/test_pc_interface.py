@@ -403,6 +403,24 @@ def test_home_from_unhomed_power_up():
     assert snap.st("shift", "permitted") is True
 
 
+def test_auto_m_reads_verified_use_completion_flags():
+    r = Rig(internal="auto", completion="auto")
+    assert r.link.internal_enabled and r.ctl._completion() == "internal_flags"
+    assert any("M-area reads verified" in m for m in r.messages())
+    r.confirm_params()
+    r.run_part("AT")
+    assert r.parts()[0]["verdict"] == "OK"
+
+
+def test_auto_m_reads_mismatch_falls_back_to_position():
+    clock = Clock()
+    sim = PcLadderSim(clock)
+    sim.m_area_wrong = True
+    link = PcLink(sim, EventLog(folder=None), owner_confirmed=True, internal_enabled="auto")
+    ok, detail = link.verify_internal()
+    assert not ok and "do not reach the M area" in detail and not link.internal_enabled
+
+
 def test_home_on_open_homes_both_axes_once():
     """home_on_open: both axes home on the first good status read, never again after that."""
     r = Rig(cfg={"home_on_open": True})

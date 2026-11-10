@@ -86,7 +86,9 @@ class PcLink:
         self.backend = backend
         self.log = log
         self.owner_confirmed = owner_confirmed
-        self.internal_enabled = internal_enabled
+        # True / False, or "auto": enabled once verify_internal() proves FC01 reaches the M area
+        self.internal_mode = internal_enabled
+        self.internal_enabled = internal_enabled is True
         self.words = None              # last command words written/adopted, None = unknown
         self.uncertain = False         # a command write failed: the PLC's words are unknown
         self._lock = threading.Lock()
@@ -94,6 +96,34 @@ class PcLink:
     # ------------------------------------------------------------ reading
     def read(self, now=None):
         return read_snapshot(self.backend, self.internal_enabled, now)
+
+    def verify_internal(self, tries=3):
+        """Prove that native bit reads reach the M area (internal_bits_enabled = "auto").
+
+        The ladder copies M0800 -> D04003 and M0801 -> D04004 every scan (p31), so
+        the 32 bits read as M08000-M0801F must equal those two status words.
+        Returns (ok, detail); on success internal reads are switched on.
+        """
+        addrs = [f"M{w:04d}{b:X}" for w in (800, 801) for b in range(16)]
+        detail = "not checked"
+        for _ in range(tries):
+            before = self.backend.read_words("D04003", 2)
+            bits = self.backend.read_bits(addrs)
+            after = self.backend.read_words("D04003", 2)
+            if list(before) != list(after):
+                detail = "status changed during the check"
+                continue                      # inputs moved between the reads - try again
+            words = [sum(int(bool(bits.get(addrs[16 * i + b]))) << b for b in range(16)) for i in range(2)]
+            if words != list(before):
+                detail = (f"M0800/M0801 read {words[0]:#06x}/{words[1]:#06x}, D04003/D04004 = "
+                          f"{before[0]:#06x}/{before[1]:#06x} - bit reads do not reach the M area")
+                return False, detail
+            if not any(words):
+                detail = "M0800/M0801 and D04003/D04004 are all 0 - inconclusive"
+                continue
+            self.internal_enabled = True
+            return True, f"M0800/M0801 = D04003/D04004 = {words[0]:#06x}/{words[1]:#06x}"
+        return False, detail
 
     # ------------------------------------------------------------ writing
     @property

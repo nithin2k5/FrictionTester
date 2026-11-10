@@ -167,13 +167,14 @@ DEFAULT_SETTINGS = {
                 },
                 "word_read_order": ["word_read", "word_write"],
             },
-            "live_writes_enabled": False,
-            "command_owner_confirmed": False,     # no other program writes D04100-D04102
-            "internal_bits_enabled": False,       # native M reads (M-area mapping verified)
+            "live_writes_enabled": True,
+            "command_owner_confirmed": True,      # no other program writes D04100-D04102
+            # native M reads: True / False / "auto" (checked at connection: M0800/M0801 = D04003/D04004)
+            "internal_bits_enabled": "auto",
             # PULL/PUSH completion: "internal_flags" (M00051/52/61/62, needs native M reads) or
             # "position_fallback" (target compare + in-position + ladder step timing) - select the
             # fallback only after validating it on the machine.
-            "stroke_completion": "internal_flags",
+            "stroke_completion": "auto",          # "auto" = internal_flags if M reads work, else fallback
             "mt_parallel_verified": False,        # SHIFT and SELECT may move together (MT)
             "home_before_test": "if_not_referenced",   # "never" | "if_not_referenced" | "always"
             "home_on_open": True,                 # home both axes once when the Test Console connects

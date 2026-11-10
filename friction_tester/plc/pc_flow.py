@@ -243,6 +243,8 @@ class PcController:
         self.link, self.cfg, self.log, self.sampler = link, cfg, log, sampler
         self.interval, self.clock, self.skip_scan = interval, clock, skip_scan
         self.timeouts = cfg.get("timeouts") or {}
+        # "internal_flags", "position_fallback", or "auto": the PLC's completion flags when
+        # native M reads are verified, otherwise target compare + in-position
         self.completion = cfg.get("stroke_completion", "internal_flags")
         self.events = queue.Queue()
         self.commands = queue.Queue()
@@ -377,6 +379,15 @@ class PcController:
                 self._msg(f"PC request bits are ON in the PLC: {names}. They are not re-sent; inspect the machine "
                           "and press STOP to release them.", "fail")
             self.log.log("CONNECT", "", stale=len(self.stale), pending_release=len(self.pending_release))
+            if self.link.internal_mode == "auto" and not self.link.internal_enabled:
+                try:
+                    ok, detail = self.link.verify_internal()
+                except Exception as exc:
+                    ok, detail = False, f"bit read failed: {exc}"
+                self.log.log("M-READ", detail, ok=ok)
+                self._msg(f"M-area reads verified ({detail}) - stroke end from the PLC's completion flags"
+                          if ok else f"M-area reads not usable: {detail} - stroke end from "
+                          f"{self._completion()}", "pass" if ok else "busy")
         self.link_state = "ok"
         if self.pending_release and self.link.words is not None:
             try:
@@ -612,6 +623,12 @@ class PcController:
         self.manual[axis] = op
         self._msg(f"{op.name}…", "busy")
 
+    def _completion(self):
+        """The stroke completion source in use now."""
+        if self.completion == "auto":
+            return "internal_flags" if self.link.internal_enabled else "position_fallback"
+        return self.completion
+
     def _home_on_open(self, now):
         """One automatic home of both axes after the Test Console opens (home_on_open).
 
@@ -790,7 +807,7 @@ class PcController:
             elif r.state == "ready":
                 kind = r.plan[r.step]
                 op = make_op(r.axis, kind, test_id=r.test_id, timeouts=self.timeouts, log=self.log,
-                             completion=self.completion)
+                             completion=self._completion())
                 if kind in ("pull", "push"):              # acquisition armed before the request
                     r.capture = self.sampler.start(r.axis, kind, r.test_id, len(r.strokes) + (kind == "pull"))
                 why = self._start_op(op, now)
@@ -931,5 +948,5 @@ class PcController:
             "routines": {a: (r.op.name if r.op else "", r.op.state if r.op else r.state)
                          for a, r in self.routines.items()},
             "stale": list(self.stale), "fault": self.fault, "stop_state": self.stop_state,
-            "write_blocker": self.link.write_blocker(), "completion": self.completion,
+            "write_blocker": self.link.write_blocker(), "completion": self._completion(),
         }

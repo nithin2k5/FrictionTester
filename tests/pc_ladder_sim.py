@@ -147,6 +147,9 @@ class PcLadderSim:
                     out[a] = self.axes[axis].seq["meas"].step == int(a[5], 16)
             if a in sel:
                 out[a] = self.local[sel[a]]
+            if len(a) == 6 and a[:5] in ("M0800", "M0801"):     # MOV M0800 D04003, M0801 D04004 (p31)
+                word = self.D[4003 if a[:5] == "M0800" else 4004]
+                out[a] = bool((word >> int(a[5], 16)) & 1) != getattr(self, "m_area_wrong", False)
         return out
 
     # ------------------------------------------------------------ ladder

@@ -101,13 +101,23 @@ PLC_INT = {cond_col(key, attr) for key in TEST_KEYS for attr, *_ in PLC_PARAM_FI
 
 
 def plc_params_from_row(row):
-    """The 14 parameter words of a model in D04200 order (int or None)."""
+    """The 14 parameter words of a model in D04200 order (int or None).
+
+    Operating speed: the model's PLC word, else the cable's test-condition Speed.
+    Low jog speed: always half the operating speed (rounded, at least 1).
+    """
     from .plc import pc_profile as pp
+    row = row or {}
     attr_of = {k: attr for attr, _l, k in PLC_PARAM_FIELDS}
     out = []
     for axis, key, *_r in pp.PARAMS:
-        v = (row or {}).get(cond_col(axis.upper(), attr_of[key]))
-        out.append(None if v is None else int(v))
+        v = row.get(cond_col(axis.upper(), attr_of[key]))
+        if key == "speed" and v is None:
+            v = row.get(cond_col(axis.upper(), "SPEED"))
+        out.append(None if v is None else int(round(float(v))))
+    for axis in pp.AXES:
+        speed = out[pp.param_index(axis, "speed")]
+        out[pp.param_index(axis, "jog_low")] = None if speed is None else max(1, round(speed / 2))
     return out
 
 SCHEMA = (f"CREATE TABLE IF NOT EXISTS {TABLE} (ID INT AUTO_INCREMENT PRIMARY KEY, "

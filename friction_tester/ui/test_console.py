@@ -567,7 +567,9 @@ class TestConsolePage(tk.Frame):
         self.pc_log = EventLog(self._result_dir())
         self.pc_log.log("MAPPING", mapping.describe())
         link = PcLink(backend, self.pc_log, owner_confirmed=bool(mp.get("command_owner_confirmed")),
-                      internal_enabled=bool(mp.get("internal_bits_enabled")) and mapping.verified)
+                      internal_enabled=(("auto" if mp.get("internal_bits_enabled") == "auto"
+                                         else bool(mp.get("internal_bits_enabled"))) if mapping.verified
+                                        else False))
         self.sampler = Sampler(self.loadcells, self.daq, self.settings)
         cfg = copy.deepcopy(mp)
         from .. import db
