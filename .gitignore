@@ -16,3 +16,6 @@ data/
 
 # Test runs
 .pytest_cache/
+
+# Manual jog GUI event logs
+logs/

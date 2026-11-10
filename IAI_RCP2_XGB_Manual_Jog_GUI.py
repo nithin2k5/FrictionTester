@@ -10,6 +10,11 @@ Communication: Modbus RTU over the XGB built-in Cnet CH2 (RS-485), the same link
 uses (settings.json "plc": COM13, 115200 8N1, station 1). Word areas are based at D00000:
 FC04 reads status (D04000 = offset 4000), FC03/FC06 read/write the command words.
 
+Address LED monitor: one LED per PLC bit address (command echo, jog echo, axis status),
+updated from the same D04000..D04006 poll. Event log: every command written, every LED
+change, safety stops and communication errors, shown in the GUI and appended to
+logs/manual_jog_YYYYMMDD.log next to this script.
+
 IMPORTANT:
 - Do NOT run this and the main Friction Tester app at the same time: both write D04100.
 - The PLC has no PC-link watchdog (M00010 is unused): a jog bit left ON keeps jogging until a
@@ -20,6 +25,7 @@ IMPORTANT:
 - Jog direction must be verified on the machine.
 """
 
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 import struct
@@ -61,6 +67,47 @@ JOG_BITS = {
     "SL_RIGHT_HIGH":1 << 11,  # M0701B
 }
 ALL_JOG_MASK = sum(JOG_BITS.values())
+
+# ------------------------- Address LED map -------------------------
+# (group, M address, description, word index in the D04000..D04006 poll, bit, ON colour)
+# Colour meaning: green = healthy/ON is good, red = fault/limit, amber = command active.
+LED_POINTS = [
+    ("cmd",    "M07007", "SH servo ON request",   0, 7,  "green"),
+    ("cmd",    "M0700B", "SL servo ON request",   0, 11, "green"),
+    ("cmd",    "M0700F", "Manual enable",         0, 15, "amber"),
+    ("jog",    "M07014", "SH left high",          1, 4,  "amber"),
+    ("jog",    "M07015", "SH left low",           1, 5,  "amber"),
+    ("jog",    "M07016", "SH right low",          1, 6,  "amber"),
+    ("jog",    "M07017", "SH right high",         1, 7,  "amber"),
+    ("jog",    "M07018", "SL left high",          1, 8,  "amber"),
+    ("jog",    "M07019", "SL left low",           1, 9,  "amber"),
+    ("jog",    "M0701A", "SL right low",          1, 10, "amber"),
+    ("jog",    "M0701B", "SL right high",         1, 11, "amber"),
+    ("status", "M0800D", "E-stop top (ON=OK)",    3, 13, "green"),
+    ("status", "M0800E", "SH servo",              3, 14, "green"),
+    ("status", "M08011", "SH no alarm",           4, 1,  "green"),
+    ("status", "M0801A", "SH movement enable",    4, 10, "green"),
+    ("status", "M0801C", "SH left limit",         4, 12, "red"),
+    ("status", "M0801D", "SH right limit",        4, 13, "red"),
+    ("status", "M08020", "SH axis error",         5, 0,  "red"),
+    ("status", "M08026", "E-stop bottom (ON=OK)", 5, 6,  "green"),
+    ("status", "M08012", "SL servo",              4, 2,  "green"),
+    ("status", "M08015", "SL no alarm",           4, 5,  "green"),
+    ("status", "M0801B", "SL movement enable",    4, 11, "green"),
+    ("status", "M0801E", "SL left limit",         4, 14, "red"),
+    ("status", "M0801F", "SL right limit",        4, 15, "red"),
+    ("status", "M08021", "SL axis error",         5, 1,  "red"),
+]
+
+# Bit names for decoding the command words this GUI writes (D04100 echoes in D04000, etc.).
+_ECHO_TO_CMD = {0: D_CMD1, 1: D_JOG}
+COMMAND_BIT_NAMES = {}
+for _g, _addr, _desc, _wi, _bit, _c in LED_POINTS:
+    if _wi in _ECHO_TO_CMD:
+        COMMAND_BIT_NAMES.setdefault(_ECHO_TO_CMD[_wi], {})[_bit] = f"{_addr} {_desc}"
+
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+LOG_MAX_LINES = 1000
 
 # Default link = the main app's settings.json "plc" section (found live on the machine 2026-11-09).
 DEFAULT_PORT = "COM13"
@@ -110,6 +157,7 @@ class ModbusRtuSerial:
             write_timeout=float(timeout),
         )
         self.lock = threading.Lock()
+        self.on_write = None    # callback(d_address, value) after a confirmed write
 
     def _frame(self, pdu: bytes) -> bytes:
         body = bytes([self.station]) + pdu
@@ -165,18 +213,41 @@ class ModbusRtuSerial:
         resp = self._exchange(pdu, lambda h: 8)
         if resp[1:6] != pdu:
             raise RuntimeError(f"Write echo mismatch: {resp!r}")
+        if self.on_write:
+            self.on_write(int(d_address), value)
 
     def close(self):
         if self.ser and self.ser.is_open:
             self.ser.close()
 
 
+class Led(tk.Canvas):
+    """Round LED: True = lit in its colour, False = dark, None = unknown (no data)."""
+
+    COLORS = {"green": "#22c55e", "red": "#ef4444", "amber": "#f59e0b", "blue": "#3b82f6"}
+    OFF = "#475569"
+    UNKNOWN = "#e2e8f0"
+
+    def __init__(self, parent, color="green", size=16, bg=None):
+        super().__init__(parent, width=size, height=size, highlightthickness=0, bd=0, bg=bg)
+        self.on_fill = self.COLORS.get(color, color)
+        self.oval = self.create_oval(2, 2, size - 2, size - 2, fill=self.UNKNOWN, outline="#1e293b")
+        self.state = None
+
+    def set(self, state):
+        if state == self.state:
+            return
+        self.state = state
+        fill = self.UNKNOWN if state is None else (self.on_fill if state else self.OFF)
+        self.itemconfigure(self.oval, fill=fill)
+
+
 class ManualJogApp:
     def __init__(self, root):
         self.root = root
         self.root.title("IAI RCP2 | XGB PLC Manual Jog")
-        self.root.geometry("1080x760")
-        self.root.minsize(940, 680)
+        self.root.geometry("1200x880")
+        self.root.minsize(1100, 820)
         self.plc = None
         self.connected = False
         self.polling = False
@@ -184,10 +255,13 @@ class ManualJogApp:
         self.active_jog = None
         self.status = {}
         self.last_error = ""
+        self.leds = {}          # address -> (Led, word index, bit, description)
+        self.prev_bits = {}     # address -> last polled state, for change logging
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<FocusOut>", self._on_focus_out)
         self._refresh_ports()
+        self._log("Manual jog GUI started. Log file: " + self._log_path())
 
     def _build(self):
         style = ttk.Style()
@@ -198,8 +272,10 @@ class ManualJogApp:
         style.configure("Title.TLabel", font=("Segoe UI", 17, "bold"))
         style.configure("Section.TLabel", font=("Segoe UI", 11, "bold"))
         style.configure("Status.TLabel", font=("Segoe UI", 10))
+        style.configure("Addr.TLabel", font=("Consolas", 10, "bold"))
         style.configure("Jog.TButton", font=("Segoe UI", 11, "bold"), padding=12)
         style.configure("Stop.TButton", font=("Segoe UI", 12, "bold"), padding=12)
+        self.frame_bg = style.lookup("TFrame", "background") or "#dcdad5"
 
         outer = ttk.Frame(self.root, padding=14)
         outer.pack(fill="both", expand=True)
@@ -254,37 +330,9 @@ class ManualJogApp:
         self.sl_servo_off_btn = ttk.Button(safety, text="SL SERVO OFF", command=lambda: self.set_servo("SL", False), state="disabled")
         self.sl_servo_off_btn.pack(side="left", padx=5)
 
-        # Jog panels
-        jogs = ttk.Frame(outer)
-        jogs.pack(fill="both", expand=True, pady=8)
-        self._axis_panel(jogs, "SH  |  SHIFT LINE", "SH", 0)
-        self._axis_panel(jogs, "SL  |  SELECT LINE", "SL", 1)
-
-        # Status
-        status_frame = ttk.LabelFrame(outer, text="3. Live PLC status (read-only)", padding=10)
-        status_frame.pack(fill="x", pady=8)
-        self.status_vars = {}
-        labels = [
-            ("SH Servo", "sh_servo"), ("SH No Alarm", "sh_alarm_ok"),
-            ("SH Movement Enable", "sh_enable"), ("SH Left Limit", "sh_left"),
-            ("SH Right Limit", "sh_right"), ("SL Servo", "sl_servo"),
-            ("SL No Alarm", "sl_alarm_ok"), ("SL Movement Enable", "sl_enable"),
-            ("SL Left Limit", "sl_left"), ("SL Right Limit", "sl_right"),
-            ("E-Stop Top", "estop_top"), ("E-Stop Bottom", "estop_bottom"),
-            ("SH PLC Alarm", "sh_axis_err"), ("SL PLC Alarm", "sl_axis_err"),
-            ("Jog echo (M0701)", "jog_echo"),
-        ]
-        for i, (label, key) in enumerate(labels):
-            r, c = divmod(i, 5)
-            cell = ttk.Frame(status_frame)
-            cell.grid(row=r, column=c, padx=8, pady=4, sticky="w")
-            ttk.Label(cell, text=label).pack(anchor="w")
-            var = tk.StringVar(value="UNKNOWN")
-            self.status_vars[key] = var
-            ttk.Label(cell, textvariable=var, style="Status.TLabel").pack(anchor="w")
-
+        # Footer (packed before the expanding areas so it always stays visible)
         footer = ttk.Frame(outer)
-        footer.pack(fill="x", pady=(4, 0))
+        footer.pack(side="bottom", fill="x", pady=(4, 0))
         msgs = ttk.Frame(footer)
         msgs.pack(side="left", fill="x", expand=True)
         self.feedback_var = tk.StringVar(value="Not connected. No PLC commands will be sent.")
@@ -292,6 +340,79 @@ class ManualJogApp:
         self.comm_var = tk.StringVar(value="")
         ttk.Label(msgs, textvariable=self.comm_var, foreground="#64748b").pack(anchor="w")
         ttk.Button(footer, text="STOP ALL JOG COMMANDS", style="Stop.TButton", command=self.stop_all).pack(side="right")
+
+        # Address LED monitor + event log
+        bottom = ttk.Frame(outer)
+        bottom.pack(side="bottom", fill="x", pady=8)
+        self._led_panel(bottom)
+        self._log_panel(bottom)
+
+        # Jog panels
+        jogs = ttk.Frame(outer)
+        jogs.pack(fill="both", expand=True, pady=8)
+        self._axis_panel(jogs, "SH  |  SHIFT LINE", "SH", 0)
+        self._axis_panel(jogs, "SL  |  SELECT LINE", "SL", 1)
+
+    def _led_panel(self, parent):
+        panel = ttk.LabelFrame(parent, text="3. Address LED monitor (live PLC read, D04000..D04006)", padding=8)
+        panel.pack(side="left", fill="y")
+        groups = {
+            "cmd": ttk.LabelFrame(panel, text="Command echo D04000", padding=6),
+            "jog": ttk.LabelFrame(panel, text="Jog echo D04001", padding=6),
+            "status": ttk.LabelFrame(panel, text="Axis status D04003..D04005", padding=6),
+        }
+        groups["cmd"].grid(row=0, column=0, sticky="nw", padx=4)
+        groups["jog"].grid(row=0, column=1, rowspan=2, sticky="nw", padx=4)
+        groups["status"].grid(row=0, column=2, rowspan=2, sticky="nw", padx=4)
+        rows = {"cmd": 0, "jog": 0, "status": 0}
+        for group, addr, desc, wi, bit, color in LED_POINTS:
+            n = rows[group]
+            rows[group] += 1
+            r, c = (n % 7, (n // 7) * 3) if group == "status" else (n, 0)
+            frame = groups[group]
+            led = Led(frame, color, bg=self.frame_bg)
+            led.grid(row=r, column=c, padx=(0 if c == 0 else 12, 4), pady=2)
+            ttk.Label(frame, text=addr, style="Addr.TLabel").grid(row=r, column=c + 1, sticky="w")
+            ttk.Label(frame, text=desc).grid(row=r, column=c + 2, sticky="w", padx=(6, 0))
+            self.leds[addr] = (led, wi, bit, desc)
+
+        word = ttk.LabelFrame(panel, text="D04006 / M0850 word", padding=6)
+        word.grid(row=1, column=0, sticky="nw", padx=4, pady=(6, 0))
+        self.word_fb_var = tk.StringVar(value="----")
+        ttk.Label(word, textvariable=self.word_fb_var, style="Addr.TLabel").pack(anchor="w")
+        ttk.Label(word, text="not a confirmed\nposition register", foreground="#64748b").pack(anchor="w")
+
+        legend = ttk.Frame(panel)
+        legend.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        for color, text in (("green", "ON / healthy"), ("amber", "command ON"),
+                            ("red", "limit / fault ON"), (None, "no data")):
+            led = Led(legend, color or "green", size=12, bg=self.frame_bg)
+            led.set(True if color else None)
+            led.pack(side="left", padx=(0, 3))
+            ttk.Label(legend, text=text, foreground="#475569").pack(side="left", padx=(0, 12))
+        Led_off = Led(legend, "green", size=12, bg=self.frame_bg)
+        Led_off.set(False)
+        Led_off.pack(side="left", padx=(0, 3))
+        ttk.Label(legend, text="OFF", foreground="#475569").pack(side="left")
+
+    def _log_panel(self, parent):
+        panel = ttk.LabelFrame(parent, text="4. Event log", padding=8)
+        panel.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        bar = ttk.Frame(panel)
+        bar.pack(fill="x", pady=(0, 4))
+        ttk.Button(bar, text="Clear view", command=self._clear_log_view).pack(side="left")
+        ttk.Button(bar, text="Open log folder", command=self._open_log_folder).pack(side="left", padx=6)
+        body = ttk.Frame(panel)
+        body.pack(fill="both", expand=True)
+        self.log_text = tk.Text(body, height=9, width=40, font=("Consolas", 9), wrap="none",
+                                state="disabled", bg="#0f172a", fg="#e2e8f0", relief="flat")
+        yscroll = ttk.Scrollbar(body, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=yscroll.set)
+        yscroll.pack(side="right", fill="y")
+        self.log_text.pack(side="left", fill="both", expand=True)
+        for level, color in (("INFO", "#e2e8f0"), ("CMD", "#93c5fd"), ("PLC", "#86efac"),
+                             ("WARN", "#fcd34d"), ("ERR", "#fca5a5")):
+            self.log_text.tag_configure(level, foreground=color)
 
     def _axis_panel(self, parent, title, axis, col):
         panel = ttk.LabelFrame(parent, text=title, padding=12)
@@ -310,7 +431,7 @@ class ManualJogApp:
             ("RIGHT ▶\nLOW", f"{axis}_RIGHT_LOW", 1, 2),
         ]
         for text, key, row, colx in buttons:
-            b = tk.Button(grid, text=text, width=13, height=3, bg="#dbeafe",
+            b = tk.Button(grid, text=text, width=13, height=2, bg="#dbeafe",
                           activebackground="#93c5fd", font=("Segoe UI", 10, "bold"),
                           relief="raised")
             b.grid(row=row, column=colx, padx=8, pady=6)
@@ -320,11 +441,60 @@ class ManualJogApp:
             b.configure(state="disabled")
             setattr(self, f"btn_{key}", b)
         stop = ttk.Button(grid, text="STOP", command=self.stop_all)
-        stop.grid(row=0, column=1, rowspan=2, padx=12, ipadx=8, ipady=18)
+        stop.grid(row=0, column=1, rowspan=2, padx=12, ipadx=8, ipady=12)
         setattr(self, f"{axis.lower()}_stop_btn", stop)
         ttk.Label(panel, text="Jog direction must be verified against the actual machine before production use.",
                   foreground="#9a3412", wraplength=390).pack(pady=(10, 0))
 
+    # ------------------------- log -------------------------
+    @staticmethod
+    def _log_path():
+        return os.path.join(LOG_DIR, f"manual_jog_{time.strftime('%Y%m%d')}.log")
+
+    def _log(self, msg, level="INFO"):
+        line = f"{time.strftime('%H:%M:%S')} [{level:<4}] {msg}\n"
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", line, level)
+        excess = int(self.log_text.index("end-1c").split(".")[0]) - LOG_MAX_LINES
+        if excess > 0:
+            self.log_text.delete("1.0", f"{excess + 1}.0")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            with open(self._log_path(), "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d ") + line)
+        except OSError:
+            pass    # the on-screen log still works if the file cannot be written
+
+    def _feedback(self, msg, level="INFO"):
+        self.feedback_var.set(msg)
+        self._log(msg, level)
+
+    def _log_write(self, d_address, value):
+        names = COMMAND_BIT_NAMES.get(d_address, {})
+        on = [name for bit, name in sorted(names.items()) if value & (1 << bit)]
+        self._log(f"WRITE D{d_address:05d} <- 0x{value:04X}  ON: {', '.join(on) or 'none'}", "CMD")
+
+    def _clear_log_view(self):
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+
+    def _open_log_folder(self):
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            os.startfile(LOG_DIR)
+        except Exception as exc:
+            messagebox.showinfo("Log folder", f"{LOG_DIR}\n\n({exc})")
+
+    def _set_leds_unknown(self):
+        for led, _wi, _bit, _desc in self.leds.values():
+            led.set(None)
+        self.word_fb_var.set("----")
+        self.prev_bits = {}
+
+    # ------------------------- connection -------------------------
     def _refresh_ports(self):
         if list_ports is None:
             ports = []
@@ -343,15 +513,19 @@ class ManualJogApp:
         if not self.port_var.get():
             messagebox.showwarning("COM port required", "Select the RS-485 COM port.")
             return
+        self._log(f"Connecting {self.port_var.get()} {self.baud_var.get()} {self.parity_var.get()}"
+                  f"8{self.stop_var.get()} station {self.station_var.get().strip()}")
         try:
             self.plc = ModbusRtuSerial(
                 self.port_var.get(), self.baud_var.get(), self.parity_var.get(),
                 self.stop_var.get(), 8, self.station_var.get().strip(), 0.5
             )
+            self.plc.on_write = self._log_write
             # Read-only connection test: status block and command words.
             self.plc.read_status_words(D_ECHO0, 7)
             cmd = self.plc.read_command_words(D_CMD1, 2)
             self.connected = True
+            self.last_error = ""
             self.connection_label.configure(text="CONNECTED – MODBUS RTU", foreground="#15803d")
             self.connect_btn.configure(state="disabled")
             self.disconnect_btn.configure(state="normal")
@@ -360,15 +534,16 @@ class ManualJogApp:
                 w.configure(state="normal")
             for key in JOG_BITS:
                 getattr(self, f"btn_{key}").configure(state="normal")
+            self._log(f"Read D04100 = 0x{cmd[0]:04X}, D04101 = 0x{cmd[1]:04X}")
             self.manual_enabled = bool(cmd[0] & MANUAL_ENABLE)
             if cmd[1] & ALL_JOG_MASK:
                 # A jog bit left ON by an earlier session keeps the axis moving: clear it now.
                 self.plc.write_word(D_JOG, cmd[1] & (~ALL_JOG_MASK & 0xFFFF))
-                self.feedback_var.set("Connected. A stale jog bit was ON in D04101 and has been cleared.")
+                self._feedback("Connected. A stale jog bit was ON in D04101 and has been cleared.", "WARN")
             else:
-                self.feedback_var.set("Connected. Read-only status test passed."
-                                      + (" Manual bit M0700F is already ON." if self.manual_enabled
-                                         else " Manual movement is still disabled."))
+                self._feedback("Connected. Read-only status test passed."
+                               + (" Manual bit M0700F is already ON." if self.manual_enabled
+                                  else " Manual movement is still disabled."))
             self.polling = True
             self._poll()
         except Exception as exc:
@@ -380,6 +555,7 @@ class ManualJogApp:
                 except Exception:
                     pass
                 self.plc = None
+            self._log(f"Connection failed: {exc}", "ERR")
             messagebox.showerror("PLC connection failed", str(exc))
 
     def disconnect(self):
@@ -389,8 +565,8 @@ class ManualJogApp:
         try:
             self.stop_all()
             self._write_cmd_word(D_CMD1, MANUAL_ENABLE, False)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log(f"Could not clear commands before disconnect: {exc}", "ERR")
         self.polling = False
         self.connected = False
         self.manual_enabled = False
@@ -398,6 +574,7 @@ class ManualJogApp:
         if self.plc:
             self.plc.close()
             self.plc = None
+        self._set_leds_unknown()
         self.connection_label.configure(text="DISCONNECTED", foreground="#b45309")
         self.connect_btn.configure(state="normal")
         self.disconnect_btn.configure(state="disabled")
@@ -406,8 +583,9 @@ class ManualJogApp:
             w.configure(state="disabled")
         for key in JOG_BITS:
             getattr(self, f"btn_{key}").configure(state="disabled")
-        self.feedback_var.set("Disconnected. No new commands can be sent.")
+        self._feedback("Disconnected. No new commands can be sent.")
 
+    # ------------------------- commands -------------------------
     def _read_cmd_word(self, address):
         return self.plc.read_command_words(address, 1)[0]
 
@@ -425,7 +603,7 @@ class ManualJogApp:
         try:
             self._write_cmd_word(D_CMD1, MANUAL_ENABLE, True)
             self.manual_enabled = True
-            self.feedback_var.set("Manual-operation request sent (M0700F). Servo requests remain separate.")
+            self._feedback("Manual-operation request sent (M0700F). Servo requests remain separate.")
         except Exception as exc:
             self._fault(exc)
 
@@ -436,7 +614,7 @@ class ManualJogApp:
         try:
             self._write_cmd_word(D_CMD1, MANUAL_ENABLE, False)
             self.manual_enabled = False
-            self.feedback_var.set("Manual-operation request cleared.")
+            self._feedback("Manual-operation request cleared.")
         except Exception as exc:
             self._fault(exc)
 
@@ -450,7 +628,7 @@ class ManualJogApp:
             return
         try:
             self._write_cmd_word(D_CMD1, bit, on)
-            self.feedback_var.set(f"{axis} servo {action} request sent. Verify actual servo status in live feedback.")
+            self._feedback(f"{axis} servo {action} request sent. Verify actual servo status in live feedback.")
         except Exception as exc:
             self._fault(exc)
 
@@ -481,7 +659,7 @@ class ManualJogApp:
             return
         ok, reason = self._safe_to_jog(key)
         if not ok:
-            self.feedback_var.set("JOG BLOCKED: " + reason)
+            self._feedback(f"JOG BLOCKED ({key}): " + reason, "WARN")
             return
         try:
             # Clear other jog bits first, then assert exactly one direction/speed bit.
@@ -489,7 +667,7 @@ class ManualJogApp:
             new = (current & (~ALL_JOG_MASK & 0xFFFF)) | JOG_BITS[key]
             self.plc.write_word(D_JOG, new)
             self.active_jog = key
-            self.feedback_var.set(f"{key}: command ON. Release button to stop.")
+            self._feedback(f"{key}: command ON. Release button to stop.")
         except Exception as exc:
             self._fault(exc)
 
@@ -504,29 +682,34 @@ class ManualJogApp:
                 return True
             except Exception as exc:
                 last = exc
+                self._log(f"Jog clear attempt failed: {exc}", "WARN")
         self.active_jog = None
         self._fault(last, clear_jog=False)
-        self.feedback_var.set("JOG RELEASE FAILED - use the hardwired E-STOP if the axis is still moving. "
-                              f"({last})")
+        self._feedback("JOG RELEASE FAILED - use the hardwired E-STOP if the axis is still moving. "
+                       f"({last})", "ERR")
         return False
 
     def jog_stop(self, key):
         if not self.connected or self.active_jog != key:
             return
         if self._clear_jog_bits():
-            self.feedback_var.set("Jog command released.")
+            self._feedback(f"{key}: jog command released.")
 
     def stop_all(self):
         if not self.connected:
             return
         if self._clear_jog_bits():
-            self.feedback_var.set("All GUI jog bits cleared.")
+            self._feedback("All GUI jog bits cleared.")
 
+    # ------------------------- polling -------------------------
     def _poll(self):
         if not self.connected or not self.polling:
             return
         try:
             words = self.plc.read_status_words(D_ECHO0, 7)   # D04000..D04006 in one request
+            if self.last_error:
+                self._log("PLC communication restored.", "INFO")
+                self.last_error = ""
             echo1, w0, w1, w2, fb = words[1], words[3], words[4], words[5], words[6]
             self.status = {
                 "sh_servo": bool(w0 & (1 << 14)),       # M0800E (P00010)
@@ -545,26 +728,26 @@ class ManualJogApp:
                 "sl_axis_err": bool(w2 & (1 << 1)),     # M08021 (_POS_Y_Err)
                 "estop_bottom": not (w2 & (1 << 6)),    # M08026
             }
-            for key, var in self.status_vars.items():
-                if key == "jog_echo":
-                    var.set(f"0x{echo1 & ALL_JOG_MASK:04X}")
-                    continue
-                val = self.status.get(key)
-                if val is None:
-                    var.set("UNKNOWN")
-                elif key in ("sh_alarm_ok", "sl_alarm_ok"):
-                    var.set("OK" if val else "ALARM")
-                elif key.startswith("estop") or key.endswith("axis_err"):
-                    var.set("ACTIVE" if val else "OK")
-                else:
-                    var.set("ON" if val else "OFF")
+            # Address LEDs + change log (first poll after connect only sets the baseline).
+            first = not self.prev_bits
+            for addr, (led, wi, bit, desc) in self.leds.items():
+                state = bool(words[wi] & (1 << bit))
+                led.set(state)
+                if not first and self.prev_bits.get(addr) != state:
+                    self._log(f"{addr} {desc}: {'ON' if state else 'OFF'}", "PLC")
+                self.prev_bits[addr] = state
+            if first:
+                on = [a for a, v in self.prev_bits.items() if v]
+                self._log("Initial PLC bits ON: " + (", ".join(on) or "none"), "PLC")
+            self.word_fb_var.set(f"{fb}  (0x{fb:04X})")
             # Release a held jog as soon as a safety condition goes bad.
             if self.active_jog:
                 ok, reason = self._safe_to_jog(self.active_jog)
                 if not ok and self._clear_jog_bits():
-                    self.feedback_var.set("JOG STOPPED: " + reason)
+                    self._feedback("JOG STOPPED: " + reason, "WARN")
             # Kept separate from position: D04006/M0850 is not a confirmed position register.
-            self.comm_var.set(f"PLC communication OK {time.strftime('%H:%M:%S')} | D04006/M0850 word: {fb} | "
+            self.comm_var.set(f"PLC communication OK {time.strftime('%H:%M:%S')} | "
+                              f"Jog echo M0701: 0x{echo1 & ALL_JOG_MASK:04X} | "
                               f"Manual GUI state: {'ENABLED' if self.manual_enabled else 'DISABLED'}")
         except Exception as exc:
             self._fault(exc)
@@ -572,11 +755,13 @@ class ManualJogApp:
             self.root.after(300, self._poll)
 
     def _fault(self, exc, clear_jog=True):
+        if str(exc) != self.last_error:
+            # Logged once per distinct error, not on every 300 ms retry.
+            self._log(f"COMMUNICATION / COMMAND ERROR: {exc}", "ERR")
         self.last_error = str(exc)
         # Stale status must never allow a jog.
         self.status = {}
-        for var in self.status_vars.values():
-            var.set("UNKNOWN")
+        self._set_leds_unknown()
         self.comm_var.set("COMMUNICATION / COMMAND ERROR: " + str(exc))
         if clear_jog and self.active_jog:
             # Best effort: the PLC keeps jogging while the bit is ON.
@@ -584,13 +769,14 @@ class ManualJogApp:
                 current = self._read_cmd_word(D_JOG)
                 self.plc.write_word(D_JOG, current & (~ALL_JOG_MASK & 0xFFFF))
             except Exception:
-                self.feedback_var.set("JOG RELEASE FAILED after a communication error - "
-                                      "use the hardwired E-STOP if the axis is still moving.")
+                self._feedback("JOG RELEASE FAILED after a communication error - "
+                               "use the hardwired E-STOP if the axis is still moving.", "ERR")
         self.active_jog = None
 
     def _on_focus_out(self, event):
         # A button release can be lost when the window loses focus mid-jog.
         if self.active_jog and event.widget is self.root:
+            self._log("Window lost focus during jog - stopping.", "WARN")
             self.stop_all()
 
     def on_close(self):
@@ -598,6 +784,7 @@ class ManualJogApp:
             if not messagebox.askyesno("Exit", "Clear GUI jog commands and disconnect?"):
                 return
             self.disconnect()
+        self._log("Manual jog GUI closed.")
         self.root.destroy()
 
 
