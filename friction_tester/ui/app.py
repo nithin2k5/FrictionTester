@@ -143,6 +143,18 @@ class App:
         deadline = time.monotonic() + limit
         for t in threads:
             t.join(max(0.0, deadline - time.monotonic()))
+        # Still finishing (slow PLC link): remembered, so a new Test Console waits for them
+        self._stopping = [t for t in getattr(self, "_stopping", []) + threads if t.is_alive()]
+
+    def _previous_stopped(self, limit=10.0):
+        """Wait for a left Test Console's threads to end. Its controller writes the
+        command words from its own copy, so a second controller must not start while
+        it is still releasing its bits. True when none is left running."""
+        deadline = time.monotonic() + limit
+        for t in getattr(self, "_stopping", []):
+            t.join(max(0.0, deadline - time.monotonic()))
+        self._stopping = [t for t in getattr(self, "_stopping", []) if t.is_alive()]
+        return not self._stopping
 
     def release_devices(self, limit=3.0):
         """Disconnect every device; safe to call more than once."""
@@ -294,5 +306,10 @@ class App:
             self.page = ContactPage(self.content)
             self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
+            if not self._previous_stopped():
+                tk.Label(self.content, text="The previous Test Console is still stopping (PLC not answering).\n"
+                         "Open the Test Console again in a moment.", bg=theme.L_BG, fg=theme.L_NG,
+                         font=(theme.FONT, 13, "bold"), justify="center").pack(expand=True)
+                return
             self.page = TestConsolePage(self.content, self.settings, self.plc, self.loadcells, daq=self.daq)
             self.page.pack(fill="both", expand=True, padx=12, pady=10)

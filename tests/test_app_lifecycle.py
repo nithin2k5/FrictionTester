@@ -34,7 +34,10 @@ def app(monkeypatch):
     a = app_mod.App(root, settings, XGBPlc(), NIDaq(), [Loadcell(1), Loadcell(2)])
     yield a, root
     a._shutdown_page()
-    root.destroy()
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
 
 
 def _pump(root, n=10):
@@ -72,3 +75,25 @@ def test_leaving_during_a_test_asks_first(app, monkeypatch):
     a.load_page("help")
     _pump(root)
     assert a.current_page == "help" and not ctl._thread.is_alive()
+
+
+def test_new_test_console_waits_for_the_old_controller(app, monkeypatch):
+    """A left Test Console still releasing its bits (slow PLC) blocks a second controller."""
+    from friction_tester.ui import app as app_mod
+    a, root = app
+    _pump(root)
+    a.load_page("help")
+    _pump(root)
+    release = threading.Event()
+    stuck = threading.Thread(target=release.wait, daemon=True)
+    stuck.start()
+    a._stopping = [stuck]
+    monkeypatch.setattr(a, "_previous_stopped", lambda: app_mod.App._previous_stopped(a, limit=0.1))
+    a.load_page("test_console")
+    _pump(root)
+    assert a.page is None and not _controllers()          # refused, no second controller
+    release.set()
+    stuck.join(1)
+    a.load_page("test_console")
+    _pump(root)
+    assert a.page is not None and len(_controllers()) == 1
