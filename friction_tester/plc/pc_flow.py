@@ -194,6 +194,7 @@ class CableRoutine:
         self.step = 0
         self.op = None
         self.capture = None
+        self.read_errors = set()        # why force reads failed during this routine
         self.strokes = []
         self.evidence = []
         self.result = None
@@ -224,8 +225,11 @@ class CableRoutine:
     def close_capture(self):
         if self.capture is None:
             return None
-        samples = self.sampler.stop(self.capture)
+        cap = self.capture
+        samples = self.sampler.stop(cap)
         self.capture = None
+        if getattr(cap, "last_error", None):
+            self.read_errors.add(f"{cap.kind.upper()} read error: {cap.last_error}")
         return samples
 
     def stroke_done(self, kind, samples):
@@ -801,6 +805,8 @@ class PcController:
                     self._fail_routine(r, str(exc))
             if r.state == "ready" and r.step >= len(r.plan):
                 r.result = evaluate_axis(r.strokes, r.cond, r.mcfg)
+                if r.result["verdict"] == "INCOMPLETE" and r.read_errors:
+                    r.result["problems"] = r.result["problems"] + sorted(r.read_errors)
                 r.state = "done"
                 self.log.log("EVALUATE", f"{pp.AXIS_NAME[r.axis]}: {r.result['verdict']}", test=r.test_id,
                              problems="; ".join(r.result["problems"]) or "-")

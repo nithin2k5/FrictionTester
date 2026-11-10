@@ -726,3 +726,29 @@ def test_db_schema_names_defined():
                  "RETIRED_COLUMNS"):
         assert getattr(db, name), name
     assert "MM_SELECT_POSITION_1" in db.SCHEMA
+
+
+def test_sampler_records_why_loadcell_reads_fail():
+    from friction_tester.plc.pc_measure import Sampler
+
+    class Lc:
+        def __init__(self, is_open, err=None):
+            self.is_open, self.err = is_open, err
+
+        def read(self):
+            if self.err:
+                raise TimeoutError(self.err)
+            return None, "ID001,+0001.00", 1.0
+
+    settings = {"test": {"machine_profile": {"measurement": {"force_source": "serial",
+                                                             "loadcell": {"select": 1, "shift": 2}}}}}
+    s = Sampler([Lc(True), Lc(False)], None, settings, period=0.005)
+    for axis, expect in (("select", None), ("shift", "loadcell L2 is not connected")):
+        cap = s.start(axis, "pull", "t", 1)
+        time.sleep(0.05)
+        samples = s.stop(cap)
+        assert samples
+        if expect is None:
+            assert cap.last_error is None and all(x[1] == 1.0 for x in samples)
+        else:
+            assert expect in cap.last_error and all(x[1] is None for x in samples)

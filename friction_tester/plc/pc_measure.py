@@ -26,6 +26,7 @@ class Capture:
         self.axis, self.kind, self.test_id, self.stroke_no = axis, kind, test_id, stroke_no
         self.samples = []
         self.errors = 0
+        self.last_error = None         # text of the last failed read (why samples are invalid)
         self.stop_event = threading.Event()
         self.thread = None
 
@@ -88,8 +89,9 @@ class Sampler:
             value = None
             n = int((m.get("loadcell") or {}).get(axis, 0) or 0)
             lc = self.loadcells[n - 1] if 1 <= n <= len(self.loadcells) else None
-            if lc is not None and lc.is_open:
-                _sent, raw_load, value = lc.read()
+            if lc is None or not lc.is_open:
+                raise RuntimeError(f"loadcell L{n} is not connected (COM Port page)")
+            _sent, raw_load, value = lc.read()
         cal = (m.get("calibration") or {}).get(axis) or {}
         load = None if value is None else value * float(cal.get("scale", 1.0)) + float(cal.get("offset", 0.0))
         name = (m.get("stroke") or {}).get(axis, "")
@@ -107,9 +109,10 @@ class Sampler:
                     t = time.monotonic()
                     try:
                         load, stroke, raw_load, raw_stroke = self.read_once(axis)
-                    except Exception:
+                    except Exception as exc:
                         load = stroke = raw_load = raw_stroke = None
                         cap.errors += 1
+                        cap.last_error = str(exc) or type(exc).__name__
                     cap.samples.append((t, load, stroke, raw_load, raw_stroke))
                     self.latest[axis] = (load, stroke)
                     cap.stop_event.wait(self.period)
