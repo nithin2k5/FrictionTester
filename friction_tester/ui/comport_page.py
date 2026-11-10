@@ -87,6 +87,26 @@ class ComPortPage(tk.Frame):
             self.log("pymodbus is not installed — run: pip install pymodbus")
         if not ni_daq.NIDaq.available():
             self.log("nidaqmx is not installed — run: pip install nidaqmx (and install the NI-DAQmx driver)")
+        self._saved_state = self._form_state()     # what the fields held when the page opened
+
+    # ======================================================= unsaved edits
+    def _form_state(self):
+        """Every editable field as typed (PLC, loadcells, NI DAQ device and sensor rows)."""
+        fields = [self.cb_plc_port, self.cb_plc_baud, self.ent_plc_station, self.ent_plc_bits,
+                  self.ent_reg_addr, self.ent_reg_points, self.cb_daq_dev, self.cb_daq_term,
+                  self.ent_daq_rate, self.ent_daq_samples]
+        for w in self.lc_rows:
+            fields += [w["port"], w["baud"], w["id"]]
+        for w in self.sensor_rows:
+            fields += [w["channel"], w["range"], w["scale"], w["offset"], w["unit"]]
+        return tuple(f.get().strip() for f in fields)
+
+    def unsaved_changes(self):
+        """True if a field was changed since the page opened or since the last Save."""
+        try:
+            return self._form_state() != self._saved_state
+        except tk.TclError:                         # widgets already destroyed
+            return False
 
     # ============================================================ helpers
     def _label(self, parent, text, fg="white", size=10, bold=False, **kw):
@@ -701,5 +721,7 @@ class ComPortPage(tk.Frame):
             save_settings(self.settings)
         except Exception as exc:
             self.log(f"Settings not saved: {exc}")
-            return
+            return False
+        self._saved_state = self._form_state()
         self.log("Settings saved.")
+        return True

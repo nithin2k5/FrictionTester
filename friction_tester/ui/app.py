@@ -101,6 +101,8 @@ class App:
                 "Close", f"{busy}.\n\nClose the Friction Tester anyway? The part will not be recorded.",
                 icon="warning", parent=self.root):
             return
+        if not confirmed and not self.confirm_leave():
+            return
         self._closing = True
         self.lbl_title.config(text="Closing…")
         self.root.update_idletasks()
@@ -205,7 +207,19 @@ class App:
     # Pages that need a sign-in every time they are opened.
     LOGIN_PAGES = {"admin", "model_settings", "comport_settings"}
 
+    def confirm_leave(self):
+        """Before leaving a page with unsaved edits (COM Port settings): ask first."""
+        page = self.page if self.page is not None and self.page.winfo_exists() else None
+        if page is None or not getattr(page, "unsaved_changes", lambda: False)():
+            return True
+        return messagebox.askyesno(
+            "Settings not saved",
+            "The COM Port settings are not saved.\n\nAre you sure you want to leave this page? "
+            "The changes will be lost.", icon="warning", default="no", parent=self.root)
+
     def load_page(self, page_name):
+        if not self.confirm_leave():
+            return
         if page_name in self.LOGIN_PAGES:
             self._show_login(page_name)
         else:
