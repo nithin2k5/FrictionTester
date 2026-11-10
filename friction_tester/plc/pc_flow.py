@@ -268,6 +268,7 @@ class PcController:
         self.deferred_params = None
         # Home both axes once, on the first good status read after the Test Console opens
         self.home_on_open = bool(cfg.get("home_on_open", False))
+        self.pending_run = None         # RUN waiting for both axes to reach origin
         self.params = {"state": "not_confirmed", "values": None, "model": None, "message": "no model loaded"}
         self._seq = 0
         self._stop = threading.Event()
@@ -343,6 +344,8 @@ class PcController:
                 self._msg(op.message, "pass" if op.result == "done" else "fail")
                 if op.result == "failed" and op.kind != "alarm_reset":
                     self._latch(op.message)
+        if self.pending_run is not None and not self.manual:
+            self._start_pending_run(now)
         for r in list(self.routines.values()):
             self._advance(r, snap, now)
         self._advance_flow(now)
@@ -627,6 +630,18 @@ class PcController:
         self.manual[axis] = op
         self._msg(f"{op.name}…", "busy")
 
+    def _start_pending_run(self, now):
+        """Homing for a waiting RUN has ended: start the test if both axes are at origin."""
+        info, self.pending_run = self.pending_run, None
+        away = [pp.AXIS_NAME[a] for a in pp.AXES
+                if self.snap is None or self.snap.st(a, "origin_complete") is not True]
+        if self.fault or away:
+            why = self.fault or f"{' and '.join(away)} not at origin"
+            self._msg(f"Test not started: {why}", "fail")
+            return
+        self.log.log("PART", "both axes at origin - starting the waiting RUN")
+        self._cmd_run(info, now)
+
     def _completion(self):
         """The stroke completion source in use now."""
         if self.completion == "auto":
@@ -653,6 +668,9 @@ class PcController:
             self._cmd_manual("home", axis, now)
 
     def _cmd_stop(self, now):
+        if self.pending_run is not None:
+            self.pending_run = None
+            self._msg("Waiting RUN cancelled", "busy")
         for axis in list(self.jogs):
             self._jog_release(axis, "STOP")
         cancelled = []
@@ -727,8 +745,21 @@ class PcController:
         if self.flow == "at_scan_shift" and self.skip_scan and self.part:
             self._start_stage(["shift"], "at_run_shift", now)
             return
-        if self.part is not None or self.manual:
+        if self.part is not None or any(op.kind != "home" for op in self.manual.values()):
             self._msg("RUN refused: a part or operation is already active - press STOP to cancel it", "busy")
+            return
+        # Both axes must be at origin first: home the ones that are not, and start when both are.
+        away = [a for a in pp.AXES if self.snap is None or self.snap.st(a, "origin_complete") is not True]
+        if self.manual or away:
+            for axis in away:
+                if axis not in self.manual:
+                    self._cmd_manual("home", axis, now)
+            if any(a not in self.manual for a in away):
+                self._msg("RUN not started: an axis is not at origin and could not be homed", "fail")
+                return
+            self.pending_run = info
+            names = " and ".join(pp.AXIS_NAME[a] for a in self.manual)
+            self._msg(f"Waiting for {names} to reach origin - the test starts when both are home", "busy")
             return
         why = self.run_blocker(info)
         if why:
