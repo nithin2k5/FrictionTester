@@ -36,6 +36,8 @@ LIST_COLS = [("MM_MODEL", "Model", 150), ("MM_TYPE", "Type", 60), ("MM_PART_NUMB
              ("MM_PRN_TEMPLATE", "PRN Template", 170)] + [
     (key, name, 230) for key, name in db.TESTS]
 
+POSITION_1_MIN = -30.0          # mm: Position 1 may not be set below this
+POSITION_3_MAX = 30.0           # mm: Position 3 may not be set above this
 
 def prn_templates():
     """Names of the .prn label templates in the prn_templates folder."""
@@ -299,6 +301,11 @@ class ModelSettingsPage(tk.Frame):
             lo, hi = row[db.cond_col(key, "LOAD_MIN")], row[db.cond_col(key, "LOAD_MAX")]
             if lo is not None and hi is not None and lo > hi:
                 raise ValueError(f"{name}: LOAD min is above LOAD max")
+            p1, p3 = row[db.cond_col(key, "POSITION_1")], row[db.cond_col(key, "POSITION_3")]
+            if p1 is not None and p1 < POSITION_1_MIN:
+                raise ValueError(f"{name}: Position 1 must not be below {POSITION_1_MIN:g} mm (entered {p1:g})")
+            if p3 is not None and p3 > POSITION_3_MAX:
+                raise ValueError(f"{name}: Position 3 must not be above {POSITION_3_MAX:g} mm (entered {p3:g})")
         return row
 
     def new_model(self):
