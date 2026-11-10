@@ -1036,15 +1036,16 @@ class TestConsolePage(tk.Frame):
     # ------------------------------------------------------- side panel
     # Same card style as the COM Setting page: a title strip with an orange
     # accent, a dark body, large coloured number tiles.
-    SIDE_W = 250
+    SIDE_W = 270
     CARD = "#141922"
     CARD_HEAD = "#1b212c"
     TILE = "#0d1117"
 
-    def _side_card(self, parent, title, right=None):
-        """A card with a title strip; `right` builds an optional widget on the strip."""
+    def _side_card(self, parent, title, right=None, expand=False):
+        """A card with a title strip; `right` builds an optional widget on the strip.
+        expand=True: the card takes the panel's spare height."""
         card = tk.Frame(parent, bg=self.CARD, highlightbackground=theme.BORDER, highlightthickness=1)
-        card.pack(fill="x", pady=(0, 5))
+        card.pack(fill="both" if expand else "x", expand=expand, pady=(0, 5))
         head = tk.Frame(card, bg=self.CARD_HEAD)
         head.pack(fill="x")
         tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
@@ -1053,7 +1054,7 @@ class TestConsolePage(tk.Frame):
         if right:
             right(head).pack(side="right", padx=6)
         body = tk.Frame(card, bg=self.CARD)
-        body.pack(fill="x", padx=8, pady=6)
+        body.pack(fill="both" if expand else "x", expand=expand, padx=8, pady=6)
         return body
 
     def _link(self, parent, text, command, fg=theme.HEADER_FG):
@@ -1074,12 +1075,34 @@ class TestConsolePage(tk.Frame):
         side.pack_propagate(False)
         c = self.counters
 
+        # ---- Test control ------------------------------------------------
+        # Packed first so the buttons always keep their place at the foot of the panel.
+        ctl = tk.Frame(side, bg=theme.BG)
+        ctl.pack(fill="x", side="bottom", pady=(3, 0))
+        # The test flow's current step, right above the buttons that drive it
+        self.flow_lbl = tk.Label(ctl, text="Press RUN", bg=self.CARD, fg=theme.MUTED, font=_font(9, True),
+                                 pady=4, highlightbackground=theme.BORDER, highlightthickness=1)
+        self.flow_lbl.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 3))
+        # One row: RUN | STOP | ORIGIN
+        for col in range(3):
+            ctl.columnconfigure(col, weight=1, uniform="ctl")
+        for col, (text, cmd, bg, abg) in enumerate((
+                ("▶ RUN", self.start_flow, theme.PASS, "#43a047"),
+                ("■ STOP", self.stop_flow, theme.FAIL, "#e53935"),
+                ("↺ ORIGIN", lambda: self.plc_pulse("move_origin", "Move origin"), "#2a313d", "#353d4b"))):
+            tk.Button(ctl, text=text, command=cmd, bg=bg, fg="white", activebackground=abg, activeforeground="white",
+                      bd=0, pady=9, font=_font(11, True), cursor="hand2").grid(
+                row=1, column=col, sticky="nsew", padx=(0 if col == 0 else 3, 0))
+
         # ---- Model -----------------------------------------------------
-        body = self._side_card(side, "Model")
+        body = self._side_card(side, "Model", expand=True)
+        # The loaded model (name / type) and its part number
         self.current_model = tk.Label(body, text=self.settings["test"]["select"].get("model") or "No model loaded",
                                       bg=self.TILE, fg=theme.TITLE_FG, font=_font(12, True), anchor="w",
                                       padx=8, pady=3, highlightbackground="#232a36", highlightthickness=1)
-        # (the model name is shown in the MODEL NO box below; this label is kept for status text only)
+        self.current_model.pack(fill="x")
+        self.part_lbl = tk.Label(body, text="Part —", bg=self.CARD, fg="#c9d1dc", font=_font(9), anchor="w")
+        self.part_lbl.pack(fill="x", pady=(2, 6))
         # Model number box: type or scan a model number + Enter to fetch it from the database
         mrow = tk.Frame(body, bg=self.CARD)
         mrow.pack(fill="x")
@@ -1089,23 +1112,24 @@ class TestConsolePage(tk.Frame):
                                     highlightcolor=theme.UPDATE)
         self.model_entry.pack(side="left", fill="x", expand=True, padx=(6, 0), ipady=2)
         self.model_entry.bind("<Return>", lambda _e: self.fetch_model(self.model_entry.get()))
-        self.part_lbl = tk.Label(body, text="Part —", bg=self.CARD, fg="#c9d1dc", font=_font(9), anchor="w")
-        self.part_lbl.pack(fill="x", pady=(1, 0))
         lb_frame = tk.Frame(body, bg=self.CARD)
-        lb_frame.pack(fill="x", pady=(2, 3))
-        self.model_list = tk.Listbox(lb_frame, height=2, bg=self.TILE, fg="#d6dbe4", font=_font(9),
+        lb_frame.pack(fill="both", expand=True, pady=(4, 4))
+        self.model_list = tk.Listbox(lb_frame, height=3, bg=self.TILE, fg="#d6dbe4", font=_font(9),
                                      selectbackground="#2a4a7a", selectforeground="white", relief="flat", bd=0,
                                      highlightthickness=1, highlightbackground="#232a36", highlightcolor="#2a4a7a",
                                      activestyle="none", exportselection=False)
         sb = ttk.Scrollbar(lb_frame, orient="vertical", command=self.model_list.yview)
         self.model_list.config(yscrollcommand=sb.set)
-        self.model_list.pack(side="left", fill="x", expand=True)
+        self.model_list.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.model_list.bind("<Double-Button-1>", lambda _e: self.model_change())
         self._models = []
         tk.Button(body, text="MODEL CHANGE", command=self.model_change, bg=theme.UPDATE, fg="white",
-                  activebackground="#1e88e5", activeforeground="white", bd=0, pady=2, font=_font(9, True),
-                  cursor="hand2").pack(fill="x")
+                  activebackground="#1e88e5", activeforeground="white", bd=0, pady=4, font=_font(9, True),
+                  cursor="hand2").pack(fill="x", side="bottom")
+        # Re-packed last: on a short screen the list loses rows, not the button or the model box.
+        lb_frame.pack_forget()
+        lb_frame.pack(fill="both", expand=True, pady=(4, 4))
 
         # ---- Production: target / complete + progress bar ----------------
         body = self._side_card(side, "Production")
@@ -1129,18 +1153,16 @@ class TestConsolePage(tk.Frame):
         tk.Label(tgt, text="TARGET", bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 3))
         t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], "#4fa3ff", size=16)
         t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
-        self.progress = tk.Canvas(body, height=8, bg=self.TILE, highlightthickness=0)
-        self.progress.pack(fill="x", pady=(6, 0))
+        prow = tk.Frame(body, bg=self.CARD)
+        prow.pack(fill="x", pady=(6, 0))
+        self.progress_lbl = tk.Label(prow, text="", bg=self.CARD, fg=theme.MUTED, font=_font(8, True))
+        self.progress_lbl.pack(side="right", padx=(6, 0))
+        self.progress = tk.Canvas(prow, height=8, bg=self.TILE, highlightthickness=0)
+        self.progress.pack(side="left", fill="x", expand=True)
         self.progress.bind("<Configure>", lambda _e: self._draw_progress())
 
         # ---- Results: O.K / N.G, today large, cumulative small -----------
-        def reset_links(head):
-            f = tk.Frame(head, bg=self.CARD_HEAD)
-            self._link(f, "Reset total", lambda: self.reset_counts("total")).pack(side="right")
-            self._link(f, "Reset today", lambda: self.reset_counts("day")).pack(side="right", padx=(0, 6))
-            return f
-
-        body = self._side_card(side, "Results", right=reset_links)
+        body = self._side_card(side, "Results")
         row = tk.Frame(body, bg=self.CARD)
         row.pack(fill="x")
         row.columnconfigure((0, 1), weight=1, uniform="res")
@@ -1148,9 +1170,12 @@ class TestConsolePage(tk.Frame):
         t.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
         t, ng_day = self._tile(row, "N.G  TODAY", c["ng_day"], theme.FAIL, size=20)
         t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        # Cumulative counts on the left, the reset links on the right of the same line
         tot = tk.Frame(body, bg=self.CARD)
         tot.pack(fill="x", pady=(6, 0))
-        tk.Label(tot, text="Cumulative  O.K / N.G", bg=self.CARD, fg=theme.MUTED, font=_font(8)).pack(side="left")
+        self._link(tot, "↺ TOTAL", lambda: self.reset_counts("total"), fg="#4fa3ff").pack(side="right")
+        self._link(tot, "↺ TODAY", lambda: self.reset_counts("day"), fg="#4fa3ff").pack(side="right", padx=(0, 6))
+        tk.Label(tot, text="Total", bg=self.CARD, fg=theme.MUTED, font=_font(8)).pack(side="left")
         ok_total = tk.Label(tot, text=str(c["ok_total"]), bg=self.CARD, fg=theme.PASS, font=_font(10, True))
         ok_total.pack(side="left", padx=(8, 0))
         tk.Label(tot, text="/", bg=self.CARD, fg=theme.MUTED, font=_font(9)).pack(side="left", padx=3)
@@ -1180,13 +1205,9 @@ class TestConsolePage(tk.Frame):
             self.lbl_saved.insert(0, lbl)          # keep order: [SELECT, SHIFT]
 
         # ---- Scan results (barcode scanner input, one per cable) ---------
-        # The title strip shows the test flow's current step.
-        def step_label(head):
-            self.flow_lbl = tk.Label(head, text="Press RUN", bg=self.CARD_HEAD, fg=theme.MUTED,
-                                     font=_font(8, True))
-            return self.flow_lbl
-
-        body = self._side_card(side, "Scan Result", right=step_label)
+        # Not shown while label scanning is skipped (test.skip_scan): nothing is scanned then.
+        body = self._side_card(side, "Scan Result")
+        scan_card = body.master
         body.columnconfigure(1, weight=1)
         self.scan_entries = {}
         for r, (key, label) in enumerate((("select", "SELECT"), ("shift", "SHIFT"))):
@@ -1200,20 +1221,17 @@ class TestConsolePage(tk.Frame):
             e.bind("<Return>", lambda _e, k=key: self.on_scan(k))
             self.scan_entries[key] = e
 
-        # ---- Test control ------------------------------------------------
-        ctl = tk.Frame(side, bg=theme.BG)
-        ctl.pack(fill="x", side="bottom")
-        # One row: RUN | STOP | ORIGIN (RUN and STOP wider)
-        for col, weight in enumerate((4, 4, 3)):
-            ctl.columnconfigure(col, weight=weight, uniform="ctl")
-        for col, (text, cmd, bg, abg) in enumerate((
-                ("▶ RUN", self.start_flow, theme.PASS, "#43a047"),
-                ("■ STOP", self.stop_flow, theme.FAIL, "#e53935"),
-                ("↺ ORIGIN", lambda: self.plc_pulse("move_origin", "Move origin"), "#2a313d", "#353d4b"))):
-            tk.Button(ctl, text=text, command=cmd, bg=bg, fg="white", activebackground=abg, activeforeground="white",
-                      bd=0, pady=5, font=_font(10 if col < 2 else 9, True), cursor="hand2").grid(
-                row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 3, 0))
-
+        # Pack the cards from the bottom up and the Model card last: when the screen is short,
+        # the Model card (its list) gives up height instead of the counters being cut off.
+        cards = [w for w in side.pack_slaves() if w is not ctl]
+        for w in cards:
+            w.pack_forget()
+        model_card, *rest = cards
+        for w in reversed(rest):
+            if w is scan_card and self._skip_scan():
+                continue                       # nothing is scanned while test.skip_scan is on
+            w.pack(fill="x", side="bottom", pady=(0, 5))
+        model_card.pack(fill="both", expand=True, side="top", pady=(0, 5))
         self.after(50, self._draw_progress)
         return side
 
@@ -1223,6 +1241,8 @@ class TestConsolePage(tk.Frame):
         cv.delete("all")
         w = cv.winfo_width()
         target, done = self.counters.get("target", 0), self.counters.get("complete", 0)
+        self.progress_lbl.config(text=f"{done} / {target}  ·  {min(100, round(100 * done / target))} %"
+                                 if target > 0 else "no target")
         if w <= 1 or target <= 0:
             return
         frac = min(done / target, 1.0)
