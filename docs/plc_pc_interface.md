@@ -181,6 +181,11 @@ signed MUL → 0..32767), D02118 likewise; PULL D02004 = D02018 + D03008 × 100 
 D00490 = 100 when M0700F is OFF, 0 when ON; speeds × 100; limits D02014 = D02000 + L × 100,
 D02016 = D02000 − R × 100. These are counts, not mm or mm/s.
 
+Source (`db.plc_params_from_row`, 2026-11-10): the cable's test condition — operating speed = Speed,
+high jog = Speed, low jog = Speed / 2, PULL travel = Stroke, left limit = Position 3, right limit =
+−Position 1, measurement start = −Position 2 × 10 (positions are signed distances from home). A stored
+PLC word is used only where the condition field is empty.
+
 App: whole numbers 0..65535 (start 0..32767); derived targets checked (right ≤ start ≤ PULL ≤ left,
 using the PLC's own D00490 from the M0700F echo — the app never adds D00490 itself); written only
 when both axes are idle and no part is active; confirmed after the full echo matches **and**

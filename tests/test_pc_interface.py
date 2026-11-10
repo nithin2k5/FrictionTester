@@ -705,3 +705,15 @@ def test_jog_needs_the_write_gate():
     r.ctl.submit("jog", "shift", "jog_left_low")
     r.step()
     assert "not verified" in r.messages()[-1] and not _jog_bit(r, "shift", "jog_left_low")
+
+
+def test_plc_params_from_cable_conditions():
+    from friction_tester import db
+    row = {}
+    for t in ("SHIFT", "SELECT"):
+        row.update({f"MM_{t}_SPEED": 10, f"MM_{t}_STROKE": 5, f"MM_{t}_POSITION_1": -30,
+                    f"MM_{t}_POSITION_2": -5, f"MM_{t}_POSITION_3": 30})
+    values = db.plc_params_from_row(row)
+    # jog low = speed / 2, jog high = speed, speed, PULL = stroke, left = P3, right = -P1; start = -P2 x 10
+    assert values == [5, 10, 10, 5, 30, 30] * 2 + [50, 50]
+    assert not validate_params(values) and not target_problems(derived_targets(values, False))

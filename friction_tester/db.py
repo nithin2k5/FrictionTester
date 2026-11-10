@@ -103,36 +103,42 @@ PLC_INT = {cond_col(key, attr) for key in TEST_KEYS for attr, *_ in PLC_PARAM_FI
 def plc_params_from_row(row):
     """The 14 parameter words of a model in D04200 order (int or None).
 
-    Operating speed: the model's PLC word, else the cable's test-condition Speed.
-    Low jog speed: always half the operating speed (rounded, at least 1).
+    Taken from each cable's test condition; a stored PLC word is used only
+    where the condition field is empty. Positions are signed distances from
+    home (the PLC's origin D02000), so with the ladder formulas (p20-22)
+        left limit  D02014 = D02000 + L x 100   ->  L = Position 3
+        right limit D02016 = D02000 - R x 100   ->  R = -Position 1
+        start       D02018 = D02000 - S x 10    ->  S = -Position 2 x 10
+        PULL target D02004 = start + T x 100    ->  T = Stroke
+    Operating speed = Speed; high jog speed = Speed; low jog speed = half of it.
+    A value that comes out negative is left as is, so the parameter check rejects it.
     """
     from .plc import pc_profile as pp
     row = row or {}
     attr_of = {k: attr for attr, _l, k in PLC_PARAM_FIELDS}
+
+    def num(axis, attr):
+        v = row.get(cond_col(axis.upper(), attr))
+        return None if v is None else float(v)
+
     out = []
     for axis, key, *_r in pp.PARAMS:
-        v = row.get(cond_col(axis.upper(), attr_of[key]))
-        if key == "speed" and v is None:
-            v = row.get(cond_col(axis.upper(), "SPEED"))
-        out.append(None if v is None else int(round(float(v))))
+        speed = num(axis, "SPEED")
+        derived = {
+            "speed": speed,
+            "jog_high": speed,
+            "jog_low": None,
+            "pull_travel": num(axis, "STROKE"),
+            "limit_left": num(axis, "POSITION_3"),
+            "limit_right": None if num(axis, "POSITION_1") is None else -num(axis, "POSITION_1"),
+            "meas_start": None if num(axis, "POSITION_2") is None else -num(axis, "POSITION_2") * 10,
+        }[key]
+        v = derived if derived is not None else num(axis, attr_of[key])
+        out.append(None if v is None else int(round(v)))
     for axis in pp.AXES:
         speed = out[pp.param_index(axis, "speed")]
         out[pp.param_index(axis, "jog_low")] = None if speed is None else max(1, round(speed / 2))
     return out
-
-SCHEMA = (f"CREATE TABLE IF NOT EXISTS {TABLE} (ID INT AUTO_INCREMENT PRIMARY KEY, "
-          + ", ".join(f"{c} {sql}" for c, _l, _u, sql in FIELDS) + ")")
-
-# Columns from earlier versions, renamed with their data kept:
-#   MM_<attr>      (single condition)  -> MM_SELECT_<attr>
-#   MM_C1_<attr>   (condition 1)       -> MM_SELECT_<attr>
-#   MM_C2_<attr>   (condition 2)       -> MM_SHIFT_<attr>
-RENAMED_COLUMNS = {}
-for _attr, _l, _u, _sql in CONDITION_FIELDS:
-    RENAMED_COLUMNS[f"MM_{_attr}"] = (cond_col("SELECT", _attr), _sql)
-    RENAMED_COLUMNS[f"MM_C1_{_attr}"] = (cond_col("SELECT", _attr), _sql)
-    RENAMED_COLUMNS[f"MM_C2_{_attr}"] = (cond_col("SHIFT", _attr), _sql)
-RETIRED_COLUMNS = ["MM_TEST_CABLE", "MM_SAVED_TO", "MM_DATE", "MM_TEST_RESULT"]
 
 
 def available():
