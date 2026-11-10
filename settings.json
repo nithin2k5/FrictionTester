@@ -228,9 +228,9 @@
             "verified": false
           }
         },
-        "judge": "",
-        "force_sign": "",
-        "limit_bounds": "",
+        "judge": "peak",
+        "force_sign": "absolute",
+        "limit_bounds": "inclusive",
         "min_samples": 3,
         "strokes_per_test": 1
       }
