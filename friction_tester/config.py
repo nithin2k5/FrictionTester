@@ -26,11 +26,11 @@ DEFAULT_SETTINGS = {
         "reg_address": "D0000",
         "reg_points": 2,
     },
-    # Two KOMEIN AM-50LW indicators on RS232. No ID setting: stream mode is
-    # detected on connect, otherwise ID = loadcell number (ID01P / ID02P).
+    # Two KOMEIN AM-50LW indicators on RS232. "id": the indicator's ID (F-40):
+    # 0 = stream mode, 1-99 = command mode (ID01P ...), "auto" = detect on connect.
     "loadcells": [
-        {"port": "", "baudrate": 9600},
-        {"port": "", "baudrate": 9600},
+        {"port": "", "baudrate": 9600, "id": "auto"},
+        {"port": "", "baudrate": 9600, "id": "auto"},
     ],
     # Test Console conditions per cable (empty until a model is loaded or they
     # are typed in), plus the PLC bits for its sensor lamps (XGB addresses —

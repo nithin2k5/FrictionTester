@@ -61,3 +61,12 @@ def test_find_id_prefers_own_number_and_falls_back_to_it():
     assert lc._find_id() == 2
     lc._ser = FakeIndicator(42)          # nothing in 01-09 answers
     assert lc._find_id() == 2
+
+
+def test_given_id_is_used_without_probing():
+    from friction_tester.devices import loadcell as lcmod
+    assert lcmod.parse_id("auto") is None and lcmod.parse_id("") is None and lcmod.parse_id(None) is None
+    assert lcmod.parse_id("00 stream") == 0 and lcmod.parse_id("05") == 5 and lcmod.parse_id(7) == 7
+    import pytest
+    with pytest.raises(ValueError):
+        lcmod.parse_id(150)

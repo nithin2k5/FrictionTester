@@ -13,8 +13,9 @@ The indicator's ID Number (F-40) picks the mode:
 The data field is 8 characters including the sign; the decimal point is
 wherever the indicator's F-00 setting puts it, so the number is used as sent.
 
-The app has no ID setting: on connect it listens for stream frames, and if
-none arrive it uses command mode and finds the ID by polling: first the
+The ID is set per loadcell on the COM Port page (settings loadcells[i].id:
+0 = stream, 1-99 = command mode). With "auto" the app listens for stream
+frames on connect, and if none arrive it finds the ID by polling: first the
 loadcell number (L1 = 01, L2 = 02), then 01 (factory setting), then 02-09.
 Each indicator has its own RS232 port, so two indicators may share an ID.
 """
@@ -71,6 +72,16 @@ def parse_frame(line, expected_id=None):
 
 
 PortBusyError = ports.PortBusyError
+
+
+def parse_id(value):
+    """Settings "id" -> 0..99, or None for automatic detection ("auto", "", None)."""
+    if value is None or str(value).strip().lower() in ("", "auto"):
+        return None
+    n = int(str(value).strip().split()[0])
+    if not 0 <= n <= 99:
+        raise ValueError(f"Indicator ID must be 00-99 (got {value})")
+    return n
 
 
 def open_port(port, baudrate, tries=3, wait=0.7):
@@ -132,8 +143,10 @@ class Loadcell:
         # then finds the port already open instead of opening it twice
         # (which Windows refuses with "Access is denied").
         with self._conn_lock:
+            want = parse_id(cfg.get("id"))
             if (self.is_open and self.port == cfg["port"]
-                    and self._ser.baudrate == int(cfg["baudrate"])):
+                    and self._ser.baudrate == int(cfg["baudrate"])
+                    and (want is None or want == self.device_id)):
                 return
             self._close()
             ports.check_free(cfg["port"], self.name)
@@ -141,7 +154,10 @@ class Loadcell:
             self.port = cfg["port"]
             ports.claim(self.port, self.name)
             try:
-                self.device_id = STREAM_ID if self._is_streaming() else self._find_id()
+                if want is not None:                  # ID given on the COM Port page
+                    self.device_id = want
+                else:
+                    self.device_id = STREAM_ID if self._is_streaming() else self._find_id()
             except Exception:
                 self._close()
                 raise

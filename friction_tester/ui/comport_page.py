@@ -22,6 +22,12 @@ from ..devices import loadcell, ni_daq, plc_xgb
 # Shared column widths so every card's rows line up with the others.
 COLS = (("Device", 145), ("COM Port", 130), ("Baud Rate", 105), ("ID", 84), ("", 268), ("Status", 0))
 
+def _id_text(value):
+    """Indicator ID (F-40) box: blank = detect on connect, 0 = stream mode, 1-99 = command mode."""
+    dev = loadcell.parse_id(value)
+    return "" if dev is None else f"{dev:02d}"
+
+
 CARD_BG = theme.PANEL
 HEAD_BG = "#171c25"
 ROW_BG = "#141922"
@@ -333,7 +339,7 @@ class ComPortPage(tk.Frame):
 
     # ========================================================== loadcells
     def _build_loadcell_card(self, parent):
-        body = self._card(parent, "Loadcells", f"{loadcell.MODEL}  ·  RS232 8N1  ·  stream / command mode auto-detected")
+        body = self._card(parent, "Loadcells", f"{loadcell.MODEL}  ·  RS232 8N1  ·  ID: blank = auto, 00 = stream, 01-99 = command mode")
         self._table_header(body, COLS)
         for i, lc in enumerate(self.loadcells):
             self._build_loadcell_row(body, i, lc)
@@ -352,11 +358,12 @@ class ComPortPage(tk.Frame):
             w["zero"].pack(side="left")
             return f
 
-        w["port"], w["baud"], _dash, _a, w["status"] = self._row(
+        w["port"], w["baud"], w["id"], _a, w["status"] = self._row(
             body, COLS, f"L{lc.number}", [
                 lambda p: self._combo(p, [], cfg["port"]),
                 lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=9),
-                lambda p: self._label(p, "-", fg=theme.MUTED, width=5),   # no station ID
+                lambda p: self._entry(p, _id_text(cfg.get("id", "auto")), width=5, digits_only=True,
+                                      justify="center"),
                 actions,
                 StatusPill,
             ])
@@ -364,7 +371,9 @@ class ComPortPage(tk.Frame):
 
     def _lc_config(self, i):
         w = self.lc_rows[i]
-        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get())}
+        dev = loadcell.parse_id(w["id"].get())
+        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get()),
+                "id": "auto" if dev is None else dev}
 
     def _show_lc_state(self, i, error=None, text=None):
         lc, w = self.loadcells[i], self.lc_rows[i]
@@ -378,6 +387,7 @@ class ComPortPage(tk.Frame):
         w["zero"].config(state="normal" if connected and not lc.stream_mode else "disabled")
         for key in ("port", "baud"):
             w[key].config(state="disabled" if connected else "readonly")
+        w["id"].config(state="disabled" if connected else "normal")
         if text:
             w["status"].set("error" if error else "ok", text)
         elif connected:
@@ -406,7 +416,12 @@ class ComPortPage(tk.Frame):
             self.log(f"{lc.name} disconnected.")
             self._show_lc_state(i)
             return
-        cfg = self._lc_config(i)
+        try:
+            cfg = self._lc_config(i)
+        except ValueError as exc:
+            self.log(f"{lc.name}: {exc}")
+            self._show_lc_state(i, error=True, text="ID must be 00-99")
+            return
         w = self.lc_rows[i]
         w["busy"] = True
         w["connect"].config(text="CONNECTING…", bg=theme.BUSY, state="disabled")

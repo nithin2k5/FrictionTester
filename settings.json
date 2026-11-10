@@ -15,11 +15,13 @@
   "loadcells": [
     {
       "port": "",
-      "baudrate": 9600
+      "baudrate": 9600,
+      "id": "auto"
     },
     {
       "port": "",
-      "baudrate": 9600
+      "baudrate": 9600,
+      "id": "auto"
     }
   ],
   "test": {
