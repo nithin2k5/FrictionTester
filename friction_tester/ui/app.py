@@ -8,6 +8,7 @@ from tkinter import messagebox
 
 from . import theme
 from .comport_page import ComPortPage
+from .help_page import HelpPage
 from .login import LoginScreen
 from .model_page import ModelSettingsPage
 from .report_page import ReportPage
@@ -26,6 +27,7 @@ class App:
         ("📋", "Report", "report", "Test Results"),
         ("👤", "Admin", "admin", "Admin"),
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
+        ("❓", "Help", "help", "Help"),
     ]
 
     def __init__(self, root, settings, plc, daq, loadcells):
@@ -180,7 +182,7 @@ class App:
 
         self.nav_tiles = {}
         for icon, text, page, _title in self.PAGES:
-            f = tk.Frame(sidebar, bg="#111", bd=1, relief="solid", height=110,
+            f = tk.Frame(sidebar, bg="#111", bd=1, relief="solid", height=96,
                          highlightbackground="#444", highlightthickness=1, cursor="hand2")
             f.pack(fill="x", padx=4, pady=3)
             inner = tk.Frame(f, bg="#111", cursor="hand2")
@@ -256,6 +258,9 @@ class App:
             self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "model_settings":
             self.page = ModelSettingsPage(self.content, self.settings)
+            self.page.pack(fill="both", expand=True, padx=16, pady=12)
+        elif page_name == "help":
+            self.page = HelpPage(self.content)
             self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "test_console":
             self.page = TestConsolePage(self.content, self.settings, self.plc, self.loadcells, daq=self.daq)

@@ -142,3 +142,26 @@ def test_switching_model_or_new_with_unsaved_edits_asks(model_page, monkeypatch)
 
     p.new_model()                                           # nothing changed: no question
     assert p._mode == "new" and not answers
+
+
+def test_help_page_renders_every_chapter_and_searches():
+    from friction_tester.ui import help_page as hp
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        page = hp.HelpPage(root)
+        for i in range(len(hp.CHAPTERS)):
+            page.select(i)
+            assert page.title_lbl.cget("text") == hp.CHAPTERS[i][0] and page.inner.winfo_children()
+        page.search.delete(0, "end")
+        page.search.insert(0, "F-40")
+        page._build_toc(page.search_term())
+        names = [hp.CHAPTERS[i][0] for i, _l in page.toc_items]
+        assert "COM Setting" in names and "About This Machine" not in names
+        page.step(1)
+        assert page.current == len(hp.CHAPTERS) - 1          # already on the last chapter: stays
+    finally:
+        root.destroy()
