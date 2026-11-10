@@ -20,7 +20,6 @@ from tkinter import messagebox, ttk
 
 from . import theme
 from .. import db
-from ..plc import pc_profile
 
 CARD_BG = theme.PANEL
 HEAD_BG = "#171c25"
@@ -144,23 +143,7 @@ class ModelSettingsPage(tk.Frame):
         for i, (box, weight) in enumerate(zip(boxes, (4, 5, 5))):
             box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0 if i == len(boxes) - 1 else 6))
             top.columnconfigure(i, weight=weight, uniform="form")
-        self._build_plc_params(top).grid(row=1, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         return top
-
-    def _build_plc_params(self, parent):
-        """Raw PLC parameter words per cable, sent to D04200-D04213 (plc.pdf profile)."""
-        box, body = self._section(parent, "PLC Parameters",
-                                  "raw words sent to D04200-D04213 · the PLC scales them x100 (measurement "
-                                  "start x10) into positioning counts · units are machine calibration")
-        for c, (_attr, label, _k) in enumerate(db.PLC_PARAM_FIELDS):
-            self._label(body, label, fg=theme.MUTED, size=9).grid(row=0, column=c + 1, padx=6, sticky="w")
-        for r, (key, name) in enumerate(db.TESTS):
-            self._label(body, name, bold=True).grid(row=r + 1, column=0, sticky="w", padx=(0, 10), pady=2)
-            for c, (attr, _label, _k) in enumerate(db.PLC_PARAM_FIELDS):
-                e = self._entry(body, 9, justify="center")
-                e.grid(row=r + 1, column=c + 1, padx=6, pady=2, sticky="w")
-                self.fields[db.cond_col(key, attr)] = e
-        return box
 
     def _build_info(self, parent):
         box, body = self._section(parent, "Model Information", "")
@@ -255,7 +238,7 @@ class ModelSettingsPage(tk.Frame):
         w.config(state=state)
 
     def _clear_form(self):
-        for col in db.COLUMNS:
+        for col in self.fields:
             self._set_field(col, None)
 
     def _apply_mode(self):
@@ -273,17 +256,10 @@ class ModelSettingsPage(tk.Frame):
     def _read_form(self):
         row = {}
         for col in db.COLUMNS:
+            if col not in self.fields:        # not on the form (PLC parameter words): left unchanged
+                continue
             text = self.fields[col].get().strip()
-            if col in db.PLC_INT:
-                if text == "":
-                    row[col] = None
-                    continue
-                key = next(k for attr, _l, k in db.PLC_PARAM_FIELDS if col.endswith("_" + attr))
-                limit = pc_profile.param_max(key)
-                if not text.isdigit() or not 0 <= int(text) <= limit:
-                    raise ValueError(f"{db.LABELS[col]} must be a whole number 0..{limit}")
-                row[col] = int(text)
-            elif col in db.NUMERIC:
+            if col in db.NUMERIC:
                 if text == "":
                     row[col] = None
                     continue
@@ -319,7 +295,7 @@ class ModelSettingsPage(tk.Frame):
         row = self._rows[sel[0]]
         self._mode, self._editing = "edit", row["MM_MODEL"]
         self._apply_mode()
-        for col in db.COLUMNS:
+        for col in self.fields:
             self._set_field(col, row.get(col))
 
     # ============================================================ database

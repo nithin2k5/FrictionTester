@@ -381,10 +381,15 @@ def get_model(model):
 
 
 def save_model(row):
-    """Insert a new model, or update it if MM_MODEL already exists."""
-    values = [row.get(c) for c in COLUMNS]
-    updates = ", ".join(f"{c} = VALUES({c})" for c in COLUMNS if c != "MM_MODEL")
-    sql = (f"INSERT INTO {TABLE} ({', '.join(COLUMNS)}) VALUES ({', '.join(['%s'] * len(COLUMNS))}) "
+    """Insert a new model, or update it if MM_MODEL already exists.
+
+    Only the columns present in row are written; an existing model keeps
+    the values of the others (e.g. the PLC parameter words, not on the form).
+    """
+    cols = [c for c in COLUMNS if c in row]
+    values = [row[c] for c in cols]
+    updates = ", ".join(f"{c} = VALUES({c})" for c in cols if c != "MM_MODEL")
+    sql = (f"INSERT INTO {TABLE} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
            f"ON DUPLICATE KEY UPDATE {updates}")
     with cursor(commit=True) as cur:
         cur.execute(sql, values)
