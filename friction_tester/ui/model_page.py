@@ -296,8 +296,22 @@ class ModelSettingsPage(tk.Frame):
             db.check_positions(name, row[db.cond_col(key, "POSITION_1")], row[db.cond_col(key, "POSITION_3")])
         return row
 
+    def _confirm_discard(self):
+        """Before NEW or opening another model: ask if the form has unsaved edits."""
+        if not self.unsaved_changes():
+            return True
+        return messagebox.askyesno(
+            "Settings not saved",
+            f"{self.UNSAVED_TEXT}\n\nAre you sure you want to discard the changes?",
+            icon="warning", default="no", parent=self)
+
+    def _iid_of(self, model):
+        return next((iid for iid, r in self._rows.items() if r["MM_MODEL"] == model), None)
+
     def new_model(self):
         """NEW: an empty, unlocked form for a new model."""
+        if not self._confirm_discard():
+            return
         self.tree.selection_remove(self.tree.selection())
         self._mode, self._editing = "new", None
         self._apply_mode()
@@ -311,6 +325,17 @@ class ModelSettingsPage(tk.Frame):
         if not sel or sel[0] not in self._rows or self._busy:
             return
         row = self._rows[sel[0]]
+        if self._mode == "edit" and row["MM_MODEL"] == self._editing and self.unsaved_changes():
+            return                            # the open model, edits kept (also after a restore below)
+        if not self._confirm_discard():
+            # keep the edits: put the selection back on the model being edited (none for NEW)
+            back = self._iid_of(self._editing) if self._mode == "edit" else None
+            if back:
+                self.tree.selection_set(back)
+                self.tree.see(back)
+            else:
+                self.tree.selection_remove(self.tree.selection())
+            return
         self._mode, self._editing = "edit", row["MM_MODEL"]
         self._apply_mode()
         for col in self.fields:

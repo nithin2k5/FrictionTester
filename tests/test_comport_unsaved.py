@@ -96,3 +96,49 @@ def test_model_page_unsaved_only_while_editing_and_changed(model_page):
     w.delete(0, "end")
     w.insert(0, "10")
     assert not p.unsaved_changes()
+
+
+def _two_models(p):
+    from friction_tester import db
+    rows = []
+    for name, stroke in (("M1", 10), ("M2", 20)):
+        r = {c: None for c in p.fields}
+        r.update({"MM_MODEL": name, db.cond_col("SELECT", "STROKE"): stroke})
+        rows.append(r)
+    p._show_models(rows)
+    return [iid for iid in p.tree.get_children()]
+
+
+def _select(p, iid):
+    p.tree.selection_set(iid)
+    p._on_select()               # the <<TreeviewSelect>> handler (no main loop in tests)
+
+
+def test_switching_model_or_new_with_unsaved_edits_asks(model_page, monkeypatch):
+    from friction_tester import db
+    from friction_tester.ui import model_page as mp
+    p = model_page
+    answers = []
+    monkeypatch.setattr(mp.messagebox, "askyesno", lambda *a, **k: answers.pop(0))
+    m1, m2 = _two_models(p)
+    _select(p, m1)
+    stroke = p.fields[db.cond_col("SELECT", "STROKE")]
+    stroke.delete(0, "end")
+    stroke.insert(0, "15")
+
+    answers.append(False)                                   # No: stay on M1 with the edit
+    _select(p, m2)
+    assert p._editing == "M1" and stroke.get() == "15" and p.tree.selection() == (m1,)
+    _select(p, m1)                                          # the restored selection: no question
+    assert stroke.get() == "15" and not answers
+
+    answers.append(False)                                   # NEW, No: edit kept
+    p.new_model()
+    assert p._mode == "edit" and stroke.get() == "15"
+
+    answers.append(True)                                    # Yes: M2 opens, edit discarded
+    _select(p, m2)
+    assert p._editing == "M2" and stroke.get() == "20" and not p.unsaved_changes()
+
+    p.new_model()                                           # nothing changed: no question
+    assert p._mode == "new" and not answers
