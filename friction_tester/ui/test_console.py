@@ -1267,8 +1267,11 @@ class TestConsolePage(tk.Frame):
         """Stop all background work before the devices are closed (app close).
 
         Nothing is written to the PLC: a running machine cycle is left to the
-        machine. Returns the worker threads to wait for.
+        machine. Returns the worker threads to wait for. Safe to call twice.
         """
+        if getattr(self, "_shut_down", False):
+            return []
+        self._shut_down = True
         self._alive = False
         self._stop_event.set()
         self._pending.clear()
@@ -1983,9 +1986,7 @@ class TestConsolePage(tk.Frame):
     # ----------------------------------------------------------- polling
     def _on_destroy(self, event):
         if event.widget is self:
-            self._alive = False
-            if self.monitor:
-                self.monitor.stop()
+            self.shutdown()          # backstop: normally the app has already done this
 
     def _log_buttons(self, widget):
         """Print every button press on this page to the terminal."""

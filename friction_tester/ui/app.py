@@ -105,7 +105,7 @@ class App:
                 "Close", f"{busy}.\n\nClose the Friction Tester anyway? The part will not be recorded.",
                 icon="warning", parent=self.root):
             return
-        if not confirmed and not self.confirm_leave():
+        if not confirmed and not self.confirm_leave(check_test=False):   # the test was asked above
             return
         self._closing = True
         self.lbl_title.config(text="Closing…")
@@ -128,6 +128,21 @@ class App:
             self.root.destroy()
         except tk.TclError:
             pass
+
+    def _shutdown_page(self, limit=2.0):
+        """Stop the page being left (Test Console: its PLC controller, monitor and
+        polling, which release their request bits) before its widgets go - otherwise
+        each visit would leave another controller running against the PLC."""
+        page, self.page = self.page, None
+        if page is None or not hasattr(page, "shutdown"):
+            return
+        try:
+            threads = list(page.shutdown() or [])
+        except Exception:
+            threads = []
+        deadline = time.monotonic() + limit
+        for t in threads:
+            t.join(max(0.0, deadline - time.monotonic()))
 
     def release_devices(self, limit=3.0):
         """Disconnect every device; safe to call more than once."""
@@ -213,10 +228,18 @@ class App:
     # Pages that need a sign-in every time they are opened.
     LOGIN_PAGES = {"admin", "model_settings", "comport_settings"}
 
-    def confirm_leave(self):
-        """Before leaving a page with unsaved edits (COM Port, Model Settings): ask first."""
+    def confirm_leave(self, check_test=True):
+        """Before leaving a page: ask first if a test is running (leaving stops it) or
+        if the page has unsaved edits (COM Port, Model Settings)."""
         page = self.page if self.page is not None and self.page.winfo_exists() else None
-        if page is None or not getattr(page, "unsaved_changes", lambda: False)():
+        if page is None:
+            return True
+        busy = getattr(page, "test_in_progress", lambda: None)() if check_test else None
+        if busy and not messagebox.askyesno(
+                "Test in progress", f"{busy}.\n\nLeaving the Test Console stops it and the part will not be "
+                "recorded. Leave anyway?", icon="warning", default="no", parent=self.root):
+            return False
+        if not getattr(page, "unsaved_changes", lambda: False)():
             return True
         return messagebox.askyesno(
             "Settings not saved",
@@ -242,6 +265,7 @@ class App:
 
     def _clear_content(self, page_name, title):
         self._set_active_nav(page_name)
+        self._shutdown_page()
         for w in self.content.winfo_children():
             w.destroy()
         self.lbl_title.config(text=title)

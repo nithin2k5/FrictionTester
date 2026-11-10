@@ -953,3 +953,19 @@ def test_graph_keeps_the_ni_point_when_the_serial_read_fails():
     time.sleep(0.03)
     s.stop(cap)
     assert cap.samples[0][1] is None and cap.graph[0][1:] == (0.5, 10.0)
+
+
+def test_closing_mid_stroke_stops_the_capture_and_releases_the_bit():
+    """App close / leaving the Test Console during a stroke: the capture ends and the request bit drops."""
+    from friction_tester.plc import pc_profile as pp
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "S")
+    r.until(lambda: r.sampler.open, limit=30)            # a measuring stroke's capture is running
+    idx, n = pp.COMMANDS["select"]["pull"]
+    assert r.sim.D[4100 + idx] >> n & 1                    # PULL request bit ON
+    r.ctl._release_everything("application closing")
+    assert not r.sampler.open
+    assert not r.sim.D[4100 + idx] >> n & 1                # released

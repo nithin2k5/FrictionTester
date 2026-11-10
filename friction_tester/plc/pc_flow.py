@@ -973,6 +973,11 @@ class PcController:
             self._request_params(model, values)
 
     def _release_everything(self, reason):
+        for r in self.routines.values():          # stop a measuring stroke's loadcell / NI capture
+            try:
+                r.close_capture()
+            except Exception as exc:
+                self.log.log("RELEASE-FAIL", f"{reason}: capture: {exc}")
         changes = {held["bit"]: False for held in self.jogs.values()}
         self.jogs.clear()
         for op in list(self.manual.values()) + [r.op for r in self.routines.values() if r.op]:
