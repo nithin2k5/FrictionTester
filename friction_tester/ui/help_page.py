@@ -20,12 +20,15 @@ Block types:
 import tkinter as tk
 from tkinter import ttk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 
-BG, PANEL, HEADER = theme.BG, theme.PANEL, "#171c25"
-LINE, TXT, DIM, BODY = theme.BORDER, "#e8e8e8", "#8a8a8a", "#cfcfcf"
-ACCENT, BLUE, WARN = theme.TITLE_FG, "#4fa3ff", "#ff9100"
-ROW_BG = ("#101319", "#151a22")
+BG, PANEL, HEADER = theme.BG, theme.PANEL, T.L_SURFACE_2
+LINE, TXT, DIM, BODY = theme.BORDER, T.L_TEXT, T.L_TEXT_3, T.L_TEXT_2
+ACCENT, BLUE, WARN = theme.TITLE_FG, T.L_PRIMARY, "#e08e00"
+ROW_BG = (T.L_SURFACE, T.L_SUNKEN)
+CALLOUT_BG = T.L_SUNKEN
+CHIP_BG = T.L_SELECT     # step numbers / selected chapter
 PLACEHOLDER = "Search the manual…"
 
 
@@ -290,8 +293,8 @@ class HelpPage(tk.Frame):
         toc_body.pack(fill="both", expand=True)
         wrap = tk.Frame(toc_body, bg=PANEL, padx=8, pady=8)
         wrap.pack(fill="x")
-        self.search = tk.Entry(wrap, bg="#111", fg=DIM, font=(theme.FONT, 11), bd=0, relief="flat",
-                               insertbackground="white", highlightbackground=LINE, highlightcolor=ACCENT,
+        self.search = tk.Entry(wrap, bg=T.L_SURFACE, fg=DIM, font=(theme.FONT, 11), bd=0, relief="flat",
+                               insertbackground=T.L_TEXT, highlightbackground=LINE, highlightcolor=ACCENT,
                                highlightthickness=1)
         self.search.pack(fill="x", ipady=4)
         self.search.insert(0, PLACEHOLDER)
@@ -314,14 +317,14 @@ class HelpPage(tk.Frame):
         foot = tk.Frame(page, bg=HEADER)
         foot.pack(side="bottom", fill="x")
         for text, delta, side in (("‹  Previous", -1, "left"), ("Next  ›", 1, "right")):
-            tk.Button(foot, text=text, bg="#222833", fg=TXT, font=(theme.FONT, 11, "bold"), bd=0, padx=14,
-                      pady=6, cursor="hand2", activebackground="#2f3747", activeforeground=TXT,
+            tk.Button(foot, text=text, bg=T.L_NEUTRAL_BTN, fg="white", font=(theme.FONT, 11, "bold"), bd=0, padx=14,
+                      pady=6, cursor="hand2", activebackground="#4b5560", activeforeground="white",
                       command=lambda d=delta: self.step(d)).pack(side=side, padx=10, pady=6)
 
         host = tk.Frame(page, bg=PANEL)
         host.pack(fill="both", expand=True)
         self.canvas = tk.Canvas(host, bg=PANEL, highlightthickness=0, bd=0)
-        sb = ttk.Scrollbar(host, orient="vertical", command=self.canvas.yview)
+        sb = ttk.Scrollbar(host, orient="vertical", command=self.canvas.yview, style="L.Vertical.TScrollbar")
         self.canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -370,11 +373,11 @@ class HelpPage(tk.Frame):
     def _callout(self, parent, text, accent, tag):
         wrap = tk.Frame(parent, bg=accent)
         wrap.pack(fill="x", pady=(10, 4))
-        body = tk.Frame(wrap, bg="#141820")
+        body = tk.Frame(wrap, bg=CALLOUT_BG)
         body.pack(fill="x", padx=(3, 0))
-        tk.Label(body, text=tag, bg="#141820", fg=accent, font=(theme.FONT, 9, "bold")).pack(
+        tk.Label(body, text=tag, bg=CALLOUT_BG, fg=accent, font=(theme.FONT, 9, "bold")).pack(
             anchor="w", padx=12, pady=(8, 0))
-        lbl = tk.Label(body, text=text, bg="#141820", fg=TXT, font=(theme.FONT, 12), justify="left", anchor="nw")
+        lbl = tk.Label(body, text=text, bg=CALLOUT_BG, fg=TXT, font=(theme.FONT, 12), justify="left", anchor="nw")
         lbl.pack(fill="x", padx=12, pady=(2, 10))
         self.wrapped.append((lbl, 30))
 
@@ -413,7 +416,7 @@ class HelpPage(tk.Frame):
                 self._text(pad, block[1], pady=(0, 6))
             elif kind == "steps":
                 for i, s in enumerate(block[1], start=1):
-                    self._row_label(pad, str(i), s, dict(bg="#1f2530", fg=ACCENT, font=(theme.FONT, 11, "bold"),
+                    self._row_label(pad, str(i), s, dict(bg=CHIP_BG, fg=ACCENT, font=(theme.FONT, 11, "bold"),
                                                          width=3, pady=2), 70)
             elif kind == "bul":
                 for s in block[1]:
@@ -431,7 +434,7 @@ class HelpPage(tk.Frame):
             elif kind == "tbl":
                 self._table(pad, block[1], block[2])
             elif kind == "pre":
-                tk.Label(pad, text=block[1], bg="#0d1016", fg=TXT, font=("Consolas", 11), justify="left",
+                tk.Label(pad, text=block[1], bg=T.L_SUNKEN, fg=TXT, font=("Consolas", 11), justify="left",
                          anchor="w", padx=12, pady=10).pack(fill="x", pady=(6, 8))
             elif kind == "note":
                 self._callout(pad, block[1], BLUE, "NOTE")
@@ -472,14 +475,14 @@ class HelpPage(tk.Frame):
             lbl.bind("<Button-1>", lambda _e, k=i: self.select(k))
             self.toc_items.append((i, lbl))
         if needle and not self.toc_items:
-            tk.Label(self.toc_list, text="Nothing found", bg=PANEL, fg="#555", font=(theme.FONT, 11, "italic"),
+            tk.Label(self.toc_list, text="Nothing found", bg=PANEL, fg=T.L_TEXT_3, font=(theme.FONT, 11, "italic"),
                      pady=10).pack(fill="x")
         self._highlight()
 
     def _highlight(self):
         for i, lbl in self.toc_items:
             on = i == self.current
-            lbl.config(bg="#1f2530" if on else PANEL, fg=ACCENT if on else DIM,
+            lbl.config(bg=CHIP_BG if on else PANEL, fg=ACCENT if on else DIM,
                        font=(theme.FONT, 11, "bold") if on else (theme.FONT, 11))
 
     def select(self, idx):

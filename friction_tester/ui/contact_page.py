@@ -2,12 +2,13 @@
 
 import tkinter as tk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 
 CARD_BG = theme.PANEL
-HEAD_BG = "#171c25"
-LABEL_FG = "#8a8a8a"
-VALUE_FG = "#e8e8e8"
+HEAD_BG = T.L_SURFACE_2
+LABEL_FG = T.L_TEXT_2
+VALUE_FG = T.L_TEXT
 
 SECTIONS = [
     ("Support", "When the machine or the app needs help", [
@@ -33,7 +34,7 @@ SECTIONS = [
 class ContactPage(tk.Frame):
     def __init__(self, master):
         super().__init__(master, bg=theme.BG)
-        tk.Label(self, text="Contact Information", bg=theme.BG, fg="white",
+        tk.Label(self, text="Contact Information", bg=theme.BG, fg=T.L_TEXT,
                  font=(theme.FONT, 17, "bold")).pack(anchor="w", pady=(0, 12))
         for title, subtitle, rows in SECTIONS:
             self._card(title, subtitle, rows)
@@ -44,7 +45,7 @@ class ContactPage(tk.Frame):
         head = tk.Frame(card, bg=HEAD_BG)
         head.pack(fill="x")
         tk.Frame(head, bg=theme.TITLE_FG, width=4).pack(side="left", fill="y")
-        tk.Label(head, text=title, bg=HEAD_BG, fg="white", font=(theme.FONT, 12, "bold")).pack(
+        tk.Label(head, text=title, bg=HEAD_BG, fg=T.L_TEXT, font=(theme.FONT, 12, "bold")).pack(
             side="left", padx=10, pady=7)
         if subtitle:
             tk.Label(head, text=subtitle, bg=HEAD_BG, fg=LABEL_FG, font=(theme.FONT, 9)).pack(side="left")
@@ -57,7 +58,7 @@ class ContactPage(tk.Frame):
                      anchor="w").pack(side="left", anchor="n")
             # Read-only entry-like text so a number or address can be selected and copied.
             val = tk.Text(row, bg=CARD_BG, fg=VALUE_FG, font=(theme.FONT, 11), bd=0, highlightthickness=0,
-                          height=1, width=1, wrap="word", cursor="xterm", selectbackground="#2a4a7a")
+                          height=1, width=1, wrap="word", cursor="xterm", selectbackground=T.L_SELECT, selectforeground=T.L_TEXT)
             val.insert("1.0", value)
             val.pack(side="left", fill="x", expand=True, padx=(8, 0))
             val.bind("<Configure>", lambda e, t=val: self._fit(t))
