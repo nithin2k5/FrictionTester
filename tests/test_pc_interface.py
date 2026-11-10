@@ -752,3 +752,48 @@ def test_sampler_records_why_loadcell_reads_fail():
             assert cap.last_error is None and all(x[1] == 1.0 for x in samples)
         else:
             assert expect in cap.last_error and all(x[1] is None for x in samples)
+
+
+def test_run_waits_for_both_axes_at_origin():
+    """RUN pressed while both axes are homing waits, then starts by itself when both are home."""
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("home", "all")
+    r.step()
+    assert set(r.ctl.manual) == {"shift", "select"}
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    assert r.ctl.part is None and r.ctl.pending_run is not None
+    assert "Waiting for" in r.messages()[-1]
+    assert r.sim.starts["select"]["pull"] == 0
+    r.until(lambda: r.ctl.part is not None, limit=60)          # armed once both are home
+    assert r.sim.starts["select"]["home"] == 1 and r.sim.starts["shift"]["home"] == 1
+    assert r.ctl.pending_run is None
+
+
+def test_run_homes_an_axis_that_is_not_at_origin_first():
+    r = Rig(skip_scan=True)
+    r.confirm_params()
+    r.sim.axes["shift"].origin_complete = False
+    r.step()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    assert set(r.ctl.manual) == {"shift"} and r.ctl.part is None
+    r.until(lambda: r.ctl.part is not None, limit=30)
+    assert r.sim.axes["shift"].origin_complete and r.sim.starts["shift"]["home"] == 1
+
+
+def test_stop_cancels_a_waiting_run():
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("home", "all")
+    r.step()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    assert r.ctl.pending_run is not None
+    r.ctl.submit("stop")
+    r.step()
+    assert r.ctl.pending_run is None
+    r.until(lambda: not r.ctl.manual, limit=30)
+    r.run(1.0)
+    assert r.ctl.part is None and not r.parts()

@@ -24,3 +24,40 @@ def test_wrong_id_error_and_garbage_are_refused():
     for bad in ("XX,1", "ID001,abc", "garbage"):
         with pytest.raises(IndicatorError):
             parse_frame(bad, 1)
+
+
+class FakeIndicator:
+    """Answers "ID<nn>P" only for its own ID, like an AM-50LW in command mode."""
+
+    def __init__(self, dev_id):
+        self.dev_id, self.out, self.is_open = dev_id, [], True
+
+    def reset_input_buffer(self):
+        self.out.clear()
+
+    def write(self, data):
+        text = data.decode("ascii")
+        if text == f"ID{self.dev_id:02d}P":
+            self.out.append(f"ID{self.dev_id:03d},+0001.50\r\n".encode("ascii"))
+
+    def readline(self):
+        return self.out.pop(0) if self.out else b""
+
+
+def test_find_id_uses_factory_id_when_l2_is_set_to_01():
+    from friction_tester.devices.loadcell import Loadcell
+    lc = Loadcell(2)
+    lc._ser = FakeIndicator(1)
+    assert lc._find_id() == 1
+    lc.device_id = 1
+    sent, raw, value = lc.read()
+    assert sent == "ID01P" and value == 1.5
+
+
+def test_find_id_prefers_own_number_and_falls_back_to_it():
+    from friction_tester.devices.loadcell import Loadcell
+    lc = Loadcell(2)
+    lc._ser = FakeIndicator(2)
+    assert lc._find_id() == 2
+    lc._ser = FakeIndicator(42)          # nothing in 01-09 answers
+    assert lc._find_id() == 2

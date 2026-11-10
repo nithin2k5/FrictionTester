@@ -14,7 +14,9 @@ The data field is 8 characters including the sign; the decimal point is
 wherever the indicator's F-00 setting puts it, so the number is used as sent.
 
 The app has no ID setting: on connect it listens for stream frames, and if
-none arrive it uses command mode with ID = loadcell number (L1 = 01, L2 = 02).
+none arrive it uses command mode and finds the ID by polling: first the
+loadcell number (L1 = 01, L2 = 02), then 01 (factory setting), then 02-09.
+Each indicator has its own RS232 port, so two indicators may share an ID.
 """
 
 import re
@@ -139,7 +141,7 @@ class Loadcell:
             self.port = cfg["port"]
             ports.claim(self.port, self.name)
             try:
-                self.device_id = STREAM_ID if self._is_streaming() else self.number
+                self.device_id = STREAM_ID if self._is_streaming() else self._find_id()
             except Exception:
                 self._close()
                 raise
@@ -150,6 +152,26 @@ class Loadcell:
         self._ser.readline()                       # skip a possibly partial line
         line = self._ser.readline().decode("ascii", errors="replace").strip()
         return line.upper().startswith("ST,")
+
+    PROBE_IDS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+
+    def _find_id(self):
+        """Command mode: the first ID that answers a P (own number, then 01, then 02-09).
+
+        Falls back to the loadcell number if none answers, so reads report "No response".
+        """
+        for dev in [self.number] + [i for i in self.PROBE_IDS if i != self.number]:
+            self._ser.reset_input_buffer()
+            self._ser.write(f"ID{dev:02d}{CMD_READ}".encode("ascii"))
+            raw = self._ser.readline().decode("ascii", errors="replace").strip()
+            if not raw:
+                continue
+            try:
+                parse_frame(raw, dev)
+            except IndicatorError:
+                continue
+            return dev
+        return self.number
 
     @property
     def mode_text(self):
