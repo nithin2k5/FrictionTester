@@ -13,12 +13,13 @@ import tkinter as tk
 from decimal import Decimal
 from tkinter import filedialog, messagebox, ttk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 from .. import db
 
 CARD_BG = theme.PANEL
-HEAD_BG = "#171c25"
-TILE = "#0d1117"
+HEAD_BG = T.L_SURFACE_2
+TILE = T.L_SUNKEN
 
 # (column, heading, width)
 LIST_COLS = [("TR_DATETIME", "Date / time", 150), ("TR_MODEL", "Model", 120), ("TR_MODEL_TYPE", "Type", 50),
@@ -55,13 +56,13 @@ class ReportPage(tk.Frame):
         self.search()
 
     # ------------------------------------------------------------ layout
-    def _label(self, parent, text, fg="white", size=10, bold=False, **kw):
+    def _label(self, parent, text, fg=T.L_TEXT, size=10, bold=False, **kw):
         return tk.Label(parent, text=text, bg=parent["bg"], fg=fg,
                         font=(theme.FONT, size, "bold") if bold else (theme.FONT, size), **kw)
 
     def _entry(self, parent, width, value=""):
-        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", font=(theme.FONT, 10),
-                     width=width, bd=1, relief="solid", highlightbackground=theme.BORDER, highlightthickness=1,
+        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg=T.L_TEXT, insertbackground=T.L_TEXT, font=(theme.FONT, 10),
+                     width=width, bd=0, relief="flat", highlightbackground=T.L_BORDER, highlightthickness=1,
                      highlightcolor=theme.UPDATE)
         e.insert(0, value)
         e.bind("<Return>", lambda _e: self.search())
@@ -70,7 +71,7 @@ class ReportPage(tk.Frame):
     def _button(self, parent, text, command, bg):
         return tk.Button(parent, text=text, command=command, bg=bg, fg="white", activebackground=bg,
                          activeforeground="white", font=(theme.FONT, 10, "bold"), bd=0, padx=16, pady=5,
-                         cursor="hand2", disabledforeground="#8a8f99")
+                         cursor="hand2", disabledforeground="#dfe4ea")
 
     def _card(self, title):
         card = tk.Frame(self, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
@@ -85,7 +86,7 @@ class ReportPage(tk.Frame):
         bar.pack(fill="x")
         self._label(bar, "Test Results", size=15).pack(side="left")
         self._label(bar, db.RESULTS_TABLE, fg=theme.MUTED, size=10).pack(side="left", padx=(12, 0), pady=(4, 0))
-        self._button(bar, "EXPORT CSV", self.export_csv, "#4a505c").pack(side="right")
+        self._button(bar, "EXPORT CSV", self.export_csv, T.L_NEUTRAL_BTN).pack(side="right")
 
         f = tk.Frame(self, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
         f.pack(fill="x", pady=(10, 0))
@@ -105,7 +106,8 @@ class ReportPage(tk.Frame):
         self.ent_text = self._entry(row, 20)
         self.ent_text.pack(side="left", padx=(6, 14), ipady=2)
         self._label(row, "Result", fg=theme.MUTED, size=9, bold=True).pack(side="left")
-        self.cb_result = ttk.Combobox(row, values=["All", "OK", "NG"], state="readonly", width=5, font=(theme.FONT, 10))
+        self.cb_result = ttk.Combobox(row, values=["All", "OK", "NG"], state="readonly", width=5, font=(theme.FONT, 10),
+                                      style="L.TCombobox")
         self.cb_result.set("All")
         self.cb_result.pack(side="left", padx=(6, 14))
         self.cb_result.bind("<<ComboboxSelected>>", lambda _e: self.search())
@@ -116,8 +118,8 @@ class ReportPage(tk.Frame):
         row = tk.Frame(self, bg=theme.BG)
         row.pack(fill="x", pady=(10, 0))
         self.tiles = {}
-        for i, (key, caption, color) in enumerate((("parts", "PARTS", "white"), ("ok", "OK", theme.PASS),
-                                                   ("ng", "NG", theme.FAIL), ("yield", "YIELD", "#4fa3ff"),
+        for i, (key, caption, color) in enumerate((("parts", "PARTS", T.L_TEXT), ("ok", "OK", theme.PASS),
+                                                   ("ng", "NG", theme.FAIL), ("yield", "YIELD", T.L_PRIMARY),
                                                    ("cycles", "PLC CYCLES", theme.MUTED))):
             t = tk.Frame(row, bg=TILE, highlightbackground=theme.BORDER, highlightthickness=1)
             t.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
@@ -135,21 +137,21 @@ class ReportPage(tk.Frame):
         box = tk.Frame(card, bg=CARD_BG)
         box.pack(fill="both", expand=True, padx=8, pady=8)
         self.tree = ttk.Treeview(box, columns=[c for c, _, _ in LIST_COLS], show="headings",
-                                 selectmode="browse", style="Dark.Treeview")
+                                 selectmode="browse", style="L.Treeview")
         for col, heading, width in LIST_COLS:
             self.tree.heading(col, text=heading)
             self.tree.column(col, width=width, minwidth=40,
                              anchor="w" if col in ("TR_LABEL", "TR_LOT_VALUE", "TR_MODEL") else "center")
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
-        xsb = ttk.Scrollbar(box, orient="horizontal", command=self.tree.xview)
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview, style="L.Vertical.TScrollbar")
+        xsb = ttk.Scrollbar(box, orient="horizontal", command=self.tree.xview, style="L.Horizontal.TScrollbar")
         self.tree.configure(yscrollcommand=sb.set, xscrollcommand=xsb.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         sb.grid(row=0, column=1, sticky="ns")
         xsb.grid(row=1, column=0, sticky="ew")
         box.rowconfigure(0, weight=1)
         box.columnconfigure(0, weight=1)
-        self.tree.tag_configure("odd", background="#141922")
-        self.tree.tag_configure("ng", foreground="#ff7b7b")
+        self.tree.tag_configure("odd", background=T.L_SUNKEN)
+        self.tree.tag_configure("ng", foreground=T.L_NG)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._show_detail())
 
     def _build_detail(self):
@@ -168,7 +170,7 @@ class ReportPage(tk.Frame):
             keys = [f"TR_CH{ch}_FWD_{i}" for i in (1, 2, 3)] + [f"TR_CH{ch}_RET_{i}" for i in (1, 2, 3)] + \
                    [f"TR_CH{ch}_FINAL", f"TR_CH{ch}_LIMIT_NG"]
             for c, key in enumerate(keys, start=1):
-                lbl = tk.Label(grid, text="—", bg=TILE, fg="#ff6fd8", font=(theme.FONT, 10), width=8,
+                lbl = tk.Label(grid, text="—", bg=TILE, fg="#0b3a75", font=(theme.FONT, 10), width=8,
                                highlightbackground=theme.BORDER, highlightthickness=1)
                 lbl.grid(row=r, column=c, padx=3, pady=2)
                 self.cells[key] = lbl
@@ -257,7 +259,7 @@ class ReportPage(tk.Frame):
                 lbl.config(text="—" if v is None else ("NG" if v else "OK"),
                            fg=theme.FAIL if v else theme.PASS if v is not None else theme.MUTED)
             else:
-                lbl.config(text=_fmt(v), fg="#ff6fd8")
+                lbl.config(text=_fmt(v), fg="#0b3a75")
         self.lbl_detail.config(text=f"{_fmt(r.get('TR_DATETIME'))} · {r.get('TR_MODEL')} · {r.get('TR_STAGE')} · "
                                     f"{r.get('TR_LABEL')} · source {r.get('TR_SOURCE')} · raw PLC counts")
 

@@ -18,12 +18,13 @@ import tkinter as tk
 from decimal import Decimal
 from tkinter import messagebox, ttk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 from .. import db
 
 CARD_BG = theme.PANEL
-HEAD_BG = "#171c25"
-SECTION_BG = "#141922"
+HEAD_BG = T.L_SURFACE_2
+SECTION_BG = T.L_SUNKEN
 PRN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                        "prn_templates")
 
@@ -83,20 +84,20 @@ class ModelSettingsPage(tk.Frame):
         self._run(self._init_and_load, "Connecting to database…", self._show_models)
 
     # ============================================================ layout
-    def _label(self, parent, text, fg="white", size=10, bold=False, **kw):
+    def _label(self, parent, text, fg=T.L_TEXT, size=10, bold=False, **kw):
         return tk.Label(parent, text=text, bg=parent["bg"], fg=fg,
                         font=(theme.FONT, size, "bold") if bold else (theme.FONT, size), **kw)
 
     def _button(self, parent, text, command, bg, fg="white"):
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=bg,
                          activeforeground=fg, font=(theme.FONT, 10, "bold"), bd=0, padx=16, pady=5,
-                         cursor="hand2", disabledforeground="#8a8f99")
+                         cursor="hand2", disabledforeground="#dfe4ea")
 
     def _entry(self, parent, width, justify="left"):
-        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify=justify,
-                     font=(theme.FONT, 11), width=width, bd=1, relief="solid",
-                     highlightbackground=theme.BORDER, highlightthickness=1,
-                     disabledbackground="#151920", disabledforeground="#8a93a3")
+        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg=T.L_TEXT, insertbackground=T.L_TEXT, justify=justify,
+                     font=(theme.FONT, 11), width=width, bd=0, relief="flat",
+                     highlightbackground=T.L_BORDER, highlightcolor=T.L_PRIMARY, highlightthickness=1,
+                     disabledbackground=T.L_SUNKEN, disabledforeground=T.L_TEXT_2)
         return e
 
     def _card(self, title, subtitle=""):
@@ -118,7 +119,7 @@ class ModelSettingsPage(tk.Frame):
         self.btn_delete.pack(side="right", padx=(8, 0))
         self.btn_save = self._button(bar, "SAVE", self.save_model, theme.SAVE)
         self.btn_save.pack(side="right", padx=(8, 0))
-        self.btn_new = self._button(bar, "NEW", self.new_model, "#4a505c")
+        self.btn_new = self._button(bar, "NEW", self.new_model, T.L_NEUTRAL_BTN)
         self.btn_new.pack(side="right", padx=(8, 0))
 
     def _section(self, parent, title, subtitle):
@@ -151,11 +152,11 @@ class ModelSettingsPage(tk.Frame):
         for r, (col, label, _sql) in enumerate(db.HEADER_FIELDS):
             self._label(body, label).grid(row=r, column=0, sticky="w", pady=3)
             if col == "MM_PRN_TEMPLATE":
-                w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly")
+                w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly", style="L.TCombobox")
                 # Re-list the folder each time the drop-down opens, so new files show up.
                 w.config(postcommand=lambda w=w: w.config(values=[""] + prn_templates()))
             elif col == "MM_TYPE":
-                w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly", values=MODEL_TYPES, width=8)
+                w = ttk.Combobox(body, font=(theme.FONT, 10), state="readonly", values=MODEL_TYPES, width=8, style="L.TCombobox")
             else:
                 w = self._entry(body, 20)
             w.grid(row=r, column=1, sticky="w" if col == "MM_TYPE" else "ew", padx=(12, 0), pady=3)
@@ -210,16 +211,16 @@ class ModelSettingsPage(tk.Frame):
         box = tk.Frame(card, bg=CARD_BG)
         box.pack(fill="both", expand=True, padx=8, pady=8)
         self.tree = ttk.Treeview(box, columns=[c for c, _, _ in LIST_COLS], show="headings",
-                                 selectmode="browse", style="Dark.Treeview")
+                                 selectmode="browse", style="L.Treeview")
         for col, heading, width in LIST_COLS:
             self.tree.heading(col, text=heading)
             self.tree.column(col, width=width, minwidth=50,
                              anchor="w" if col in ("MM_MODEL", "MM_PRN_TEMPLATE") else "center")
-        sb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview, style="L.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        self.tree.tag_configure("odd", background="#141922")
+        self.tree.tag_configure("odd", background=T.L_SUNKEN)
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._on_select())
         self._rows = {}
         self._search_job = None

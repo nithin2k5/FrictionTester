@@ -111,6 +111,8 @@ def apply_style(root):
     style.map("L.Treeview.Heading", background=[("active", L_BORDER_2)])
     style.configure("L.Vertical.TScrollbar", background=L_SURFACE_2, troughcolor=L_BG, bordercolor=L_BORDER,
                     arrowcolor=L_TEXT_2, lightcolor=L_SURFACE_2, darkcolor=L_SURFACE_2)
+    style.configure("L.Horizontal.TScrollbar", background=L_SURFACE_2, troughcolor=L_BG, bordercolor=L_BORDER,
+                    arrowcolor=L_TEXT_2, lightcolor=L_SURFACE_2, darkcolor=L_SURFACE_2)
 
     # Drop-down list colours.
     root.option_add("*TCombobox*Listbox.background", "#111")
