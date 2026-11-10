@@ -403,6 +403,24 @@ def test_home_from_unhomed_power_up():
     assert snap.st("shift", "permitted") is True
 
 
+def test_home_on_open_homes_both_axes_once():
+    """home_on_open: both axes home on the first good status read, never again after that."""
+    r = Rig(cfg={"home_on_open": True})
+    assert set(r.ctl.manual) == {"shift", "select"}
+    r.until(lambda: not r.ctl.manual)
+    r.run(3.0)
+    assert r.sim.starts["shift"]["home"] == 1 and r.sim.starts["select"]["home"] == 1
+    assert all(a.origin_complete and a.seq["home"].word == 0 for a in r.sim.axes.values())
+    assert r.ctl.fault is None and r.requests_clear()
+
+
+def test_home_on_open_off_by_default_and_blocked_without_writes():
+    assert not Rig().ctl.manual
+    r = Rig(cfg={"home_on_open": True}, owner=False)
+    assert not r.ctl.manual and r.sim.starts["shift"]["home"] == 0
+    assert any("Automatic home on open skipped" in m for m in r.messages())
+
+
 def test_home_refused_when_permission_off_but_origin_on():
     r = Rig()
     r.confirm_params()

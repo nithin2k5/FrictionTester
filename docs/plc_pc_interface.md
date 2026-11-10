@@ -118,6 +118,9 @@ homed since power-up shows permission OFF. The app then does not require permiss
 request until origin feedback turns ON (step 3, sequence already past step 0) and releases it there;
 completion is unchanged. Permission OFF with origin feedback ON (module busy / a sequence running) is
 refused. — simulated (`test_home_from_unhomed_power_up`).
+**Home on open** (`home_on_open`, on by default): when the Test Console opens, both axes are homed
+once on the first good status read, through the same checks as the ORIGIN button. Not repeated after
+a reconnect; skipped with a message when writes are off or PC request bits are found ON. — simulated.
 
 **Measurement start** — word M0204 / M0214, targets D02018 / D02118 (p14–16): step 5 advances on
 `CurPos = target` **OR T0103 / T0203**; step 7 waits for release. The word is not exported and not in
@@ -283,7 +286,7 @@ Tk thread; UI updates go through `after()` polling of the controller and store q
 | Native M reads | `mapping.cnet_areas.bit_write` (FC01), `internal_bits_enabled` |
 | Stroke completion | `stroke_completion` |
 | MT parallel | `mt_parallel_verified` |
-| Homing policy, fixture checks | `home_before_test`, `fixture_checks` |
+| Homing policy, fixture checks | `home_before_test`, `home_on_open`, `fixture_checks` |
 | Measurement | `measurement.*` |
 | Timeouts (s) | `timeouts.*` (incl. `alarm_reset_pulse`) |
 

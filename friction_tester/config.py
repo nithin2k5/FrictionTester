@@ -176,6 +176,7 @@ DEFAULT_SETTINGS = {
             "stroke_completion": "internal_flags",
             "mt_parallel_verified": False,        # SHIFT and SELECT may move together (MT)
             "home_before_test": "if_not_referenced",   # "never" | "if_not_referenced" | "always"
+            "home_on_open": True,                 # home both axes once when the Test Console connects
             # Status names (pc_profile.STATUS) that must be ON before a cable routine, e.g.
             # ["clamp_on"]. Empty = no fixture check configured (shown in the result evidence).
             "fixture_checks": {"select": [], "shift": []},

@@ -177,6 +177,7 @@
       "stroke_completion": "internal_flags",
       "mt_parallel_verified": false,
       "home_before_test": "if_not_referenced",
+      "home_on_open": true,
       "fixture_checks": {
         "select": [],
         "shift": []

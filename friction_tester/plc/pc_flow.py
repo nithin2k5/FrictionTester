@@ -260,6 +260,8 @@ class PcController:
         self.fault = None
         self.stop_state = ""
         self.deferred_params = None
+        # Home both axes once, on the first good status read after the Test Console opens
+        self.home_on_open = bool(cfg.get("home_on_open", False))
         self.params = {"state": "not_confirmed", "values": None, "model": None, "message": "no model loaded"}
         self._seq = 0
         self._stop = threading.Event()
@@ -323,6 +325,8 @@ class PcController:
             self._link_failed(exc, "status read")
         self._connection(snap, now)
         self.snap = snap
+        if self.home_on_open and self.connected and snap is not None:
+            self._home_on_open(now)
         self._check_jogs(now)
         self._check_params(snap, now)
         for axis, op in list(self.manual.items()):
@@ -607,6 +611,25 @@ class PcController:
             return
         self.manual[axis] = op
         self._msg(f"{op.name}…", "busy")
+
+    def _home_on_open(self, now):
+        """One automatic home of both axes after the Test Console opens (home_on_open).
+
+        Tried once on the first good status read; not repeated after a reconnect.
+        Skipped (and reported) if PC request bits were found ON in the PLC; every
+        other refusal comes from the normal home checks.
+        """
+        self.home_on_open = False
+        if self.stale:
+            self._msg("Automatic home on open skipped: PC request bits are ON in the PLC - "
+                      "press STOP, then ORIGIN", "fail")
+            return
+        if self.link.write_blocker():
+            self._msg(f"Automatic home on open skipped: {self.link.write_blocker()}", "busy")
+            return
+        self.log.log("HOME", "automatic home on open", axes=",".join(pp.AXES))
+        for axis in pp.AXES:
+            self._cmd_manual("home", axis, now)
 
     def _cmd_stop(self, now):
         for axis in list(self.jogs):
