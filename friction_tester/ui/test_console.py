@@ -114,6 +114,11 @@ class CablePanel(tk.Frame):
         self.plot.add_series("PULL", PULL_COLOR)
         self.plot.add_series("PUSH", PUSH_COLOR)
         self.plot.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        self._gcap = None          # capture being drawn, how many of its samples are drawn,
+        self._gn = 0               # its first sample time, and the stroke number on the graph
+        self._gt0 = None
+        self._gstroke = None
+        self._gmode = None         # "stroke" (LVDT on the NI card) or "time"
 
         live = tk.Frame(self, bg=theme.PANEL)
         live.pack(fill="x", padx=8, pady=(2, 6))
@@ -279,6 +284,42 @@ class CablePanel(tk.Frame):
             lbl.config(text=NO_DATA)     # "—" = not measured, distinct from a measured 0
         self.judge.config(text="– – –", fg="#4f8cff")
         self.plot.clear()
+        self.plot.reset_view()
+        self._gcap, self._gstroke = None, None
+
+    def draw_capture(self, cap):
+        """Add a measuring stroke's new samples to the graph: Load against the LVDT
+        stroke (NI card), or against time since the stroke began when no stroke is read.
+        Each stroke number starts a fresh graph; its PULL and PUSH share it."""
+        name = "PULL" if cap.kind == "pull" else "PUSH"
+        if cap is not self._gcap:
+            if cap.stroke_no != self._gstroke:
+                self.plot.clear()
+                self._gstroke, self._gmode = cap.stroke_no, None
+            else:
+                self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
+            self._gcap, self._gn, self._gt0 = cap, 0, None
+        new = cap.samples[self._gn:]
+        self._gn += len(new)
+        series = self.plot.series[name]
+        for t, load, stroke, *_raw in new:
+            if load is None:
+                continue
+            if self._gmode is None:          # chosen once per stroke: PULL and PUSH share the x axis
+                self._gmode = "stroke" if stroke is not None else "time"
+                self.plot.set_xlabel("Stroke [mm]" if stroke is not None else "Time [s]")
+            if self._gt0 is None:
+                self._gt0 = t
+            if self._gmode == "stroke":
+                if stroke is None:
+                    continue
+                series["x"].append(stroke)
+            else:
+                series["x"].append(round(t - self._gt0, 3))
+            series["y"].append(load)
+        if new:
+            self.plot.redraw()
+            self.plot.extend_to_data()
 
     def set_source(self, text):
         self.source_lbl.config(text=text)
@@ -627,6 +668,8 @@ class TestConsolePage(tk.Frame):
                 self._set_flow(ev[1])
             elif kind == "axis_started":
                 n = [k for k, _t, _s in self.SIDES].index(ev[1])
+                if self.sampler is not None:
+                    self.sampler.captures.pop(ev[1], None)     # the previous part's strokes
                 self.panels[n].reset_results()
                 self.panels[n].judge.config(text="TEST", fg=theme.BUSY)
             elif kind == "axis_result":
@@ -775,6 +818,9 @@ class TestConsolePage(tk.Frame):
                 if key in active and key in self.sampler.latest:
                     load, stroke = self.sampler.latest[key]
                     panel.set_live_values(load, stroke, "", "")
+                cap = self.sampler.captures.get(key)
+                if cap is not None:
+                    panel.draw_capture(cap)
 
     def _drain_monitor(self):
         """UI thread: take what the monitor thread produced (it never touches Tk)."""

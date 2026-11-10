@@ -714,8 +714,11 @@ def test_plc_params_from_cable_conditions():
         row.update({f"MM_{t}_SPEED": 10, f"MM_{t}_STROKE": 5, f"MM_{t}_POSITION_1": -30,
                     f"MM_{t}_POSITION_2": -5, f"MM_{t}_POSITION_3": 30})
     values = db.plc_params_from_row(row)
-    # jog low = speed / 2, jog high = speed, speed, PULL = stroke, left = P3, right = -P1; start = -P2 x 10
-    assert values == [5, 10, 10, 5, 30, 30] * 2 + [50, 50]
+    # jog low = speed / 2, jog high = speed, speed, PULL = stroke, left = P3, right = -P1;
+    # start centred: Stroke / 2 x 10 (stroke 5 -> start 2.5 mm on the - side)
+    assert values == [5, 10, 10, 5, 30, 30] * 2 + [25, 25]
+    t = derived_targets(values, False)["shift"]
+    assert t["start"] == 1_000_000 - 250 and t["pull"] == t["start"] + 500 + 100
     assert not validate_params(values) and not target_problems(derived_targets(values, False))
 
 
@@ -797,3 +800,104 @@ def test_stop_cancels_a_waiting_run():
     r.until(lambda: not r.ctl.manual, limit=30)
     r.run(1.0)
     assert r.ctl.part is None and not r.parts()
+
+
+class FakeDaq:
+    """NIDaq stand-in: connect() opens, read_average() returns fixed volts."""
+
+    def __init__(self, volts=None, fail=None):
+        self.volts, self.fail, self.cfg, self.reads = volts or {}, fail, None, 0
+
+    @property
+    def is_open(self):
+        return self.cfg is not None
+
+    def connect(self, cfg):
+        if self.fail:
+            raise RuntimeError(self.fail)
+        self.cfg = cfg
+
+    def read_average(self):
+        self.reads += 1
+        return dict(self.volts)
+
+
+def _sampler_settings(force_source="serial", stroke=None):
+    return {"daq": {"device": "Dev1", "terminal_config": "Differential", "sample_rate": 1000.0,
+                    "samples_per_channel": 100,
+                    "sensors": [{"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": 2.0,
+                                 "offset_v": 0.0, "unit": "kgf"},
+                                {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": 5.0,
+                                 "offset_v": 1.0, "unit": "mm"}]},
+            "test": {"machine_profile": {"measurement": {
+                "force_source": force_source, "loadcell": {"select": 1, "shift": 2},
+                "daq_force": {"select": "Loadcell 1", "shift": ""},
+                "stroke": stroke if stroke is not None else {"select": "LVDT 1", "shift": ""}}}}}
+
+
+class _Lc:
+    is_open = True
+
+    def read(self):
+        return None, "ID001,+0000.50", 0.5
+
+
+def test_sampler_opens_the_ni_card_and_reads_load_and_stroke_in_one_block():
+    from friction_tester.plc.pc_measure import Sampler
+    daq = FakeDaq({"ai0": 0.25, "ai2": 3.0})
+    s = Sampler([_Lc(), _Lc()], daq, _sampler_settings("daq"))
+    load, stroke, raw_load, raw_stroke = s.read_once("select")
+    assert (load, stroke, raw_load, raw_stroke) == (0.5, 10.0, 0.25, 3.0)
+    assert daq.reads == 1                                          # one acquisition per sample
+    assert [c["channel"] for c in daq.cfg["channels"]] == ["ai2", "ai0"]
+    assert daq.cfg["samples_per_channel"] == 10                    # ~10 ms block
+
+
+def test_sampler_keeps_the_serial_load_when_the_ni_card_fails():
+    from friction_tester.plc.pc_measure import Sampler
+    s = Sampler([_Lc(), _Lc()], FakeDaq(fail="Dev1 not found"), _sampler_settings("serial"))
+    load, stroke, _raw, _rs = s.read_once("select")
+    assert load == 0.5 and stroke is None and "Dev1 not found" in s.daq_error
+
+
+def test_sampler_keeps_the_capture_for_the_graph():
+    from friction_tester.plc.pc_measure import Sampler
+    s = Sampler([_Lc(), _Lc()], FakeDaq({"ai2": 2.0}), _sampler_settings("serial"), period=0.005)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.04)
+    s.stop(cap)
+    assert s.captures["select"] is cap and cap.samples[0][1:3] == (0.5, 5.0)
+
+
+def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
+    import tkinter as tk
+    from friction_tester.plc.pc_measure import Capture
+    from friction_tester.ui.test_console import CablePanel
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        import pytest
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        import copy
+        from friction_tester.config import DEFAULT_SETTINGS
+        panel = CablePanel(root, "SELECT CABLE", copy.deepcopy(DEFAULT_SETTINGS["test"]["select"]))
+        pull = Capture("select", "pull", "t", 1)
+        pull.samples += [(10.0, 0.1, -5.0, 0, 0), (10.1, None, -4.0, 0, 0), (10.2, 0.3, -3.0, 0, 0)]
+        panel.draw_capture(pull)
+        assert panel.plot.series["PULL"]["x"] == [-5.0, -3.0] and panel.plot.xlabel == "Stroke [mm]"
+        pull.samples.append((10.3, 0.4, -2.0, 0, 0))
+        panel.draw_capture(pull)                                     # only the new sample is added
+        assert panel.plot.series["PULL"]["y"] == [0.1, 0.3, 0.4]
+        push = Capture("select", "push", "t", 1)
+        push.samples += [(11.0, -0.2, 6.0, 0, 0), (11.5, -0.1, None, 0, 0)]
+        panel.draw_capture(push)                                     # same stroke: PULL stays
+        assert panel.plot.series["PULL"]["y"] and panel.plot.series["PUSH"]["x"] == [6.0]
+        pull2 = Capture("select", "pull", "t", 2)                    # next stroke: fresh graph
+        pull2.samples += [(20.0, 0.2, None, 0, 0), (20.5, 0.3, None, 0, 0)]
+        panel.draw_capture(pull2)
+        assert not panel.plot.series["PUSH"]["x"] and panel.plot.series["PULL"]["x"] == [0.0, 0.5]
+        assert panel.plot.xlabel == "Time [s]"                       # no LVDT reading: Load vs time
+    finally:
+        root.destroy()

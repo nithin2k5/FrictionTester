@@ -213,8 +213,8 @@
           "shift": "Loadcell 2"
         },
         "stroke": {
-          "select": "",
-          "shift": ""
+          "select": "LVDT 1",
+          "shift": "LVDT 2"
         },
         "calibration": {
           "select": {

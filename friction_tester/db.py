@@ -108,8 +108,11 @@ def plc_params_from_row(row):
     home (the PLC's origin D02000), so with the ladder formulas (p20-22)
         left limit  D02014 = D02000 + L x 100   ->  L = Position 3
         right limit D02016 = D02000 - R x 100   ->  R = -Position 1
-        start       D02018 = D02000 - S x 10    ->  S = -Position 2 x 10
+        start       D02018 = D02000 - S x 10    ->  S = Stroke / 2 x 10
         PULL target D02004 = start + T x 100    ->  T = Stroke
+    The start is centred automatically: the test runs from -Stroke/2 to
+    +Stroke/2 (+1 mm the PLC adds), so it covers both sides of home.
+    Position 2 is not used for the PLC.
     Operating speed = Speed; high jog speed = Speed; low jog speed = half of it.
     A value that comes out negative is left as is, so the parameter check rejects it.
     """
@@ -131,7 +134,7 @@ def plc_params_from_row(row):
             "pull_travel": num(axis, "STROKE"),
             "limit_left": num(axis, "POSITION_3"),
             "limit_right": None if num(axis, "POSITION_1") is None else -num(axis, "POSITION_1"),
-            "meas_start": None if num(axis, "POSITION_2") is None else -num(axis, "POSITION_2") * 10,
+            "meas_start": None if num(axis, "STROKE") is None else num(axis, "STROKE") / 2 * 10,
         }[key]
         v = derived if derived is not None else num(axis, attr_of[key])
         out.append(None if v is None else int(round(v)))

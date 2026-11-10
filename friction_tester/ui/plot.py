@@ -44,7 +44,7 @@ class LoadStrokePlot(tk.Frame):
         bar = tk.Frame(self, bg=theme.PANEL)
         bar.pack(fill="x", pady=(4, 0))
         for text, cmd in (("+", lambda: self.zoom(0.8)), ("−", lambda: self.zoom(1.25)),
-                          ("Fit", self.reset_view),
+                          ("Fit", self.fit_data),
                           ("◄", lambda: self.pan(-0.1, 0)), ("►", lambda: self.pan(0.1, 0)),
                           ("▲", lambda: self.pan(0, 0.1)), ("▼", lambda: self.pan(0, -0.1))):
             tk.Button(bar, text=text, command=cmd, bg="#222833", fg="white", activebackground="#2f3747",
@@ -84,6 +84,38 @@ class LoadStrokePlot(tk.Frame):
         dy = (self.ylim[1] - self.ylim[0]) * fy
         self.xlim = [self.xlim[0] + dx, self.xlim[1] + dx]
         self.ylim = [self.ylim[0] + dy, self.ylim[1] + dy]
+        self.redraw()
+
+    def set_xlabel(self, text):
+        if text != self.xlabel:
+            self.xlabel = text
+            self.redraw()
+
+    def extend_to_data(self):
+        """Grow the view (never shrink it) so every point is visible."""
+        xs = [v for s in self.series.values() for v in s["x"]]
+        ys = [v for s in self.series.values() for v in s["y"]]
+        if not xs:
+            return
+        grown = False
+        for lim, lo, hi in ((self.xlim, min(xs), max(xs)), (self.ylim, min(ys), max(ys))):
+            pad = max((hi - lo) * 0.05, 1e-3)
+            if lo < lim[0]:
+                lim[0], grown = lo - pad, True
+            if hi > lim[1]:
+                lim[1], grown = hi + pad, True
+        if grown:
+            self.redraw()
+
+    def fit_data(self):
+        """Fit the view to the traces (the default view when there is no data)."""
+        xs = [v for s in self.series.values() for v in s["x"]]
+        ys = [v for s in self.series.values() for v in s["y"]]
+        if not xs:
+            return self.reset_view()
+        for lim, lo, hi in ((self.xlim, min(xs), max(xs)), (self.ylim, min(ys), max(ys))):
+            span = hi - lo or max(abs(hi), 1.0)
+            lim[0], lim[1] = lo - span * 0.08, hi + span * 0.08
         self.redraw()
 
     def reset_view(self):

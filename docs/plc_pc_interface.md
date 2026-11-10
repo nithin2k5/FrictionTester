@@ -183,8 +183,9 @@ D02016 = D02000 − R × 100. These are counts, not mm or mm/s.
 
 Source (`db.plc_params_from_row`, 2026-11-10): the cable's test condition — operating speed = Speed,
 high jog = Speed, low jog = Speed / 2, PULL travel = Stroke, left limit = Position 3, right limit =
-−Position 1, measurement start = −Position 2 × 10 (positions are signed distances from home). A stored
-PLC word is used only where the condition field is empty.
+−Position 1 (positions are signed distances from home), measurement start = Stroke ÷ 2 × 10 — centred
+automatically, so the test runs from −Stroke/2 to +Stroke/2 (+1 mm D00490) across home; Position 2 is
+not sent. A stored PLC word is used only where the condition field is empty.
 
 App: whole numbers 0..65535 (start 0..32767); derived targets checked (right ≤ start ≤ PULL ≤ left,
 using the PLC's own D00490 from the M0700F echo — the app never adds D00490 itself); written only
@@ -234,6 +235,15 @@ unset by default**: `judge` (`peak` | `strokes` | `positions` with linear interp
 source), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
 `min_samples`. Samples carry timestamp, calibrated and raw force, stroke and raw stroke; a failed read
 is recorded as invalid (no substitute sensor). Positions and repetition count are separate settings.
+
+NI card: the Sampler opens the NI DAQ task itself (device, wiring and sensor rows from the COM Port
+page) for the rows named by `stroke` / `daq_force`, with a ~10 ms averaging block; load and stroke
+come from the same acquisition. If the card cannot be opened the stroke is missing but a serial force
+sample still counts (retried each stroke). This machine (settings.json): SELECT stroke = `LVDT 1` (ai2), SHIFT = `LVDT 2` (ai3).
+
+Graph (Test Console): each measuring stroke is drawn live, PULL and PUSH on a fresh graph per stroke
+number, Load against the LVDT stroke in mm — or against time since the stroke began when no stroke
+reading is available. The view grows to fit the data; **Fit** zooms to it.
 
 Verdicts: OK / NG (a value outside the limits) per cable; **INCOMPLETE** for unset rules, missing
 limits, too few or invalid samples, uncovered positions; **ERROR** for a failed machine operation.

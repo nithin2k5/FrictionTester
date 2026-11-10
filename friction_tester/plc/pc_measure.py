@@ -6,6 +6,8 @@ machine_profile.measurement:
     loadcell:      {"select": 1, "shift": 2}        serial loadcell number per cable
     daq_force:     {"select": "Loadcell 1", "shift": "Loadcell 2"}   DAQ sensor names
     stroke:        {"select": "", "shift": ""}      DAQ sensor name of the LVDT, "" = none
+The NI card task is opened here (device / wiring / sensor rows from the COM Port
+page) for the rows these name, with a ~10 ms averaging block per sample.
 The cable assignment, calibration, units and sign are NOT established by the
 PLC program; the defaults follow the Test Console (SELECT = Loadcell 01,
 SHIFT = Loadcell 02) and must be confirmed on the machine.
@@ -39,6 +41,9 @@ class Sampler:
         self.period = period
         self.latest = {}               # axis -> (load, stroke) for the screen
         self._active = set()           # axes being captured (the screen's poll leaves them alone)
+        self.captures = {}             # axis -> the latest Capture (the graph draws its samples)
+        self.daq_error = None          # why the NI card could not be opened (retried each stroke)
+        self._daq_lock = threading.Lock()
 
     @property
     def mcfg(self):
@@ -53,12 +58,47 @@ class Sampler:
                 return s
         return None
 
-    def _daq_value(self, name):
-        """(value, volts) of a DAQ sensor row, or (None, None)."""
+    def _daq_names(self):
+        m = self.mcfg
+        names = [(m.get("stroke") or {}).get(a, "") for a in ("select", "shift")]
+        if m.get("force_source", "serial") == "daq":
+            names += [(m.get("daq_force") or {}).get(a, "") for a in ("select", "shift")]
+        return [n for n in names if n]
+
+    def _ensure_daq(self):
+        """Open the NI card task for the sensor rows the test reads (COM Port page
+        settings). A short averaging block (~10 ms) keeps the sample rate up."""
+        if self.daq is None:
+            return False
+        if self.daq.is_open:
+            return True
+        if self.daq_error:
+            return False
+        d = self.settings.get("daq") or {}
+        chans = []
+        for n in self._daq_names():
+            sen = self._sensor(n)
+            if sen and sen["channel"] not in [c["channel"] for c in chans]:
+                chans.append({"channel": sen["channel"], "range": sen.get("range", "±10 V")})
+        rate = float(d.get("sample_rate") or 1000.0)
+        try:
+            if not chans:
+                raise ValueError("no NI card sensor rows match the stroke / force names")
+            self.daq.connect({"device": d.get("device", ""), "terminal_config": d.get("terminal_config", "Differential"),
+                              "sample_rate": rate, "samples_per_channel": max(1, int(rate * 0.01)),
+                              "channels": chans})
+        except Exception as exc:
+            self.daq_error = str(exc) or type(exc).__name__
+            return False
+        return True
+
+    def _daq_value(self, name, block=None):
+        """(value, volts) of a DAQ sensor row, or (None, None). `block` is one
+        read_average() result, so load and stroke come from the same acquisition."""
         s = self._sensor(name)
         if not s or self.daq is None or not self.daq.is_open:
             return None, None
-        volts = self.daq.read_average().get(s["channel"])
+        volts = (block if block is not None else self.daq.read_average()).get(s["channel"])
         if volts is None:
             return None, None
         return (volts - float(s.get("offset_v", 0.0))) * float(s.get("scale", 1.0)), volts
@@ -83,8 +123,21 @@ class Sampler:
     def read_once(self, axis):
         m = self.mcfg
         raw_load = stroke = raw_stroke = None
-        if m.get("force_source", "serial") == "daq":
-            value, raw_load = self._daq_value((m.get("daq_force") or {}).get(axis, ""))
+        name = (m.get("stroke") or {}).get(axis, "")
+        block = None
+        force_daq = m.get("force_source", "serial") == "daq"
+        if force_daq or name:
+            with self._daq_lock:
+                try:
+                    if not self._ensure_daq():
+                        raise RuntimeError(f"NI card not open: {self.daq_error or 'no device'}")
+                    block = self.daq.read_average()
+                except Exception:
+                    if force_daq:
+                        raise
+                    block = {}         # NI card read failed: no stroke, the serial force still counts
+        if force_daq:
+            value, raw_load = self._daq_value((m.get("daq_force") or {}).get(axis, ""), block)
         else:
             value = None
             n = int((m.get("loadcell") or {}).get(axis, 0) or 0)
@@ -94,13 +147,14 @@ class Sampler:
             _sent, raw_load, value = lc.read()
         cal = (m.get("calibration") or {}).get(axis) or {}
         load = None if value is None else value * float(cal.get("scale", 1.0)) + float(cal.get("offset", 0.0))
-        name = (m.get("stroke") or {}).get(axis, "")
         if name:
-            stroke, raw_stroke = self._daq_value(name)
+            stroke, raw_stroke = self._daq_value(name, block)
         return load, stroke, raw_load, raw_stroke
 
     def start(self, axis, kind, test_id, stroke_no):
         cap = Capture(axis, kind, test_id, stroke_no)
+        self.captures[axis] = cap
+        self.daq_error = None          # try the NI card again for this stroke
 
         def run():
             self._active.add(axis)
