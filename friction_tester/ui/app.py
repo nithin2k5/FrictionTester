@@ -16,8 +16,8 @@ from .report_page import ReportPage
 from .admin_page import AdminPage
 from .test_console import TestConsolePage
 
-NAV_IDLE = ("#111", "white", "#444")        # bg, fg, border
-NAV_ACTIVE = ("#d4d4d4", "black", "#f0f0f0")
+NAV_IDLE = (theme.NAV_TILE, theme.NAV_FG, theme.NAV_TILE)          # bg, fg, edge
+NAV_ACTIVE = (theme.L_BG, theme.L_PRIMARY, theme.L_PRIMARY)         # the open page: a tab of the work area
 
 
 class App:
@@ -45,7 +45,7 @@ class App:
             root.state("zoomed")
         except tk.TclError:
             pass
-        root.configure(bg=theme.BG)
+        root.configure(bg=theme.L_BG)
         theme.apply_style(root)
 
         self._closing = False
@@ -153,19 +153,19 @@ class App:
 
     # ---------------------------------------------------------------- header
     def _build_header(self):
-        header = tk.Frame(self.root, bg=theme.BG, height=45)
+        header = tk.Frame(self.root, bg=theme.NAV_BG, height=48)
         header.pack(fill="x")
         header.pack_propagate(False)
 
         logo = tk.Frame(header, bg="white", padx=6, pady=3)
-        logo.pack(side="left", padx=10, pady=6)
+        logo.pack(side="left", padx=10, pady=8)
         tk.Label(logo, text="INFAC", fg="#c00000", bg="white", font=(theme.FONT, 16, "bold")).pack(side="left")
         tk.Label(logo, text=" 주식회사인팩", fg="black", bg="white", font=("Malgun Gothic", 9)).pack(side="left")
 
-        self.lbl_title = tk.Label(header, text="", fg=theme.TITLE_FG, bg=theme.BG, font=(theme.FONT, 15, "bold"))
+        self.lbl_title = tk.Label(header, text="", fg="white", bg=theme.NAV_BG, font=(theme.FONT, 15, "bold"))
         self.lbl_title.pack(side="left", padx=25)
 
-        self.lbl_clock = tk.Label(header, text="", fg="white", bg=theme.BG, font=(theme.FONT, 10))
+        self.lbl_clock = tk.Label(header, text="", fg=theme.NAV_FG, bg=theme.NAV_BG, font=(theme.FONT, 11))
         self.lbl_clock.pack(side="right", padx=15)
         self._tick_clock()
 
@@ -175,29 +175,31 @@ class App:
 
     # ------------------------------------------------------------------ body
     def _build_body(self):
-        body = tk.Frame(self.root, bg=theme.BG)
+        body = tk.Frame(self.root, bg=theme.L_BG)
         body.pack(fill="both", expand=True)
 
-        sidebar = tk.Frame(body, bg=theme.BG, width=90)
+        sidebar = tk.Frame(body, bg=theme.NAV_BG, width=90)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
         self.nav_tiles = {}
         for icon, text, page, _title in self.PAGES:
-            f = tk.Frame(sidebar, bg="#111", bd=1, relief="solid", height=88,
-                         highlightbackground="#444", highlightthickness=1, cursor="hand2")
-            f.pack(fill="x", padx=4, pady=3)
-            inner = tk.Frame(f, bg="#111", cursor="hand2")
+            f = tk.Frame(sidebar, bg=theme.NAV_TILE, height=88, highlightbackground=theme.NAV_TILE,
+                         highlightthickness=2, cursor="hand2")
+            f.pack(fill="x", padx=(6, 0), pady=3)
+            inner = tk.Frame(f, bg=theme.NAV_TILE, cursor="hand2")
             inner.place(relx=0.5, rely=0.5, anchor="center")
-            lbl_icon = tk.Label(inner, text=icon, bg="#111", fg="white", font=(theme.FONT, 18), cursor="hand2")
+            lbl_icon = tk.Label(inner, text=icon, bg=theme.NAV_TILE, fg=theme.NAV_FG, font=(theme.FONT, 18),
+                                cursor="hand2")
             lbl_icon.pack()
-            lbl_text = tk.Label(inner, text=text, bg="#111", fg="white", font=(theme.FONT, 8), cursor="hand2")
+            lbl_text = tk.Label(inner, text=text, bg=theme.NAV_TILE, fg=theme.NAV_FG, font=(theme.FONT, 8, "bold"),
+                                cursor="hand2")
             lbl_text.pack()
             for w in (f, inner, lbl_icon, lbl_text):
                 w.bind("<Button-1>", lambda _e, p=page: self.load_page(p))
             self.nav_tiles[page] = (f, inner, lbl_icon, lbl_text)
 
-        self.content = tk.Frame(body, bg=theme.BG)
+        self.content = tk.Frame(body, bg=theme.L_BG)
         self.content.pack(side="left", fill="both", expand=True)
 
     def _set_active_nav(self, page_name):
