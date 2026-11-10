@@ -113,6 +113,11 @@ word = 0. Step 0 is SET by request AND word = 0, so a held request re-homes afte
 App: request until permission (M0801A / M0801B, which requires M0200 = 0) drops → release at once →
 done only when permission is restored, origin feedback ON and no axis error. Origin feedback alone
 (arrives at step 3) is not completion. — implemented, simulated (origin feedback before the end).
+The home rung needs M00120 but **not M00122**, and M00122 includes origin feedback, so an axis never
+homed since power-up shows permission OFF. The app then does not require permission: it holds the
+request until origin feedback turns ON (step 3, sequence already past step 0) and releases it there;
+completion is unchanged. Permission OFF with origin feedback ON (module busy / a sequence running) is
+refused. — simulated (`test_home_from_unhomed_power_up`).
 
 **Measurement start** — word M0204 / M0214, targets D02018 / D02118 (p14–16): step 5 advances on
 `CurPos = target` **OR T0103 / T0203**; step 7 waits for release. The word is not exported and not in

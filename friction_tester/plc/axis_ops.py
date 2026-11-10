@@ -246,13 +246,47 @@ class StrokeOp(AxisOp):
 
 
 class HomeOp(AxisOp):
+    """The home rung needs only M00120 + no error/busy, not M00122 - and M00122
+    includes origin feedback, so an axis that was never homed (power-up) has
+    permission OFF. Two acceptance paths:
+      homed start   (permission ON):  permission drops -> release at once.
+      un-homed start (permission OFF, origin OFF): no drop to see; hold the
+        request until origin feedback turns ON (step 3, sequence already past
+        step 0, so the release cannot cancel it) -> release.
+    Completion is the same for both."""
     kind = "home"
+    unhomed = False
 
     def precheck(self, snap):
-        self._common_ready(snap)
+        self._common_ready(snap, need_permit=False)
+        a = pp.AXIS_NAME[self.axis]
+        permitted, origin = snap.st(self.axis, "permitted"), snap.st(self.axis, "origin_complete")
+        if permitted is None or origin is None:
+            raise OpBlocked(f"{a}: motion permission / origin feedback not readable")
+        if not permitted and origin:
+            raise OpBlocked(f"{a}: motion permission is OFF although origin feedback is ON - a sequence or the "
+                            "positioning module is still busy; wait or clear it at the machine")
+        self.unhomed = not permitted
 
     def step(self, snap, now):
         st = lambda name: snap.st(self.axis, name)
+        if self.state == "requested" and self.unhomed:
+            if snap.echo_bit(self.idx, self.n) and "echo" not in self.evidence:
+                self.evidence.append("echo")
+                self._note("ECHO", "request copied (echo only - not acceptance)")
+            if st("servo_on") is not True or st("alarm_normal") is not True or st("axis_error"):
+                return self._finish("failed", f"{self.name}: drive state changed instead of homing",
+                                    now, release=True)
+            if snap.echo_bit(self.idx, self.n) and st("origin_complete"):
+                self.evidence.append("un-homed start: origin feedback OFF -> ON (sequence step 3)")
+                self._set("running", now)
+                return self._request(False)
+            if not snap.echo_bit(self.idx, self.n) and self._elapsed(now) > self.t["echo"]:
+                return self._finish("failed", f"{self.name}: request not echoed by the PLC", now, release=True)
+            if self._elapsed(now) > self.t["home"]:
+                return self._finish("failed", f"{self.name}: origin feedback did not come ON within "
+                                              f"{self.t['home']:g} s - PLC did not home", now, release=True)
+            return {}
         if self.state == "requested":
             if snap.echo_bit(self.idx, self.n) and "echo" not in self.evidence:
                 self.evidence.append("echo")

@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from friction_tester.plc import pc_profile as pp  # noqa: E402
-from friction_tester.plc.axis_ops import OpBlocked, StrokeOp  # noqa: E402
+from friction_tester.plc.axis_ops import HomeOp, OpBlocked, StrokeOp  # noqa: E402
 from friction_tester.plc.event_log import EventLog  # noqa: E402
 from friction_tester.plc.pc_flow import (PcController, derived_targets, evaluate_axis,  # noqa: E402
                                          target_problems)
@@ -382,6 +382,36 @@ def test_home_feedback_before_sequence_end_is_not_completion():
     assert early, "origin feedback never preceded the end of the sequence"
     r.run(3.0)
     assert r.sim.starts["shift"]["home"] == 1 and "HOME complete" in r.messages()[-1]
+
+
+def test_home_from_unhomed_power_up():
+    """Power-up: origin feedback OFF -> M00122 OFF -> permission OFF. Homing must still start."""
+    r = Rig()
+    r.confirm_params()
+    a = r.sim.axes["shift"]
+    a.origin_complete = False
+    r.step()
+    snap = read_snapshot(r.sim, now=r.clock())
+    assert snap.st("shift", "permitted") is False
+    r.ctl.submit("home", "shift")
+    r.until(lambda: not r.ctl.manual)
+    r.run(3.0)
+    assert r.sim.starts["shift"]["home"] == 1, "home must run exactly once (released after acceptance)"
+    assert "HOME complete" in r.messages()[-1]
+    assert a.origin_complete and a.seq["home"].word == 0
+    snap = read_snapshot(r.sim, now=r.clock())
+    assert snap.st("shift", "permitted") is True
+
+
+def test_home_refused_when_permission_off_but_origin_on():
+    r = Rig()
+    r.confirm_params()
+    a = r.sim.axes["shift"]
+    a.target, r.sim.stuck["shift"] = a.pos + 1000, True      # positioning module busy
+    r.step()
+    snap = read_snapshot(r.sim, now=r.clock())
+    with pytest.raises(OpBlocked, match="still busy"):
+        HomeOp("shift").start(snap, r.clock())
 
 
 def test_measurement_start_timeout_branch_is_a_failure():
