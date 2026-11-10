@@ -90,6 +90,8 @@ class ComPortPage(tk.Frame):
         self._saved_state = self._form_state()     # what the fields held when the page opened
 
     # ======================================================= unsaved edits
+    UNSAVED_TEXT = "The COM Port settings are not saved."
+
     def _form_state(self):
         """Every editable field as typed (PLC, loadcells, NI DAQ device and sensor rows)."""
         fields = [self.cb_plc_port, self.cb_plc_baud, self.ent_plc_station, self.ent_plc_bits,

@@ -52,3 +52,47 @@ def test_leaving_asks_and_no_keeps_the_page(page, monkeypatch):
     assert app_mod.App.confirm_leave(fake) is False and "not saved" in asked[0][1]
     page.save()
     assert app_mod.App.confirm_leave(fake) is True and len(asked) == 1
+
+
+@pytest.fixture
+def model_page(monkeypatch):
+    from friction_tester import db
+    from friction_tester.config import DEFAULT_SETTINGS
+    from friction_tester.ui import model_page as mp
+    monkeypatch.setattr(db, "init_database", lambda: None)
+    monkeypatch.setattr(db, "list_models", lambda *a, **k: [])
+    # database work runs in place (no worker thread: tests have no Tk main loop)
+    monkeypatch.setattr(mp.ModelSettingsPage, "_run",
+                        lambda self, work, _text, done=None: done(work()) if done else work())
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    root.withdraw()
+    p = mp.ModelSettingsPage(root, copy.deepcopy(DEFAULT_SETTINGS))
+    yield p
+    root.destroy()
+
+
+def test_model_page_unsaved_only_while_editing_and_changed(model_page):
+    from friction_tester import db
+    p = model_page
+    assert not p.unsaved_changes()                          # idle, empty form
+    p.new_model()
+    assert not p.unsaved_changes()                          # NEW alone changes nothing
+    p.fields["MM_MODEL"].insert(0, "M1")
+    assert p.unsaved_changes()
+    row = {c: None for c in p.fields}
+    row.update({"MM_MODEL": "M1", db.cond_col("SELECT", "STROKE"): 10})
+    p._rows = {"i1": row}
+    p.tree.insert("", "end", iid="i1", values=("M1",))
+    p.tree.selection_set("i1")
+    p._on_select()                                          # a model loaded = saved state
+    assert not p.unsaved_changes()
+    w = p.fields[db.cond_col("SELECT", "STROKE")]
+    w.delete(0, "end")
+    w.insert(0, "12")
+    assert p.unsaved_changes() and "model settings" in p.UNSAVED_TEXT
+    w.delete(0, "end")
+    w.insert(0, "10")
+    assert not p.unsaved_changes()

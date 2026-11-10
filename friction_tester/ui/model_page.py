@@ -240,6 +240,24 @@ class ModelSettingsPage(tk.Frame):
     def _clear_form(self):
         for col in self.fields:
             self._set_field(col, None)
+        self._mark_saved()
+
+    # ======================================================= unsaved edits
+    UNSAVED_TEXT = "The model settings are not saved."
+
+    def _form_state(self):
+        return {col: w.get().strip() for col, w in self.fields.items()}
+
+    def _mark_saved(self):
+        """The form now matches what is stored (opened, cleared, or saved)."""
+        self._saved_state = self._form_state()
+
+    def unsaved_changes(self):
+        """True while a new or edited model has fields that differ from what was loaded/saved."""
+        try:
+            return self._mode in ("new", "edit") and self._form_state() != self._saved_state
+        except tk.TclError:                         # widgets already destroyed
+            return False
 
     def _apply_mode(self):
         """Lock/unlock the form and enable only the buttons that make sense."""
@@ -297,6 +315,7 @@ class ModelSettingsPage(tk.Frame):
         self._apply_mode()
         for col in self.fields:
             self._set_field(col, row.get(col))
+        self._mark_saved()
 
     # ============================================================ database
     def _run(self, work, busy_text, done=None):
@@ -372,6 +391,7 @@ class ModelSettingsPage(tk.Frame):
         model = row["MM_MODEL"]
 
         def saved(_):
+            self._mark_saved()
             self._set_status(f"Saved {model}", theme.PASS)
             self.refresh(select=model)        # selecting it reopens it for editing
 

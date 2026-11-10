@@ -208,13 +208,14 @@ class App:
     LOGIN_PAGES = {"admin", "model_settings", "comport_settings"}
 
     def confirm_leave(self):
-        """Before leaving a page with unsaved edits (COM Port settings): ask first."""
+        """Before leaving a page with unsaved edits (COM Port, Model Settings): ask first."""
         page = self.page if self.page is not None and self.page.winfo_exists() else None
         if page is None or not getattr(page, "unsaved_changes", lambda: False)():
             return True
         return messagebox.askyesno(
             "Settings not saved",
-            "The COM Port settings are not saved.\n\nAre you sure you want to leave this page? "
+            f"{getattr(page, 'UNSAVED_TEXT', 'The settings are not saved.')}\n\n"
+            "Are you sure you want to leave this page? "
             "The changes will be lost.", icon="warning", default="no", parent=self.root)
 
     def load_page(self, page_name):
