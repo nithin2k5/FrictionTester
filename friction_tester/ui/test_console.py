@@ -26,7 +26,8 @@ import copy
 import csv
 import queue as _queue
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 from ..console_log import channel
 from .plot import LoadStrokePlot
 from ..config import save_settings
@@ -38,12 +39,12 @@ from ..plc import pc_profile as pp
 NO_DATA = "—"      # shown for a value that was not measured (a measured zero shows 0)
 
 
-VALUE_FG = "#ff6fd8"     # measured values (magenta, as on the LabVIEW screen)
-FIELD_BG = "#0d1016"
-PULL_COLOR = "#4fc3f7"
-PUSH_COLOR = "#ff5252"
-LAMP_OFF = "#24402a"
-LAMP_ON = "#3cff6a"
+VALUE_FG = "#0b3a75"     # measured values (dark blue, ISA-101: values stand out from labels)
+FIELD_BG = T.L_SUNKEN
+PULL_COLOR = "#1565c0"
+PUSH_COLOR = "#d84315"
+LAMP_OFF = "#c9d0d7"
+LAMP_ON = "#1fa83a"
 # Lamp name -> settings key (test.<cable>.<key>): cylinder position and part presence.
 SENSOR_LAMPS = {"Forward": "forward_sensor", "Backward": "backward_sensor", "Part": "part_sensor",
                 "Clamp ON": "clamp_on_sensor", "Clamp OFF": "clamp_off_sensor",
@@ -85,19 +86,19 @@ class CablePanel(tk.Frame):
         top = tk.Frame(self, bg=theme.PANEL)
         top.pack(fill="x", padx=10, pady=(6, 2))
         # OK / NG judgement, left of the title
-        self.judge = tk.Label(top, text="– – –", bg=FIELD_BG, fg="#4f8cff", font=_font(13, True),
-                              relief="solid", bd=1, width=5)
+        self.judge = tk.Label(top, text="– – –", bg=FIELD_BG, fg=T.L_TEXT_3, font=_font(13, True),
+                              relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER, width=5)
         self.judge.pack(side="left")
-        self.max_lbl = tk.Label(top, text="Max", bg=theme.PANEL, fg="white", font=_font(9, True))
+        self.max_lbl = tk.Label(top, text="Max", bg=theme.PANEL, fg=T.L_TEXT, font=_font(9, True))
         self.max_lbl.pack(side="left", padx=(8, 3))
         self.res = {"max": self._value(top, NO_DATA)}
         self.res["max"].pack(side="left")
-        self.max_unit = tk.Label(top, text="kgf", bg=theme.PANEL, fg="white", font=_font(8))
+        self.max_unit = tk.Label(top, text="kgf", bg=theme.PANEL, fg=T.L_TEXT, font=_font(8))
         self.max_unit.pack(side="left", padx=(2, 0))
-        tk.Button(top, text="Screen Save", command=self.save_screen, bg="#333", fg="white",
-                  activebackground="#444", activeforeground="white", bd=0, padx=8, pady=2,
+        tk.Button(top, text="Screen Save", command=self.save_screen, bg=T.L_NEUTRAL_BTN, fg="white",
+                  activebackground="#4b5560", activeforeground="white", bd=0, padx=8, pady=2,
                   font=_font(8, True), cursor="hand2").pack(side="right")
-        tk.Label(top, text=title, bg=theme.PANEL, fg="white", font=_font(14)).pack(side="left", expand=True)
+        tk.Label(top, text=title, bg=theme.PANEL, fg=T.L_TEXT, font=_font(14)).pack(side="left", expand=True)
         tk.Frame(self, bg=theme.BORDER, height=1).pack(fill="x", padx=8)
         self.model_lbl = tk.Label(self, text="", bg=theme.PANEL, fg=theme.HEADER_FG,
                                   font=_font(9, True), anchor="w")
@@ -125,7 +126,7 @@ class CablePanel(tk.Frame):
             tk.Label(live, text=label, bg=theme.PANEL, fg=theme.HEADER_FG, font=_font(9, True)).pack(side="left")
             self.live[key] = self._value(live, NO_DATA, width=6, size=11)
             self.live[key].pack(side="left", padx=(4, 2))
-            self.live_units[key] = tk.Label(live, text=unit, bg=theme.PANEL, fg="white", font=_font(8))
+            self.live_units[key] = tk.Label(live, text=unit, bg=theme.PANEL, fg=T.L_TEXT, font=_font(8))
             self.live_units[key].pack(side="left", padx=(0, 8))
 
     # ----------------------------------------------------------- widgets
@@ -133,12 +134,12 @@ class CablePanel(tk.Frame):
         # A 1px highlight ring like the entries', so result boxes and
         # condition boxes are the same height and line up row for row.
         return tk.Label(parent, text=text, bg=FIELD_BG, fg=VALUE_FG, font=_font(size), width=width,
-                        relief="solid", bd=1, highlightthickness=1, highlightbackground=theme.BORDER)
+                        relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER)
 
     def _entry(self, parent, value, width=5, fmt="{:g}"):
-        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify="center",
-                     font=_font(10), width=width, bd=1, relief="solid",
-                     highlightbackground=theme.BORDER, highlightthickness=1)
+        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg=T.L_TEXT, insertbackground=T.L_TEXT, justify="center",
+                     font=_font(10), width=width, bd=0, relief="flat",
+                     highlightbackground=T.L_BORDER, highlightcolor=T.L_PRIMARY, highlightthickness=1)
         if value is not None:                # empty (null) conditions stay blank
             e.insert(0, fmt.format(value))
         return e
@@ -146,7 +147,7 @@ class CablePanel(tk.Frame):
     def _caption(self, parent, text):
         return tk.Label(parent, text=text, bg=theme.PANEL, fg=theme.TITLE_FG, font=_font(9, True))
 
-    def _small(self, parent, text, fg="white"):
+    def _small(self, parent, text, fg=T.L_TEXT):
         return tk.Label(parent, text=text, bg=theme.PANEL, fg=fg, font=_font(8))
 
     def _show_model(self, model):
@@ -179,7 +180,7 @@ class CablePanel(tk.Frame):
         # below), so the two tables fill the panel width with no gap.
         cell = {"padx": 2, "pady": 1, "sticky": "ew"}
 
-        def text(col, row, t, bold=False, fg="white", sticky="w", **kw):
+        def text(col, row, t, bold=False, fg=T.L_TEXT, sticky="w", **kw):
             lbl = tk.Label(f, text=t, bg=theme.PANEL, fg=fg, font=_font(9 if bold else 8, bold))
             lbl.grid(row=row, column=col, sticky=sticky, **kw)
             return lbl
@@ -280,7 +281,7 @@ class CablePanel(tk.Frame):
         self.last_ok = None              # no judgement for the current test yet
         for lbl in self.res.values():
             lbl.config(text=NO_DATA)     # "—" = not measured, distinct from a measured 0
-        self.judge.config(text="– – –", fg="#4f8cff")
+        self.judge.config(text="– – –", fg=T.L_TEXT_3)
         self.plot.clear()
         self.plot.reset_view()
         self._gcap, self._gstroke = None, None
@@ -508,46 +509,46 @@ class TestConsolePage(tk.Frame):
         bar.pack(fill="x")
         tag = tk.Frame(bar, bg=theme.PANEL, highlightbackground=theme.TITLE_FG, highlightthickness=0)
         tag.pack(side="left")
-        self.screen_tag = tk.Label(tag, text="📈  Measurement Screen", bg=theme.PANEL, fg="white", font=_font(14),
+        self.screen_tag = tk.Label(tag, text="📈  Measurement Screen", bg=theme.PANEL, fg=T.L_TEXT, font=_font(14),
                                    padx=16, pady=6)
         self.screen_tag.pack()
         tk.Frame(tag, bg=theme.TITLE_FG, height=3).pack(fill="x")
 
-        tk.Button(bar, text="⏻  EXIT", command=self.exit_app, bg="#b71c1c", fg="white",
-                  activebackground="#d32f2f", activeforeground="white", bd=0, padx=16, pady=5,
+        tk.Button(bar, text="⏻  EXIT", command=self.exit_app, bg=T.L_NG, fg="white",
+                  activebackground="#a61f1f", activeforeground="white", bd=0, padx=16, pady=5,
                   font=_font(10, True), cursor="hand2").pack(side="right")
         tk.Button(bar, text="Save Conditions", command=self.save_conditions, bg=theme.SAVE, fg="white",
                   activebackground=theme.SAVE, activeforeground="white", bd=0, padx=14, pady=5,
                   font=_font(10, True), cursor="hand2").pack(side="right", padx=(0, 8))
-        tk.Button(bar, text="Clear Results", command=self.clear_results, bg="#333", fg="white",
-                  activebackground="#444", activeforeground="white", bd=0, padx=14, pady=5,
+        tk.Button(bar, text="Clear Results", command=self.clear_results, bg=T.L_NEUTRAL_BTN, fg="white",
+                  activebackground="#4b5560", activeforeground="white", bd=0, padx=14, pady=5,
                   font=_font(10, True), cursor="hand2").pack(side="right", padx=8)
-        self.manual_btn = tk.Button(bar, text="🕹  Manual", command=self.toggle_manual, bg="#2a313d", fg="white",
-                                    activebackground="#353d4b", activeforeground="white", bd=0, padx=14, pady=5,
+        self.manual_btn = tk.Button(bar, text="🕹  Manual", command=self.toggle_manual, bg=T.L_NEUTRAL_BTN, fg="white",
+                                    activebackground="#4b5560", activeforeground="white", bd=0, padx=14, pady=5,
                                     font=_font(10, True), cursor="hand2")
         self.manual_btn.pack(side="right", padx=(8, 0))
 
-        self.status = tk.Label(bar, text="System initialization", bg=FIELD_BG, fg="white", font=_font(11),
-                               relief="solid", bd=1, padx=12, pady=5, anchor="w")
+        self.status = tk.Label(bar, text="System initialization", bg=FIELD_BG, fg=T.L_TEXT, font=_font(11),
+                               relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER, padx=12, pady=5, anchor="w")
         self.status.pack(side="left", fill="x", expand=True, padx=16)
 
     # ---------------------------------------------------- shared PLC cycle
     def _build_plc_strip(self, parent):
         """One line of live PLC cycle state above the cable panels."""
-        strip = tk.Frame(parent, bg="#10141b", highlightbackground=theme.BORDER, highlightthickness=1)
+        strip = tk.Frame(parent, bg=T.L_SURFACE, highlightbackground=theme.BORDER, highlightthickness=1)
         strip.pack(fill="x", pady=(0, 4))
-        self.plc_badge = tk.Label(strip, text="PLC", bg="#10141b", fg=theme.MUTED, font=_font(9, True), padx=8)
+        self.plc_badge = tk.Label(strip, text="PLC", bg=T.L_SURFACE, fg=theme.MUTED, font=_font(9, True), padx=8)
         self.plc_badge.pack(side="left")
-        self.plc_strip = tk.Label(strip, text="Connecting…", bg="#10141b", fg="#c9d1dc", font=_font(9),
+        self.plc_strip = tk.Label(strip, text="Connecting…", bg=T.L_SURFACE, fg=T.L_TEXT_2, font=_font(9),
                                   anchor="w")
         self.plc_strip.pack(side="left", fill="x", expand=True)
-        self.plc_mode = tk.Label(strip, text="", bg="#10141b", fg=theme.MUTED, font=_font(8, True), padx=8)
+        self.plc_mode = tk.Label(strip, text="", bg=T.L_SURFACE, fg=theme.MUTED, font=_font(8, True), padx=8)
         self.plc_mode.pack(side="right")
         if self.kd:                              # second line: X axis / homing (plc kd.pdf)
-            axis = tk.Frame(parent, bg="#10141b", highlightbackground=theme.BORDER, highlightthickness=1)
+            axis = tk.Frame(parent, bg=T.L_SURFACE, highlightbackground=theme.BORDER, highlightthickness=1)
             axis.pack(fill="x", pady=(0, 4))
-            tk.Label(axis, text="AXIS", bg="#10141b", fg=theme.MUTED, font=_font(9, True), padx=8).pack(side="left")
-            self.plc_axis = tk.Label(axis, text="Connecting…", bg="#10141b", fg="#c9d1dc", font=_font(9),
+            tk.Label(axis, text="AXIS", bg=T.L_SURFACE, fg=theme.MUTED, font=_font(9, True), padx=8).pack(side="left")
+            self.plc_axis = tk.Label(axis, text="Connecting…", bg=T.L_SURFACE, fg=T.L_TEXT_2, font=_font(9),
                                      anchor="w")
             self.plc_axis.pack(side="left", fill="x", expand=True)
 
@@ -871,7 +872,7 @@ class TestConsolePage(tk.Frame):
         self._set_flow(state)
 
     def message(self, text, level="info"):
-        color = {"pass": theme.PASS, "fail": theme.FAIL, "busy": theme.BUSY, "info": theme.UPDATE}.get(level, "white")
+        color = {"pass": theme.PASS, "fail": theme.FAIL, "busy": theme.BUSY, "info": theme.UPDATE}.get(level, T.L_TEXT)
         self._set_status(text, color, hold=10 if level == "fail" else 4)
 
     def clear_panels(self, indices):
@@ -961,7 +962,7 @@ class TestConsolePage(tk.Frame):
             w.writerow([record["time"], record["model"], record["type"], record["label_select"],
                         record["label_shift"], record["verdict"], record["verdict_basis"], stages])
 
-    def _small_button(self, parent, text, command, bg="#e0e0e0", fg="black", width=12):
+    def _small_button(self, parent, text, command, bg=T.L_SURFACE_2, fg=T.L_TEXT, width=12):
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=bg,
                          activeforeground=fg, bd=0, width=width, pady=3, font=_font(9, True), cursor="hand2")
 
@@ -977,14 +978,14 @@ class TestConsolePage(tk.Frame):
             bottom.columnconfigure(i, weight=1, uniform="panel")
 
             # Actuator Control: servo on/off, alarm reset, move origin (PLC bits)
-            act = tk.LabelFrame(box, text=" Actuator Control ", bg=theme.PANEL, fg="white", font=_font(9),
+            act = tk.LabelFrame(box, text=" Actuator Control ", bg=theme.PANEL, fg=T.L_TEXT, font=_font(9),
                                 bd=1, relief="solid", labelanchor="n", padx=6, pady=3)
             act.pack(side="left", padx=(8, 6), pady=4)
             sbtn = self._small_button(act, "⚙ SERVO ON", lambda k=key, n=i: self.toggle_servo(k, n), width=11)
             sbtn.pack(side="left", padx=(0, 4))
             self.servo_btns.append(sbtn)
             self._small_button(act, "ALARM RESET", lambda k=key: self.plc_pulse(f"alarm_reset_{k}", "Alarm reset"),
-                               bg="#4a505c", fg="white", width=11).pack(side="left", padx=(0, 4))
+                               bg=T.L_NEUTRAL_BTN, fg="white", width=11).pack(side="left", padx=(0, 4))
             self._small_button(act, "↺ Move Origin", lambda k=key: self.plc_pulse(f"origin_{k}", "Move origin"),
                                width=11).pack(side="left")
 
@@ -995,24 +996,24 @@ class TestConsolePage(tk.Frame):
                 row = tk.Frame(sens, bg=theme.PANEL)
                 row.grid(row=j % LAMP_ROWS, column=j // LAMP_ROWS, sticky="w", pady=1, padx=(0, 8))
                 cv = tk.Canvas(row, width=16, height=16, bg=theme.PANEL, highlightthickness=0)
-                dot = cv.create_oval(2, 2, 14, 14, fill=LAMP_OFF, outline="#111")
+                dot = cv.create_oval(2, 2, 14, 14, fill=LAMP_OFF, outline=T.L_BORDER)
                 cv.pack(side="left")
-                tk.Label(row, text=name, bg=theme.PANEL, fg="#4fa3ff", font=_font(9)).pack(side="left", padx=3)
+                tk.Label(row, text=name, bg=theme.PANEL, fg=T.L_TEXT, font=_font(9)).pack(side="left", padx=3)
                 lamps[name] = (cv, dot)
             self.lamps.append(lamps)
 
             clamp = tk.Frame(box, bg=theme.PANEL)
             clamp.pack(side="left", padx=4)
-            tk.Label(clamp, text=f"{short}-Clamp", bg=theme.PANEL, fg="white", font=_font(9)).pack(anchor="w")
+            tk.Label(clamp, text=f"{short}-Clamp", bg=theme.PANEL, fg=T.L_TEXT, font=_font(9)).pack(anchor="w")
             row = tk.Frame(clamp, bg=theme.PANEL)
             row.pack(anchor="w")
             sp = tk.Spinbox(row, from_=0, to=999999, width=6, justify="center", font=_font(10),
-                            bg=FIELD_BG, fg=VALUE_FG, buttonbackground="#333", relief="solid", bd=1,
-                            insertbackground="white")
+                            bg=FIELD_BG, fg=VALUE_FG, buttonbackground=T.L_SURFACE_2, relief="flat", bd=1, highlightthickness=1, highlightbackground=T.L_BORDER,
+                            insertbackground=T.L_TEXT)
             sp.delete(0, "end")
             sp.insert(0, str(cfg.get("clamp_count", 0)))
             sp.pack(side="left")
-            tk.Label(row, text="times", bg=theme.PANEL, fg="white", font=_font(8)).pack(side="left", padx=3)
+            tk.Label(row, text="times", bg=theme.PANEL, fg=T.L_TEXT, font=_font(8)).pack(side="left", padx=3)
             self.clamps.append(sp)
 
         # Machine-wide inputs/outputs (test.machine_lamps), read with the cable lamps;
@@ -1022,24 +1023,24 @@ class TestConsolePage(tk.Frame):
         if common:
             box = tk.Frame(bottom, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
             box.grid(row=0, column=len(self.SIDES), sticky="ns", padx=(8, 0))
-            tk.Label(box, text="Machine", bg=theme.PANEL, fg="white", font=_font(9)).grid(
+            tk.Label(box, text="Machine", bg=theme.PANEL, fg=T.L_TEXT, font=_font(9)).grid(
                 row=0, column=0, rowspan=LAMP_ROWS, sticky="n", padx=(6, 2), pady=4)
             for j, name in enumerate(common):
                 row = tk.Frame(box, bg=theme.PANEL)
                 row.grid(row=j % LAMP_ROWS, column=1 + j // LAMP_ROWS, sticky="w", padx=(6, 6), pady=1)
                 cv = tk.Canvas(row, width=16, height=16, bg=theme.PANEL, highlightthickness=0)
-                dot = cv.create_oval(2, 2, 14, 14, fill=LAMP_OFF, outline="#111")
+                dot = cv.create_oval(2, 2, 14, 14, fill=LAMP_OFF, outline=T.L_BORDER)
                 cv.pack(side="left")
-                tk.Label(row, text=name, bg=theme.PANEL, fg="#4fa3ff", font=_font(9)).pack(side="left", padx=3)
+                tk.Label(row, text=name, bg=theme.PANEL, fg=T.L_TEXT, font=_font(9)).pack(side="left", padx=3)
                 self.machine_lamps[name] = (cv, dot)
 
     # ------------------------------------------------------- side panel
     # Same card style as the COM Setting page: a title strip with an orange
     # accent, a dark body, large coloured number tiles.
     SIDE_W = 270
-    CARD = "#141922"
-    CARD_HEAD = "#1b212c"
-    TILE = "#0d1117"
+    CARD = T.L_SURFACE
+    CARD_HEAD = T.L_SURFACE_2
+    TILE = T.L_SUNKEN
 
     def _side_card(self, parent, title, right=None, expand=False):
         """A card with a title strip; `right` builds an optional widget on the strip.
@@ -1049,7 +1050,7 @@ class TestConsolePage(tk.Frame):
         head = tk.Frame(card, bg=self.CARD_HEAD)
         head.pack(fill="x")
         tk.Frame(head, bg=theme.TITLE_FG, width=3).pack(side="left", fill="y")
-        tk.Label(head, text=title.upper(), bg=self.CARD_HEAD, fg="#c9d1dc", font=_font(8, True)).pack(
+        tk.Label(head, text=title.upper(), bg=self.CARD_HEAD, fg=T.L_TEXT_2, font=_font(8, True)).pack(
             side="left", padx=8, pady=2)
         if right:
             right(head).pack(side="right", padx=6)
@@ -1060,11 +1061,11 @@ class TestConsolePage(tk.Frame):
     def _link(self, parent, text, command, fg=theme.HEADER_FG):
         """A small flat text button for secondary actions (reset, open)."""
         return tk.Button(parent, text=text, command=command, bg=parent["bg"], fg=fg, activebackground=parent["bg"],
-                         activeforeground="white", bd=0, font=_font(8, True), cursor="hand2", padx=2, pady=0)
+                         activeforeground=T.L_PRIMARY_DK, bd=0, font=_font(8, True), cursor="hand2", padx=2, pady=0)
 
     def _tile(self, parent, caption, value, color, size=18):
         """A number tile: big value with a small caption under it. Returns the value label."""
-        t = tk.Frame(parent, bg=self.TILE, highlightbackground="#232a36", highlightthickness=1)
+        t = tk.Frame(parent, bg=self.TILE, highlightbackground=T.L_BORDER_2, highlightthickness=1)
         val = tk.Label(t, text=str(value), bg=self.TILE, fg=color, font=_font(size, True))
         val.pack(pady=(1, 0))
         tk.Label(t, text=caption, bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 2))
@@ -1087,9 +1088,9 @@ class TestConsolePage(tk.Frame):
         for col in range(3):
             ctl.columnconfigure(col, weight=1, uniform="ctl")
         for col, (text, cmd, bg, abg) in enumerate((
-                ("▶ RUN", self.start_flow, theme.PASS, "#43a047"),
-                ("■ STOP", self.stop_flow, theme.FAIL, "#e53935"),
-                ("↺ ORIGIN", lambda: self.plc_pulse("move_origin", "Move origin"), "#2a313d", "#353d4b"))):
+                ("▶ RUN", self.start_flow, theme.PASS, "#256b29"),
+                ("■ STOP", self.stop_flow, theme.FAIL, "#a61f1f"),
+                ("↺ ORIGIN", lambda: self.plc_pulse("move_origin", "Move origin"), T.L_NEUTRAL_BTN, "#4b5560"))):
             tk.Button(ctl, text=text, command=cmd, bg=bg, fg="white", activebackground=abg, activeforeground="white",
                       bd=0, pady=7, font=_font(11, True), cursor="hand2").grid(
                 row=1, column=col, sticky="nsew", padx=(0 if col == 0 else 3, 0))
@@ -1097,25 +1098,25 @@ class TestConsolePage(tk.Frame):
         # ---- Model -----------------------------------------------------
         # The loaded model (name / type) in the box, its part number on the title strip
         def part_label(head):
-            self.part_lbl = tk.Label(head, text="Part —", bg=self.CARD_HEAD, fg="#c9d1dc", font=_font(8))
+            self.part_lbl = tk.Label(head, text="Part —", bg=self.CARD_HEAD, fg=T.L_TEXT_2, font=_font(8))
             return self.part_lbl
 
         body = self._side_card(side, "Model", right=part_label)
         self.current_model = tk.Label(body, text=self.settings["test"]["select"].get("model") or "No model loaded",
                                       bg=self.TILE, fg=theme.TITLE_FG, font=_font(12, True), anchor="w",
-                                      padx=8, pady=3, highlightbackground="#232a36", highlightthickness=1)
+                                      padx=8, pady=3, highlightbackground=T.L_BORDER_2, highlightthickness=1)
         self.current_model.pack(fill="x", pady=(0, 4))
         # Model number: type or scan it, or pick it from the drop-down list of models,
         # then Enter or MODEL CHANGE fetches it from the database.
         mrow = tk.Frame(body, bg=self.CARD)
         mrow.pack(fill="x")
         tk.Label(mrow, text="MODEL NO", bg=self.CARD, fg=theme.MUTED, font=_font(8, True)).pack(side="left")
-        self.model_entry = ttk.Combobox(mrow, values=[], font=_font(10), height=15)
+        self.model_entry = ttk.Combobox(mrow, values=[], font=_font(10), height=15, style="L.TCombobox")
         self.model_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
         self.model_entry.bind("<Return>", lambda _e: self.model_change())
         self._models = []
         tk.Button(body, text="MODEL CHANGE", command=self.model_change, bg=theme.UPDATE, fg="white",
-                  activebackground="#1e88e5", activeforeground="white", bd=0, pady=4, font=_font(9, True),
+                  activebackground=T.L_PRIMARY_DK, activeforeground="white", bd=0, pady=4, font=_font(9, True),
                   cursor="hand2").pack(fill="x", pady=(4, 0))
 
         # ---- Production: target / complete + progress bar ----------------
@@ -1123,11 +1124,11 @@ class TestConsolePage(tk.Frame):
         row = tk.Frame(body, bg=self.CARD)
         row.pack(fill="x")
         row.columnconfigure((0, 1), weight=1, uniform="prod")
-        tgt = tk.Frame(row, bg=self.TILE, highlightbackground="#232a36", highlightthickness=1)
+        tgt = tk.Frame(row, bg=self.TILE, highlightbackground=T.L_BORDER_2, highlightthickness=1)
         tgt.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
         # Plain text box, whole numbers only; empty = target not set (RUN refuses to start)
-        self.target = tk.Entry(tgt, width=7, justify="center", font=_font(14, True), bg=self.TILE, fg="white",
-                               relief="flat", bd=0, insertbackground="white", highlightthickness=1,
+        self.target = tk.Entry(tgt, width=7, justify="center", font=_font(14, True), bg=self.TILE, fg=T.L_TEXT,
+                               relief="flat", bd=0, insertbackground=T.L_TEXT, highlightthickness=1,
                                highlightbackground=self.TILE, highlightcolor=theme.UPDATE)
         digits_only = self.target.register(lambda p: p == "" or (p.isdigit() and len(p) <= 6))
         self.target.configure(validate="key", validatecommand=(digits_only, "%P"))
@@ -1138,7 +1139,7 @@ class TestConsolePage(tk.Frame):
         self.target.bind("<FocusOut>", lambda _e: self._discard_target_edit())
         self.target.pack(pady=(1, 0), padx=6, fill="x")
         tk.Label(tgt, text="TARGET", bg=self.TILE, fg=theme.MUTED, font=_font(7, True)).pack(pady=(0, 2))
-        t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], "#4fa3ff", size=14)
+        t, self.lbl_complete = self._tile(row, "COMPLETE", c["complete"], T.L_PRIMARY, size=14)
         t.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
         prow = tk.Frame(body, bg=self.CARD)
         prow.pack(fill="x", pady=(4, 0))
@@ -1160,8 +1161,8 @@ class TestConsolePage(tk.Frame):
         # Cumulative counts on the left, the reset links on the right of the same line
         tot = tk.Frame(body, bg=self.CARD)
         tot.pack(fill="x", pady=(3, 0))
-        self._link(tot, "↺ TOTAL", lambda: self.reset_counts("total"), fg="#4fa3ff").pack(side="right")
-        self._link(tot, "↺ TODAY", lambda: self.reset_counts("day"), fg="#4fa3ff").pack(side="right", padx=(0, 6))
+        self._link(tot, "↺ TOTAL", lambda: self.reset_counts("total"), fg=T.L_PRIMARY).pack(side="right")
+        self._link(tot, "↺ TODAY", lambda: self.reset_counts("day"), fg=T.L_PRIMARY).pack(side="right", padx=(0, 6))
         tk.Label(tot, text="Total", bg=self.CARD, fg=theme.MUTED, font=_font(8)).pack(side="left")
         ok_total = tk.Label(tot, text=str(c["ok_total"]), bg=self.CARD, fg=theme.PASS, font=_font(10, True))
         ok_total.pack(side="left", padx=(8, 0))
@@ -1175,10 +1176,10 @@ class TestConsolePage(tk.Frame):
         # Title strip: saved counts per cable, then OPEN
         def saved_head(head):
             f = tk.Frame(head, bg=self.CARD_HEAD)
-            self._link(f, "📂 OPEN", self.open_saved, fg="#4fa3ff").pack(side="right", padx=(10, 0))
+            self._link(f, "📂 OPEN", self.open_saved, fg=T.L_PRIMARY).pack(side="right", padx=(10, 0))
             self.lbl_saved = []
             for name, value in (("SH", c["saved_shift"]), ("SL", c["saved_select"])):   # SHIFT / SELECT
-                lbl = tk.Label(f, text=str(value), bg=self.CARD_HEAD, fg="white", font=_font(9, True))
+                lbl = tk.Label(f, text=str(value), bg=self.CARD_HEAD, fg=T.L_TEXT, font=_font(9, True))
                 lbl.pack(side="right")
                 tk.Label(f, text=name, bg=self.CARD_HEAD, fg=theme.MUTED, font=_font(7, True)).pack(
                     side="right", padx=(8, 3))
@@ -1186,8 +1187,8 @@ class TestConsolePage(tk.Frame):
             return f
 
         body = self._side_card(side, "Saved", right=saved_head)
-        self.save_dir = tk.Entry(body, bg=self.TILE, fg="#d6dbe4", insertbackground="white", font=_font(9),
-                                 relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36")
+        self.save_dir = tk.Entry(body, bg=self.TILE, fg=T.L_TEXT, insertbackground=T.L_TEXT, font=_font(9),
+                                 relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER_2)
         self.save_dir.insert(0, self.settings["test"]["save_dir"])
         self.save_dir.bind("<FocusOut>", lambda _e: self._save_counters())
         self.save_dir.pack(fill="x", ipady=2)
@@ -1199,8 +1200,8 @@ class TestConsolePage(tk.Frame):
         for r, (key, label) in enumerate((("select", "SELECT"), ("shift", "SHIFT"))):
             tk.Label(body, text=label, bg=self.CARD, fg=theme.MUTED, font=_font(8, True), width=7,
                      anchor="w").grid(row=r, column=0, sticky="w", pady=1)
-            e = tk.Entry(body, bg=self.TILE, fg="white", insertbackground="white", font=_font(10),
-                         relief="flat", bd=0, highlightthickness=1, highlightbackground="#232a36",
+            e = tk.Entry(body, bg=self.TILE, fg=T.L_TEXT, insertbackground=T.L_TEXT, font=_font(10),
+                         relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER_2,
                          highlightcolor=theme.UPDATE)
             e.grid(row=r, column=1, sticky="ew", pady=1, ipady=1)
             # A barcode scanner types the label and ends with Enter.
@@ -1221,7 +1222,7 @@ class TestConsolePage(tk.Frame):
         if w <= 1 or target <= 0:
             return
         frac = min(done / target, 1.0)
-        cv.create_rectangle(0, 0, int(w * frac), 8, fill=theme.PASS if frac >= 1 else "#4fa3ff", width=0)
+        cv.create_rectangle(0, 0, int(w * frac), 8, fill=theme.PASS if frac >= 1 else T.L_PRIMARY, width=0)
 
     # ----------------------------------------------------------- actions
     def save_conditions(self):
@@ -1389,8 +1390,8 @@ class TestConsolePage(tk.Frame):
         for n, btn in enumerate(self.servo_btns):
             on = self._servo_on[n]
             btn.config(text="⚙ SERVO OFF" if on else "⚙ SERVO ON",
-                       bg=theme.PASS if on else "#e0e0e0", activebackground=theme.PASS if on else "#e0e0e0",
-                       fg="white" if on else "black")
+                       bg=theme.PASS if on else T.L_SURFACE_2, activebackground=theme.PASS if on else T.L_SURFACE_2,
+                       fg="white" if on else T.L_TEXT)
 
     # ------------------------------------------------------- model set
     def _load_model_list(self):
@@ -1562,7 +1563,7 @@ class TestConsolePage(tk.Frame):
         if self._skip_scan():
             expect = None
         for key, e in self.scan_entries.items():
-            e.config(highlightbackground=theme.TITLE_FG if key == expect else "#232a36",
+            e.config(highlightbackground=theme.TITLE_FG if key == expect else T.L_BORDER_2,
                      highlightthickness=2 if key == expect else 1)
         if expect:
             self.scan_entries[expect].focus_set()
@@ -1693,7 +1694,7 @@ class TestConsolePage(tk.Frame):
         self._pending.clear()
         for p in self.panels:
             if p.judge.cget("text") == "TEST":
-                p.judge.config(text="– – –", fg="#4f8cff")
+                p.judge.config(text="– – –", fg=T.L_TEXT_3)
         self._set_flow("idle")
         self._set_status("Test stopped", theme.BUSY)
         if self.settings["test"]["commands"].get("test_stop", "").strip() and self.plc.is_open:
@@ -1918,7 +1919,7 @@ class TestConsolePage(tk.Frame):
         self._pending.clear()
         for p in self.panels:
             if p.judge.cget("text") == "TEST":
-                p.judge.config(text="– – –", fg="#4f8cff")
+                p.judge.config(text="– – –", fg=T.L_TEXT_3)
         self._set_flow("idle")
         self._set_status(message, theme.FAIL, hold=15)
 
@@ -2038,7 +2039,7 @@ class TestConsolePage(tk.Frame):
         else:
             self.show_manual()
 
-    def _set_status(self, text, color="white", hold=3):
+    def _set_status(self, text, color=T.L_TEXT, hold=3):
         """Show an action's message; polling won't overwrite it for `hold` seconds."""
         if text and text != getattr(self, "_last_status", None):
             _status.info(text)

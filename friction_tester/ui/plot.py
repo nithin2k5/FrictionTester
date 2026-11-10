@@ -7,12 +7,13 @@ same spirit as the LabVIEW graph it replaces.
 import math
 import tkinter as tk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 
-GRID = "#2a3140"
-AXIS = "#8fa3bf"
-ZERO = "#5a6b85"
-PLOT_BG = "#0d1016"
+GRID = "#e1e5ea"
+AXIS = T.L_TEXT_2
+ZERO = "#9aa5b1"
+PLOT_BG = T.L_SURFACE
 
 
 def _nice_step(span, target=10):
@@ -47,8 +48,8 @@ class LoadStrokePlot(tk.Frame):
                           ("Fit", self.fit_data),
                           ("◄", lambda: self.pan(-0.1, 0)), ("►", lambda: self.pan(0.1, 0)),
                           ("▲", lambda: self.pan(0, 0.1)), ("▼", lambda: self.pan(0, -0.1))):
-            tk.Button(bar, text=text, command=cmd, bg="#222833", fg="white", activebackground="#2f3747",
-                      activeforeground="white", bd=0, width=3, font=(theme.FONT, 10, "bold"),
+            tk.Button(bar, text=text, command=cmd, bg=T.L_SURFACE_2, fg=T.L_TEXT, activebackground=T.L_BORDER_2,
+                      activeforeground=T.L_TEXT, bd=0, width=3, font=(theme.FONT, 10, "bold"),
                       cursor="hand2").pack(side="left", padx=(0, 3))
 
     # ---------------------------------------------------------------- data
@@ -154,8 +155,8 @@ class LoadStrokePlot(tk.Frame):
                         c.create_text(px, b + 10, text=f"{v:.1f}", anchor="n", fill=AXIS, font=font)
                 v += step
         c.create_rectangle(l, t, r, b, outline=AXIS)
-        c.create_text((l + r) / 2, h - 4, text=self.xlabel, anchor="s", fill="white", font=(theme.FONT, 9))
-        c.create_text(12, (t + b) / 2, text=self.ylabel, angle=90, fill="white", font=(theme.FONT, 9))
+        c.create_text((l + r) / 2, h - 4, text=self.xlabel, anchor="s", fill=T.L_TEXT, font=(theme.FONT, 9))
+        c.create_text(12, (t + b) / 2, text=self.ylabel, angle=90, fill=T.L_TEXT, font=(theme.FONT, 9))
 
         # Traces, clipped to the plot area
         for s in self.series.values():
@@ -171,7 +172,7 @@ class LoadStrokePlot(tk.Frame):
         # Legend, top right
         y = t + 8
         for name, s in self.series.items():
-            c.create_rectangle(r - 86, y - 7, r - 8, y + 7, fill="#1c2230", outline=GRID)
-            c.create_text(r - 80, y, text=name, anchor="w", fill="white", font=font)
+            c.create_rectangle(r - 86, y - 7, r - 8, y + 7, fill=T.L_SURFACE, outline=T.L_BORDER)
+            c.create_text(r - 80, y, text=name, anchor="w", fill=T.L_TEXT, font=font)
             c.create_line(r - 36, y, r - 14, y, fill=s["color"], width=2)
             y += 17

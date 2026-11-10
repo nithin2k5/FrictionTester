@@ -50,6 +50,29 @@ NAV_FG = "#d3dbe3"
 NAV_DIM = "#93a1b0"
 
 
+class light:
+    """The dark theme's names with light values: a page on the light theme imports
+    `from .theme import light as theme`, so theme.PANEL, theme.PASS ... are light."""
+    BG = L_BG
+    PANEL = L_SURFACE
+    BORDER = L_BORDER
+    BAND = (L_SURFACE, L_SUNKEN)
+    BAND_HOVER = L_SELECT
+    HEADER_FG = L_TEXT_2
+    TITLE_FG = L_PRIMARY        # section captions / accent bars
+    ENTRY_BG = L_SURFACE
+    MUTED = L_TEXT_3
+    PASS = L_OK
+    FAIL = L_NG
+    BUSY = L_WARN
+    SAVE = L_OK
+    UPDATE = L_PRIMARY
+    TEST_IDLE = L_TEXT
+    FONT = FONT
+    TEXT = L_TEXT
+    TEXT_2 = L_TEXT_2
+
+
 def apply_style(root):
     style = ttk.Style(root)
     style.theme_use("clam")

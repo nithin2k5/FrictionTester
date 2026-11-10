@@ -24,21 +24,22 @@ only what the PLC program accepts from the PC:
 
 import tkinter as tk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 from ..plc import pc_profile as pp
 
 # Same look as the Test Console: dark panels, side-panel cards, magenta values.
-CARD = "#141922"
-CARD_HEAD = "#1b212c"
-FIELD_BG = "#0d1016"
-VALUE_FG = "#ff6fd8"
-LABEL_FG = "#c9d1dc"
-LINK_FG = "#4fa3ff"
-LAMP_OFF = "#24402a"
-LAMP_GREEN_ON = "#3cff6a"
+CARD = T.L_SURFACE
+CARD_HEAD = T.L_SURFACE_2
+FIELD_BG = T.L_SURFACE
+VALUE_FG = "#0b3a75"
+LABEL_FG = T.L_TEXT_2
+LINK_FG = T.L_TEXT
+LAMP_OFF = "#c9d0d7"
+LAMP_GREEN_ON = "#1fa83a"
 LAMP_RED_ON = theme.FAIL
-BTN_BG, BTN_ACTIVE = "#2a313d", "#353d4b"
-BTN_OFF_BG = "#1c2029"
+BTN_BG, BTN_ACTIVE = T.L_SURFACE_2, T.L_BORDER_2
+BTN_OFF_BG = T.L_SUNKEN
 NO_DATA = "—"
 
 # (lamp text, source, colour when ON). Source "lamp:<name>" = Test Console cable lamp,
@@ -96,8 +97,8 @@ class ManualView(tk.Frame):
             row.columnconfigure(i, weight=1, uniform="manual")
         foot = tk.Frame(self, bg=theme.BG)
         foot.pack(fill="x", pady=(14, 0))
-        tk.Button(foot, text="↩  Return", command=page.show_measurement, bg="#333", fg="white",
-                  activebackground="#444", activeforeground="white", bd=0, padx=22, pady=5,
+        tk.Button(foot, text="↩  Return", command=page.show_measurement, bg=T.L_NEUTRAL_BTN, fg="white",
+                  activebackground="#4b5560", activeforeground="white", bd=0, padx=22, pady=5,
                   font=_font(10, True), cursor="hand2").pack()
         self.refresh_params()
 
@@ -111,9 +112,10 @@ class ManualView(tk.Frame):
     VALUE_LABEL_W = 7        # Stroke / Load labels
 
     def _button(self, parent, text, command, width=18, off=False):
-        bg, fg = (BTN_OFF_BG, theme.MUTED) if off else (BTN_BG, "white")
+        bg, fg = (BTN_OFF_BG, theme.MUTED) if off else (BTN_BG, T.L_TEXT)
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=BTN_ACTIVE,
-                         activeforeground="white", bd=0, width=width, pady=4, font=_font(9, True), cursor="hand2")
+                         activeforeground=T.L_TEXT, bd=0, width=width, pady=4,
+                         highlightbackground=T.L_BORDER, highlightthickness=1, font=_font(9, True), cursor="hand2")
 
     def _label(self, parent, text, fg=LABEL_FG, size=10, bold=False, width=None, anchor="center"):
         kw = {"width": width} if width else {}
@@ -121,8 +123,9 @@ class ManualView(tk.Frame):
 
     def _field(self, parent, axis, key):
         common = dict(width=7, justify="center", font=_font(11), bg=FIELD_BG, fg=VALUE_FG,
-                      relief="solid", bd=1, insertbackground="white")
-        w = tk.Entry(parent, highlightthickness=0, **common)
+                      relief="flat", bd=0, insertbackground=T.L_TEXT)
+        w = tk.Entry(parent, highlightthickness=1, highlightbackground=T.L_BORDER, highlightcolor=T.L_PRIMARY,
+                     **common)
         w.bind("<Return>", lambda _e: self._param_edited(axis, key))
         w.bind("<FocusOut>", lambda _e: self._param_edited(axis, key))
         self.fields[(axis, key)] = w
@@ -144,15 +147,15 @@ class ManualView(tk.Frame):
         R = dict(column=1, sticky="w", padx=(24, 0), pady=PAD)
 
         # rows 0-7: POSITION SET + JOG Control | Actuator Status
-        self._label(g, "POSITION SET", fg="white", size=10).grid(row=0, **L)
-        self._label(g, "Actuator Status", fg="white", size=10, anchor="w").grid(row=0, **R)
+        self._label(g, "POSITION SET", fg=T.L_TEXT, size=10).grid(row=0, **L)
+        self._label(g, "Actuator Status", fg=T.L_TEXT, size=10, anchor="w").grid(row=0, **R)
         for r, (key, label) in enumerate(PARAM_FIELDS, start=1):
             f = self._row(g)
             self._label(f, label, fg=LINK_FG, width=lw, anchor="e").pack(side="left", padx=(0, 8))
             self._field(f, axis, key).pack(side="left")
             self._label(f, "mm", fg=theme.HEADER_FG, size=9, width=4, anchor="w").pack(side="left", padx=(6, 0))
             f.grid(row=r, **L)
-        self._label(g, "JOG Control", fg="white", size=10).grid(row=4, column=0, pady=(16, PAD))
+        self._label(g, "JOG Control", fg=T.L_TEXT, size=10).grid(row=4, column=0, pady=(16, PAD))
         f = self._row(g)                                # Low / High headings over their fields
         self._label(f, "Low", fg=theme.HEADER_FG, size=9).grid(row=0, column=1)
         self._label(f, "High", fg=theme.HEADER_FG, size=9).grid(row=0, column=2)
@@ -163,7 +166,7 @@ class ManualView(tk.Frame):
         f = self._row(g)
         for text, op in JOG_BUTTONS:             # hold to jog, release to stop
             b = tk.Button(f, text=text, bg=BTN_BG, fg=LINK_FG, activebackground=BTN_ACTIVE,
-                          activeforeground="white", bd=0, width=4, pady=2, font=_font(15, True), cursor="hand2")
+                          activeforeground=T.L_TEXT, bd=0, width=4, pady=2, font=_font(15, True), cursor="hand2")
             b.bind("<ButtonPress-1>", lambda _e, o=op: self.jog_press(axis, o))
             b.bind("<ButtonRelease-1>", lambda _e: self.jog_release())
             b.bind("<Leave>", lambda _e: self.jog_release())
@@ -175,7 +178,7 @@ class ManualView(tk.Frame):
         for text, _src, colour in STATUS_LAMPS:
             f = self._row(col)
             cv = tk.Canvas(f, width=18, height=18, bg=theme.PANEL, highlightthickness=0)
-            dot = cv.create_oval(2, 2, 16, 16, fill=LAMP_OFF, outline="#111")
+            dot = cv.create_oval(2, 2, 16, 16, fill=LAMP_OFF, outline=T.L_BORDER)
             cv.pack(side="left")
             self._label(f, text, fg=LINK_FG, anchor="w").pack(side="left", padx=(8, 0))
             f.pack(anchor="w", pady=4)
@@ -197,7 +200,7 @@ class ManualView(tk.Frame):
             f = self._row(g)
             self._label(f, label, fg=LINK_FG, width=self.VALUE_LABEL_W, anchor="e").pack(side="left", padx=(0, 8))
             v = tk.Label(f, text=NO_DATA, width=9, bg=FIELD_BG, fg=VALUE_FG, font=_font(12, True),
-                         relief="solid", bd=1)
+                         relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER)
             v.pack(side="left")
             self._label(f, unit, fg=theme.HEADER_FG, size=9, width=4, anchor="w").pack(side="left", padx=(6, 0))
             f.grid(row=r, **R)
