@@ -14,11 +14,12 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 from .. import auth, db
 
 CARD_BG = theme.PANEL
-HEAD_BG = "#171c25"
+HEAD_BG = T.L_SURFACE_2
 HISTORY_LIMIT = 200
 PAGE_NAMES = {"admin": "Admin", "model_settings": "Model Settings", "comport_settings": "COM Setting"}
 
@@ -34,7 +35,7 @@ class AdminPage(tk.Frame):
         bar.pack(fill="x")
         self._label(bar, "Admin User Management", size=15).pack(side="left")
         self._label(bar, db.ADMIN_TABLE, fg=theme.MUTED, size=10).pack(side="left", padx=(12, 0), pady=(4, 0))
-        self._button(bar, "CLEAR", self.clear, "#4a505c").pack(side="right", padx=(8, 0))
+        self._button(bar, "CLEAR", self.clear, T.L_NEUTRAL_BTN).pack(side="right", padx=(8, 0))
         self.btn_delete = self._button(bar, "DELETE", self.delete_user, theme.FAIL)
         self.btn_delete.pack(side="right", padx=(8, 0))
         self._button(bar, "SAVE / UPDATE", self.save_user, theme.SAVE).pack(side="right", padx=(8, 0))
@@ -53,14 +54,14 @@ class AdminPage(tk.Frame):
         self.refresh_all()
 
     # ------------------------------------------------------------ layout
-    def _label(self, parent, text, fg="white", size=10, bold=False, **kw):
+    def _label(self, parent, text, fg=T.L_TEXT, size=10, bold=False, **kw):
         return tk.Label(parent, text=text, bg=parent["bg"], fg=fg,
                         font=(theme.FONT, size, "bold") if bold else (theme.FONT, size), **kw)
 
     def _button(self, parent, text, command, bg):
         return tk.Button(parent, text=text, command=command, bg=bg, fg="white", activebackground=bg,
                          activeforeground="white", font=(theme.FONT, 10, "bold"), bd=0, padx=16, pady=5,
-                         cursor="hand2", disabledforeground="#8a8f99")
+                         cursor="hand2", disabledforeground="#dfe4ea")
 
     def _card(self, parent, title):
         card = tk.Frame(parent, bg=CARD_BG, highlightbackground=theme.BORDER, highlightthickness=1)
@@ -71,10 +72,10 @@ class AdminPage(tk.Frame):
         return card, head
 
     def _entry(self, parent, show=""):
-        return tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", font=(theme.FONT, 11),
-                        bd=1, relief="solid", highlightbackground=theme.BORDER, highlightthickness=1,
-                        highlightcolor=theme.UPDATE, show=show, disabledbackground="#151920",
-                        disabledforeground="#8a93a3")
+        return tk.Entry(parent, bg=theme.ENTRY_BG, fg=T.L_TEXT, insertbackground=T.L_TEXT, font=(theme.FONT, 11),
+                        bd=0, relief="flat", highlightbackground=T.L_BORDER, highlightthickness=1,
+                        highlightcolor=T.L_PRIMARY, show=show, disabledbackground=T.L_SUNKEN,
+                        disabledforeground=T.L_TEXT_2)
 
     def _build_form(self):
         card, _ = self._card(self, "User")
@@ -95,18 +96,18 @@ class AdminPage(tk.Frame):
         self.pwd_hint = self._label(form, "", fg=theme.MUTED, size=9)
         self.pwd_hint.grid(row=2, column=2, columnspan=2, sticky="w", padx=(24, 0))
 
-    def _tree(self, parent, cols, style="Dark.Treeview"):
+    def _tree(self, parent, cols, style="L.Treeview"):
         box = tk.Frame(parent, bg=CARD_BG)
         box.pack(fill="both", expand=True, padx=8, pady=8)
         tree = ttk.Treeview(box, columns=[c for c, _, _ in cols], show="headings", selectmode="browse", style=style)
         for col, heading, width in cols:
             tree.heading(col, text=heading)
             tree.column(col, width=width, minwidth=40, anchor="center")
-        sb = ttk.Scrollbar(box, orient="vertical", command=tree.yview)
+        sb = ttk.Scrollbar(box, orient="vertical", command=tree.yview, style="L.Vertical.TScrollbar")
         tree.configure(yscrollcommand=sb.set)
         tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        tree.tag_configure("odd", background="#141922")
+        tree.tag_configure("odd", background=T.L_SUNKEN)
         return tree
 
     def _build_users(self, parent):
@@ -120,7 +121,7 @@ class AdminPage(tk.Frame):
 
     def _build_history(self, parent):
         card, head = self._card(parent, "Login History")
-        tk.Button(head, text="REFRESH", command=self.load_history, bg="#4a505c", fg="white", activebackground="#4a505c",
+        tk.Button(head, text="REFRESH", command=self.load_history, bg=T.L_NEUTRAL_BTN, fg="white", activebackground=T.L_NEUTRAL_BTN,
                   activeforeground="white", bd=0, padx=12, pady=2, font=(theme.FONT, 9, "bold"),
                   cursor="hand2").pack(side="right", padx=8)
         self.lbl_hist = self._label(head, "", fg=theme.MUTED, size=9)
@@ -129,7 +130,7 @@ class AdminPage(tk.Frame):
                                          ("eno", "Employee ID", 100), ("ename", "Name", 120),
                                          ("result", "Result", 80), ("reason", "Reason", 140)])
         self.history.tag_configure("ok", foreground=theme.PASS)
-        self.history.tag_configure("bad", foreground="#ff6b6b")
+        self.history.tag_configure("bad", foreground=T.L_NG)
         return card
 
     # ------------------------------------------------------------ helpers

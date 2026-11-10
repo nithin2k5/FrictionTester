@@ -15,7 +15,8 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from . import theme
+from . import theme as T
+from .theme import light as theme      # light industrial theme
 from ..config import save_settings
 from ..devices import loadcell, ni_daq, plc_xgb
 
@@ -31,8 +32,8 @@ def _id_text(value):
 
 
 CARD_BG = theme.PANEL
-HEAD_BG = "#171c25"
-ROW_BG = "#141922"
+HEAD_BG = T.L_SURFACE_2
+ROW_BG = T.L_SUNKEN
 
 
 class StatusPill(tk.Frame):
@@ -52,7 +53,7 @@ class StatusPill(tk.Frame):
     def set(self, state, text):
         color = self.COLORS[state]
         self.dot.itemconfig(self._oval, fill=color)
-        self.text.config(text=text, fg="white" if state == "ok" else color)
+        self.text.config(text=text, fg=T.L_TEXT if state == "ok" else color)
 
 
 class ComPortPage(tk.Frame):
@@ -111,15 +112,15 @@ class ComPortPage(tk.Frame):
             return False
 
     # ============================================================ helpers
-    def _label(self, parent, text, fg="white", size=10, bold=False, **kw):
+    def _label(self, parent, text, fg=T.L_TEXT, size=10, bold=False, **kw):
         return tk.Label(parent, text=text, bg=parent["bg"], fg=fg,
                         font=(theme.FONT, size, "bold") if bold else (theme.FONT, size), **kw)
 
     def _entry(self, parent, value, width=10, digits_only=False, justify="left"):
-        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg="white", insertbackground="white", justify=justify,
-                     font=(theme.FONT, 10), width=width, bd=1, relief="solid",
-                     highlightbackground=theme.BORDER, highlightthickness=1,
-                     disabledbackground="#151920", disabledforeground=theme.MUTED)
+        e = tk.Entry(parent, bg=theme.ENTRY_BG, fg=T.L_TEXT, insertbackground=T.L_TEXT, justify=justify,
+                     font=(theme.FONT, 10), width=width, bd=0, relief="flat",
+                     highlightbackground=T.L_BORDER, highlightcolor=T.L_PRIMARY, highlightthickness=1,
+                     disabledbackground=T.L_SUNKEN, disabledforeground=theme.MUTED)
         e.insert(0, str(value))
         if digits_only:
             check = e.register(lambda p: p == "" or p.isdigit())
@@ -131,7 +132,8 @@ class ComPortPage(tk.Frame):
         current = str(current)
         if current and current not in values:
             values.append(current)
-        cb = ttk.Combobox(parent, values=values, font=(theme.FONT, 10), width=width, state="readonly")
+        cb = ttk.Combobox(parent, values=values, font=(theme.FONT, 10), width=width, state="readonly",
+                          style="L.TCombobox")
         if current:
             cb.set(current)
         elif values:
@@ -139,11 +141,13 @@ class ComPortPage(tk.Frame):
         return cb
 
     def _button(self, parent, text, command, kind="secondary", width=8):
-        bg, fg = {"primary": (theme.PASS, "white"), "secondary": (theme.TEST_IDLE, "black"),
-                  "muted": ("#4a505c", "white"), "info": (theme.UPDATE, "white")}[kind]
+        bg, fg = {"primary": (theme.PASS, "white"), "secondary": (T.L_SURFACE_2, T.L_TEXT),
+                  "muted": (T.L_NEUTRAL_BTN, "white"), "info": (theme.UPDATE, "white")}[kind]
+        edge = T.L_BORDER if kind == "secondary" else bg
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=bg,
                          activeforeground=fg, font=(theme.FONT, 9, "bold"), width=width, bd=0, pady=3,
-                         cursor="hand2", disabledforeground="#8a8f99")
+                         highlightbackground=edge, highlightthickness=1,
+                         cursor="hand2", disabledforeground=T.L_TEXT_3 if kind == "secondary" else "#dfe4ea")
 
     @staticmethod
     def _cols(frame, cols):
@@ -547,7 +551,7 @@ class ComPortPage(tk.Frame):
             self._label(row, s["name"], bold=True, anchor="w").grid(row=0, column=0, sticky="w", padx=(8, 0), pady=5)
             w["channel"] = self._combo(row, ni_daq.channels_for(terminal), s["channel"], width=4)
             w["channel"].bind("<<ComboboxSelected>>", lambda _e, n=i: self._update_pins(n))
-            w["pins"] = self._label(row, "", fg="#4fa3ff", anchor="w")
+            w["pins"] = self._label(row, "", fg=T.L_PRIMARY, anchor="w")
             w["range"] = self._combo(row, list(ni_daq.VOLTAGE_RANGES), s["range"], width=6)
             w["scale"] = self._entry(row, f"{s['scale']:g}", width=6, justify="center")
             w["offset"] = self._entry(row, f"{s['offset_v']:g}", width=6, justify="center")
@@ -678,9 +682,9 @@ class ComPortPage(tk.Frame):
         self._button(head, "CLEAR", self.clear_log, "muted", width=7).pack(side="right", padx=8)
         box = tk.Frame(card, bg=CARD_BG)
         box.pack(fill="both", expand=True, padx=8, pady=8)
-        sb = ttk.Scrollbar(box, orient="vertical")
+        sb = ttk.Scrollbar(box, orient="vertical", style="L.Vertical.TScrollbar")
         sb.pack(side="right", fill="y")
-        self.log_text = tk.Text(box, bg="#0d1016", fg="#d6dbe4", font=("Consolas", 10), bd=0, wrap="word",
+        self.log_text = tk.Text(box, bg=T.L_SUNKEN, fg=T.L_TEXT, font=("Consolas", 10), bd=0, wrap="word",
                                 padx=8, pady=6, yscrollcommand=sb.set, width=40)
         self.log_text.pack(fill="both", expand=True)
         sb.config(command=self.log_text.yview)
