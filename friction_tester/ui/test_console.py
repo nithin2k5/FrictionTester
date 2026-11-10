@@ -78,6 +78,7 @@ class CablePanel(tk.Frame):
     def __init__(self, master, title, cfg):
         super().__init__(master, bg=theme.PANEL, highlightbackground=theme.BORDER, highlightthickness=1)
         self.cfg = cfg
+        self.title = title
         self.last_ok = None              # OK/NG of the last measured test, None if not measured
 
         # Title row with Screen Save
@@ -247,6 +248,8 @@ class CablePanel(tk.Frame):
                 (vals["stroke"] is not None and vals["stroke"] <= 0) or \
                 (vals["delay"] is not None and vals["delay"] < 0):
             raise ValueError("Speed and stroke must be > 0, delay ≥ 0")
+        from .. import db
+        db.check_positions(self.title, vals["pos1"], vals["pos3"])
         self.cfg.update({
             "speed": vals["speed"], "delay": vals["delay"], "stroke": vals["stroke"],
             "positions": [vals["pos1"], vals["pos2"], vals["pos3"]],
@@ -1576,6 +1579,14 @@ class TestConsolePage(tk.Frame):
         """RUN: arm the flow for the loaded model's type."""
         if self._flow == "idle" and not self._target_is_set():
             return
+        if self._flow == "idle":
+            try:                             # typed (manual) conditions must be in range too
+                for panel in self.panels:
+                    panel.read_conditions()
+            except ValueError as exc:
+                messagebox.showerror("Test Condition", str(exc), parent=self)
+                self._set_status(f"RUN blocked: {exc}", theme.FAIL, hold=6)
+                return
         if self._flow == "idle" and not self._skip_scan() and not self.settings["test"].get("part_number"):
             messagebox.showwarning("Part not set", "The loaded model has no Part Number.\n\n"
                                    "Set it in Model Settings, then load the model again.", parent=self)

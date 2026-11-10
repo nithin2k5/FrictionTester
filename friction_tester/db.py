@@ -50,6 +50,18 @@ CONDITION_FIELDS = [
     ("LOAD_MIN", "LOAD min", "kgf", "DECIMAL(10,3)"),
     ("LOAD_MAX", "LOAD max", "kgf", "DECIMAL(10,3)"),
 ]
+
+# Allowed position range (mm), checked in Model Settings and the Test Console
+POSITION_1_MIN = -30.0          # Position 1 may not be set below this
+POSITION_3_MAX = 30.0           # Position 3 may not be set above this
+
+
+def check_positions(name, p1, p3):
+    """Raise ValueError if Position 1 / Position 3 are outside the allowed range."""
+    if p1 is not None and p1 < POSITION_1_MIN:
+        raise ValueError(f"{name}: Position 1 must not be below {POSITION_1_MIN:g} mm (entered {p1:g})")
+    if p3 is not None and p3 > POSITION_3_MAX:
+        raise ValueError(f"{name}: Position 3 must not be above {POSITION_3_MAX:g} mm (entered {p3:g})")
 # The two tests: (key used in column names, display name)
 TESTS = (("SELECT", "SELECT CABLE"), ("SHIFT", "SHIFT CABLE"))
 TEST_KEYS = [key for key, _ in TESTS]
