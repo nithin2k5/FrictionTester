@@ -13,10 +13,9 @@ The indicator's ID Number (F-40) picks the mode:
 The data field is 8 characters including the sign; the decimal point is
 wherever the indicator's F-00 setting puts it, so the number is used as sent.
 
-The ID is set per loadcell on the COM Port page (settings loadcells[i].id:
-0 = stream, 1-99 = command mode). With "auto" the app listens for stream
-frames on connect, and if none arrive it finds the ID by polling: first the
-loadcell number (L1 = 01, L2 = 02), then 01 (factory setting), then 02-09.
+The ID must be entered per loadcell on the COM Port page (settings
+loadcells[i].id: 0 = stream, 1-99 = command mode) and must match the
+indicator's F-40. It is used exactly as given - there is no detection.
 Each indicator has its own RS232 port, so two indicators may share an ID.
 """
 
@@ -75,10 +74,14 @@ PortBusyError = ports.PortBusyError
 
 
 def parse_id(value):
-    """Settings "id" -> 0..99, or None for automatic detection ("auto", "", None)."""
-    if value is None or str(value).strip().lower() in ("", "auto"):
-        return None
-    n = int(str(value).strip().split()[0])
+    """Settings "id" -> 0..99. The ID is required (no detection)."""
+    text = "" if value is None else str(value).strip()
+    if not text or text.lower() == "auto":
+        raise ValueError("Enter the indicator ID (F-40): 00 = stream mode, 01-99 = command mode")
+    try:
+        n = int(text.split()[0])
+    except ValueError:
+        raise ValueError(f"Indicator ID must be 00-99 (got {value})")
     if not 0 <= n <= 99:
         raise ValueError(f"Indicator ID must be 00-99 (got {value})")
     return n
@@ -127,13 +130,8 @@ class Loadcell:
         return self._ser is not None and self._ser.is_open
 
     def connect(self, cfg):
-        """Open the port and work out the indicator's mode.
-
-        There is no ID setting on the page (as in the EOL tester): if the
-        indicator is already streaming ST frames it is in stream mode,
-        otherwise it is polled in command mode with its loadcell number as
-        the ID (L1 -> ID01P, L2 -> ID02P).
-        """
+        """Open the port with the ID from the COM Port page (00 = stream mode,
+        01-99 = command mode ID<nn>P). The ID is required."""
         if serial is None:
             raise RuntimeError("pyserial is not installed (pip install pyserial)")
         if not cfg["port"]:
@@ -145,49 +143,14 @@ class Loadcell:
         with self._conn_lock:
             want = parse_id(cfg.get("id"))
             if (self.is_open and self.port == cfg["port"]
-                    and self._ser.baudrate == int(cfg["baudrate"])
-                    and (want is None or want == self.device_id)):
+                    and self._ser.baudrate == int(cfg["baudrate"]) and want == self.device_id):
                 return
             self._close()
             ports.check_free(cfg["port"], self.name)
             self._ser = open_port(cfg["port"], int(cfg["baudrate"]))
             self.port = cfg["port"]
             ports.claim(self.port, self.name)
-            try:
-                if want is not None:                  # ID given on the COM Port page
-                    self.device_id = want
-                else:
-                    self.device_id = STREAM_ID if self._is_streaming() else self._find_id()
-            except Exception:
-                self._close()
-                raise
-
-    def _is_streaming(self):
-        """True if a stream-mode frame (ST,...) arrives within ~0.5 s."""
-        self._ser.reset_input_buffer()
-        self._ser.readline()                       # skip a possibly partial line
-        line = self._ser.readline().decode("ascii", errors="replace").strip()
-        return line.upper().startswith("ST,")
-
-    PROBE_IDS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
-
-    def _find_id(self):
-        """Command mode: the first ID that answers a P (own number, then 01, then 02-09).
-
-        Falls back to the loadcell number if none answers, so reads report "No response".
-        """
-        for dev in [self.number] + [i for i in self.PROBE_IDS if i != self.number]:
-            self._ser.reset_input_buffer()
-            self._ser.write(f"ID{dev:02d}{CMD_READ}".encode("ascii"))
-            raw = self._ser.readline().decode("ascii", errors="replace").strip()
-            if not raw:
-                continue
-            try:
-                parse_frame(raw, dev)
-            except IndicatorError:
-                continue
-            return dev
-        return self.number
+            self.device_id = want
 
     @property
     def mode_text(self):

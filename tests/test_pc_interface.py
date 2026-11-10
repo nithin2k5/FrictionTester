@@ -63,15 +63,15 @@ class FakeSampler:
 
 class Rig:
     def __init__(self, internal=True, skip_scan=False, timeouts=None, owner=True, verified=True,
-                 completion="internal_flags", cfg=None):
+                 cfg=None, sim=None):
         self.clock = Clock()
-        self.sim = PcLadderSim(self.clock)
+        self.sim = sim(self.clock) if sim else PcLadderSim(self.clock)
         self.sim.mapping.verified = verified
         self.log = EventLog(folder=None, clock=lambda: __import__("datetime").datetime(2026, 11, 7))
         self.link = PcLink(self.sim, self.log, owner_confirmed=owner, internal_enabled=internal)
         self.sampler = FakeSampler()
         conf = {"timeouts": dict({"stroke": 5.0, "home": 10.0, "alarm_reset_pulse": 0.2}, **(timeouts or {})),
-                "measurement": dict(RULES), "mt_parallel_verified": True, "stroke_completion": completion,
+                "measurement": dict(RULES), "mt_parallel_verified": True,
                 "home_before_test": "if_not_referenced"}
         conf.update(cfg or {})
         self.ctl = PcController(self.link, conf, self.log, self.sampler, clock=self.clock, skip_scan=skip_scan)
@@ -316,22 +316,18 @@ def test_measurement_window_closes_at_completion_not_release():
     assert r.sim.axes["select"].seq["pull"].word != 0
 
 
-def test_position_fallback_only_when_selected():
+def test_no_motion_without_native_m_reads():
+    """No fallback: with M reads off nothing moves - RUN and HOME are refused."""
     r = Rig(internal=False)
     r.confirm_params()
+    assert r.ctl.m_read and not r.ctl.m_read[0]
     r.ctl.submit("run", dict(INFO, type="AT"))
-    r.step()
-    r.ctl.submit("scan", "select", "S")
-    r.until(lambda: r.ctl.flow == "idle")
-    assert r.parts()[0]["verdict"] == "INCOMPLETE"
-    assert any("not readable" in x for x in r.parts()[0]["reasons"])
-    f = Rig(internal=False, completion="position_fallback")
-    f.confirm_params()
-    f.run_part("AT")
-    assert f.parts()[-1]["verdict"] == "OK"
-    assert any("fresh target compare OFF->ON" in e for e in f.parts()[-1]["evidence"]["select"])
-    f.run_part("AT")                                    # axis now already on the start compare
-    assert any("no positioning requested" in e for e in f.parts()[-1]["evidence"]["select"])
+    r.run(1.0)
+    assert r.ctl.part is None and r.sim.starts["select"]["pull"] == 0
+    assert any("M-area reads not verified" in m for m in r.messages())
+    r.ctl.submit("home", "select")
+    r.run(1.0)
+    assert r.sim.starts["select"]["home"] == 0
 
 
 # ------------------------------------------------------------------ handshake failures
@@ -403,22 +399,28 @@ def test_home_from_unhomed_power_up():
     assert snap.st("shift", "permitted") is True
 
 
-def test_auto_m_reads_verified_use_completion_flags():
-    r = Rig(internal="auto", completion="auto")
-    assert r.link.internal_enabled and r.ctl._completion() == "internal_flags"
+def test_m_reads_verified_on_connect_then_completion_flags():
+    r = Rig()
+    assert r.ctl.m_read[0] and r.ctl._completion() == "internal_flags"
     assert any("M-area reads verified" in m for m in r.messages())
     r.confirm_params()
     r.run_part("AT")
     assert r.parts()[0]["verdict"] == "OK"
 
 
-def test_auto_m_reads_mismatch_falls_back_to_position():
-    clock = Clock()
-    sim = PcLadderSim(clock)
-    sim.m_area_wrong = True
-    link = PcLink(sim, EventLog(folder=None), owner_confirmed=True, internal_enabled="auto")
-    ok, detail = link.verify_internal()
-    assert not ok and "do not reach the M area" in detail and not link.internal_enabled
+def test_m_read_mismatch_blocks_motion():
+    def wrong(clock):
+        sim = PcLadderSim(clock)
+        sim.m_area_wrong = True
+        return sim
+    r = Rig(sim=wrong, cfg={"home_on_open": True})
+    r.confirm_params()
+    r.run(2.0)
+    assert not r.ctl.m_read[0] and "do not reach the M area" in r.ctl.m_read[1]
+    assert not r.ctl.manual and r.sim.starts["shift"]["home"] == 0          # no home on open either
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.run(1.0)
+    assert r.ctl.part is None and r.ctl.pending_run is None
 
 
 def test_home_on_open_homes_both_axes_once():
@@ -870,7 +872,7 @@ def test_sampler_keeps_the_capture_for_the_graph():
     assert s.captures["select"] is cap and cap.samples[0][1:3] == (0.5, 5.0)
 
 
-def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
+def test_graph_draws_load_vs_stroke_only_and_restarts_per_stroke():
     import tkinter as tk
     from friction_tester.plc.pc_measure import Capture
     from friction_tester.ui.test_console import CablePanel
@@ -889,7 +891,7 @@ def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
         panel.draw_capture(pull)
         assert panel.plot.series["PULL"]["x"] == [-5.0, -3.0] and panel.plot.xlabel == "Stroke [mm]"
         pull.graph.append((10.3, 0.4, -2.0))
-        panel.draw_capture(pull)                                     # only the new sample is added
+        panel.draw_capture(pull)                                     # only the new point is added
         assert panel.plot.series["PULL"]["y"] == [0.1, 0.3, 0.4]
         push = Capture("select", "push", "t", 1)
         push.graph += [(11.0, -0.2, 6.0), (11.5, -0.1, None)]
@@ -897,25 +899,28 @@ def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
         assert panel.plot.series["PULL"]["y"] and panel.plot.series["PUSH"]["x"] == [6.0]
         pull2 = Capture("select", "pull", "t", 2)                    # next stroke: fresh graph
         pull2.graph += [(20.0, 0.2, None), (20.5, 0.3, None)]
-        panel.draw_capture(pull2)
-        assert not panel.plot.series["PUSH"]["x"] and panel.plot.series["PULL"]["x"] == [0.0, 0.5]
-        assert panel.plot.xlabel == "Time [s]"                       # no LVDT reading: Load vs time
+        panel.draw_capture(pull2)                                    # no stroke reading: nothing drawn
+        assert not panel.plot.series["PUSH"]["x"] and not panel.plot.series["PULL"]["x"]
+        assert panel.plot.xlabel == "Stroke [mm]"
     finally:
         root.destroy()
 
 
-def test_sampler_retries_the_ni_card_after_a_failed_open():
+def test_sampler_reports_a_missing_ni_card_and_tries_again_only_at_a_new_stroke():
     from friction_tester.plc.pc_measure import Sampler
     daq = FakeDaq({"ai0": 0.25, "ai2": 3.0}, fail="Dev1 not found")
-    s = Sampler([_Lc(), _Lc()], daq, _sampler_settings("daq"))
-    s.DAQ_RETRY_S = 0.0
-    try:
-        s.read_once("select")
-        raise AssertionError("NI force read should fail while the card is missing")
-    except RuntimeError as exc:
-        assert "Dev1 not found" in str(exc)
-    daq.fail = None                                        # card plugged in / device selected
-    assert s.read_once("select")[0] == 0.5 and s.daq_error is None
+    s = Sampler([_Lc(), _Lc()], daq, _sampler_settings("serial", graph_force="daq"), period=0.005)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.03)
+    daq.fail = None                                        # fixed mid-stroke: not reopened silently
+    time.sleep(0.03)
+    s.stop(cap)
+    assert all(p[1] is None and p[2] is None for p in cap.graph)
+    assert "Dev1 not found" in cap.graph_error and all(x[1] == 0.5 for x in cap.samples)
+    cap = s.start("select", "push", "t", 1)                # next stroke: opened
+    time.sleep(0.03)
+    s.stop(cap)
+    assert cap.graph[0][1:] == (0.5, 10.0) and cap.graph_error is None
 
 
 def test_results_from_serial_graph_from_the_ni_card():

@@ -16,9 +16,7 @@ PULL / PUSH (pages 5-11), sequence word M0201 / M0202, active M08016 / M08017:
   M00051/52. "Active" stays ON through the release wait, so the request is
   cleared on completion - not after active drops.
   Completion = M00051/52/61/62 from this execution (native M read, verified).
-  "position_fallback" (opt-in, settings) = target compare + in-position while
-  active, request held for the ladder's step timing; use only after it has
-  been validated on the machine.
+  There is no other completion source: an unreadable flag fails the stroke.
   The measurement window ends at completion (`measure_end`), not at the release.
   Before the next stroke: active OFF, completion flag OFF, permission back.
 
@@ -30,14 +28,12 @@ HOME (pages 3-5), word M0200: step 0 SET by request AND word = 0 ..., so a held
   arrives at step 3, before the sequence ends.
 
 MEASUREMENT START (pages 14-16), word M0204 (not exported, not in M00122):
-  step 5 advances on CurPos = D02018 OR T0103; step 7 waits for release. With
-  the step bits readable: acceptance = chain active; at step 7 the target
-  compare (M0802E) and in-position must be ON - otherwise the timeout branch
-  was taken and positioning FAILED. Without them, acceptance is not
-  observable: the request is accepted only as a fresh OFF->ON of the target
-  compare plus in-position; an axis already on target is handled by the
-  cable routine (no motion requested). M08023 and M0802E are the same compare
-  and are never counted as two pieces of evidence.
+  step 5 advances on CurPos = D02018 OR T0103; step 7 waits for release. The
+  step bits must be readable (native M reads): acceptance = chain active; at
+  step 7 the target compare (M0802E) and in-position must be ON - otherwise
+  the timeout branch was taken and positioning FAILED. Unreadable step bits
+  fail the operation. M08023 and M0802E are the same compare and are never
+  counted as two pieces of evidence.
 
 ALARM RESET (pages 27-28): M0700A -> P00033 / M0700E -> P00037 only while the
   selector M00105 / M00205 is OFF. One pulse of the configured length per
@@ -58,9 +54,6 @@ DEFAULT_TIMEOUTS = {
     "home": 60.0,
     "meas_start": 8.0,
     "release": 3.0,       # sequence reset after the release
-    "meas_dwell": 1.0,    # fallback only: minimum hold of the measurement-start request
-    "meas_settle": 0.5,   # fallback only: after releasing measurement start
-    "stroke_min_hold": 1.5,   # position_fallback only (ladder step timing)
     "alarm_reset_pulse": None,  # s - from the drive requirements; None = alarm reset disabled
     "alarm_reset_check": 3.0,   # alarm-normal must return within this time
 }
@@ -182,8 +175,7 @@ class StrokeOp(AxisOp):
         addr = pp.INTERNAL_COMPLETE[self.axis][self.kind]
         if self.completion == "internal_flags" and flag is None:
             raise OpBlocked(f"{self.name}: completion flag {addr} is not readable (native M reads not enabled/"
-                            "verified). Enable them, or validate and select stroke_completion = "
-                            "position_fallback on the machine.")
+                            "verified)")
         if flag:
             raise OpBlocked(f"{self.name}: stale completion flag {addr} is ON before the request")
         if snap.st(self.axis, self.target_bit):
@@ -211,17 +203,11 @@ class StrokeOp(AxisOp):
                 return self._finish("failed", f"{self.name}: drive/axis fault during the stroke", now, release=True)
             if not st(self.active_bit):
                 return self._finish("failed", f"{self.name}: sequence ended before completion", now, release=True)
-            if self.completion == "internal_flags":
-                flag = snap.complete_bit(self.axis, self.kind)
-                if flag is None:
-                    return self._finish("failed", f"{self.name}: completion flag became unreadable", now,
-                                        release=True)
-                complete, basis = flag, pp.INTERNAL_COMPLETE[self.axis][self.kind]
-            else:
-                held = self._elapsed(now) >= self.t["stroke_min_hold"]
-                complete = bool(st(self.target_bit)) and bool(st("pos_complete")) and held
-                basis = (f"position_fallback: target compare + in-position, request held "
-                         f"{self.t['stroke_min_hold']:g} s")
+            flag = snap.complete_bit(self.axis, self.kind)
+            if flag is None:
+                return self._finish("failed", f"{self.name}: completion flag became unreadable", now,
+                                    release=True)
+            complete, basis = flag, pp.INTERNAL_COMPLETE[self.axis][self.kind]
             if complete:
                 self.evidence.append(basis)
                 self.measure_end = True
@@ -318,9 +304,9 @@ class MeasStartOp(AxisOp):
 
     def precheck(self, snap):
         self._common_ready(snap)
-        if snap.meas_step(self.axis) is None and snap.st(self.axis, "at_meas_start"):
-            raise OpBlocked(f"{self.name}: axis already on the target compare and the sequence is not "
-                            "observable - a request could not be verified (handled by the cable routine)")
+        if snap.meas_step(self.axis) is None:
+            raise OpBlocked(f"{self.name}: sequence {pp.SEQ_WORDS[self.axis]['meas_start']} is not readable "
+                            "(native M reads not enabled/verified)")
 
     def step(self, snap, now):
         st = lambda name: snap.st(self.axis, name)
@@ -330,9 +316,10 @@ class MeasStartOp(AxisOp):
         if st("axis_error"):
             return self._finish("failed", f"{self.name}: PLC positioning error", now, release=True)
         step = snap.meas_step(self.axis)
-        if step is not None:
-            return self._step_observed(snap, now, step)
-        return self._step_fallback(snap, now)
+        if step is None:
+            return self._finish("failed", f"{self.name}: sequence {pp.SEQ_WORDS[self.axis]['meas_start']} "
+                                          "became unreadable", now, release=True)
+        return self._step_observed(snap, now, step)
 
     def _step_observed(self, snap, now, step):
         st = lambda name: snap.st(self.axis, name)
@@ -367,35 +354,6 @@ class MeasStartOp(AxisOp):
                 return self._finish("done", f"{self.name} complete", now)
             if self._elapsed(now) > self.t["release"]:
                 return self._finish("failed", f"{self.name}: sequence did not reset after the release", now)
-        return {}
-
-    def _step_fallback(self, snap, now):
-        """Sequence not observable: fresh OFF->ON of the target compare + in-position."""
-        st = lambda name: snap.st(self.axis, name)
-        if self.state == "requested":
-            if snap.echo_bit(self.idx, self.n):
-                self.evidence.append("echo (sequence not observable)")
-                self._set("moving", now)
-            elif self._elapsed(now) > self.t["echo"]:
-                return self._finish("failed", f"{self.name}: request not echoed by the PLC", now, release=True)
-            return {}
-        if self.state == "moving":
-            if st("at_meas_start") and st("pos_complete") and self._elapsed(now) >= self.t["meas_dwell"]:
-                self.evidence.append("fresh target compare OFF->ON + in-position")
-                self._set("releasing", now)
-                return self._request(False)
-            if self._elapsed(now) > self.t["meas_start"]:
-                return self._finish("failed", f"{self.name}: target not reached (the PLC sequence can end by "
-                                              "its timeout branch)", now, release=True)
-            return {}
-        if self.state == "releasing":
-            if self._elapsed(now) >= self.t["meas_settle"] and snap.echo_bit(self.idx, self.n) is False:
-                self.needs_release = False
-                if not st("at_meas_start"):
-                    return self._finish("failed", f"{self.name}: left the target after the release", now)
-                return self._finish("done", f"{self.name} complete (sequence reset not observable)", now)
-            if self._elapsed(now) > self.t["release"]:
-                return self._finish("failed", f"{self.name}: release not echoed", now)
         return {}
 
 

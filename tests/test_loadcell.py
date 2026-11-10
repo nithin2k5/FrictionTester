@@ -44,29 +44,32 @@ class FakeIndicator:
         return self.out.pop(0) if self.out else b""
 
 
-def test_find_id_uses_factory_id_when_l2_is_set_to_01():
+def test_reads_with_the_given_id():
     from friction_tester.devices.loadcell import Loadcell
     lc = Loadcell(2)
     lc._ser = FakeIndicator(1)
-    assert lc._find_id() == 1
     lc.device_id = 1
     sent, raw, value = lc.read()
     assert sent == "ID01P" and value == 1.5
+    lc.device_id = 2                     # wrong ID: no answer, no searching for another
+    with pytest.raises(TimeoutError):
+        lc.read()
 
 
-def test_find_id_prefers_own_number_and_falls_back_to_it():
-    from friction_tester.devices.loadcell import Loadcell
-    lc = Loadcell(2)
-    lc._ser = FakeIndicator(2)
-    assert lc._find_id() == 2
-    lc._ser = FakeIndicator(42)          # nothing in 01-09 answers
-    assert lc._find_id() == 2
-
-
-def test_given_id_is_used_without_probing():
+def test_id_is_required():
     from friction_tester.devices import loadcell as lcmod
-    assert lcmod.parse_id("auto") is None and lcmod.parse_id("") is None and lcmod.parse_id(None) is None
+    for missing in ("auto", "", None, "  "):
+        with pytest.raises(ValueError, match="Enter the indicator ID"):
+            lcmod.parse_id(missing)
     assert lcmod.parse_id("00 stream") == 0 and lcmod.parse_id("05") == 5 and lcmod.parse_id(7) == 7
-    import pytest
-    with pytest.raises(ValueError):
-        lcmod.parse_id(150)
+    for bad in (150, "x1"):
+        with pytest.raises(ValueError):
+            lcmod.parse_id(bad)
+
+
+def test_connect_refuses_a_missing_id():
+    from friction_tester.devices import loadcell as lcmod
+    if not lcmod.Loadcell.available():
+        pytest.skip("pyserial not installed")
+    with pytest.raises(ValueError, match="Enter the indicator ID"):
+        lcmod.Loadcell(1).connect({"port": "COM99", "baudrate": 9600, "id": ""})

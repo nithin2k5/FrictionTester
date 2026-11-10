@@ -101,11 +101,11 @@ App: precheck (fresh data, servo, alarm-normal, no error, no active sequence, pe
 stale completion flag, target compare OFF) → arm acquisition → request → acceptance = echo AND active
 ON AND permission OFF (fresh sequence) → completion = the flag of this execution (window closes here)
 → clear the request → wait active OFF, flag OFF, permission ON before the next stroke.
-Completion source `stroke_completion`:
-* `internal_flags` (default) needs **native M reads** (`internal_bits_enabled`); if they are not
-  readable the routine stops with "completion flag not readable" — no status bit is substituted.
-* `position_fallback` (opt-in, validate on the machine first): target compare + in-position while
-  active, request held ≥ `stroke_min_hold` (ladder step timers; timer units unverified).
+Completion = the PLC's flags M00051/52/61/62 only (no fallback). **Native M reads are required**
+(`internal_bits_enabled` = true): at every connection M0800/M0801 are read as bits and compared with
+D04003/D04004 (repeated once a second until they match); until then every motion — HOME (incl. home
+on open), RUN, PULL/PUSH, measurement start — is refused with "M-area reads not verified". An
+unreadable flag during a stroke fails it.
 
 **Home** — word **M0200** / M0210 (p3–5): 0 → 1 → 2 (home output P00032 / P00036) → 3 (origin P00012 /
 P00016) → 5 (origin determined, PRS D02000 / D02100 = 1 000 000 — home is **not** coordinate 0) → 8
@@ -127,8 +127,7 @@ a reconnect; skipped with a message when writes are off or PC request bits are f
 M00122 (permission does not drop). With native reads of the step bits M02040–M02049 / M02140–M02149:
 acceptance = chain active; at step 7 the start compare (M0802E / M0802F) and in-position must be ON,
 otherwise **the timeout branch was taken → failure**; then release and wait for the chain to reset.
-Without them: request only if the compare is OFF; accept a fresh OFF→ON + in-position after
-`meas_dwell`; an axis already on target is recorded as such and no motion is requested.
+Unreadable step bits refuse / fail the operation (no fallback).
 M08023 = M0802E and M08025 = M0802F are the **same compares** and never count as two pieces of evidence.
 — implemented, simulated (timeout branch without arrival).
 
@@ -238,16 +237,16 @@ is recorded as invalid (no substitute sensor). Positions and repetition count ar
 
 NI card: the Sampler opens the NI DAQ task itself (device, wiring and sensor rows from the COM Port
 page) for the rows named by `stroke` / `daq_force`, with a ~10 ms averaging block; load and stroke
-come from the same acquisition. If the card cannot be opened the stroke is missing but a serial force
-sample still counts (retried each stroke). This machine (settings.json): results use the serial loadcells (`force_source` = `serial`); the
+come from the same acquisition. The task is opened at a stroke start; if that fails, that stroke has
+no graph points and the reason is shown (`Capture.graph_error`) — the next stroke tries again. The
+serial result load is a separate sensor and is not affected. This machine (settings.json): results use the serial loadcells (`force_source` = `serial`); the
 graph uses the NI card (`graph_force` = `daq`) — SELECT `Loadcell 1` (ai0) + `LVDT 1` (ai2), SHIFT
 `Loadcell 2` (ai1) + `LVDT 2` (ai3). NI load = (V − offset_v) × scale of the sensor row. Each sample
-stores the result tuple and a separate graph point (`Capture.graph`), so a failed serial read still
-plots. A failed NI open is retried every 5 s.
+stores the result tuple and a separate graph point (`Capture.graph`).
 
 Graph (Test Console): each measuring stroke is drawn live from `Capture.graph`, PULL and PUSH on a fresh graph per stroke
-number, Load against the LVDT stroke in mm — or against time since the stroke began when no stroke
-reading is available. The view grows to fit the data; **Fit** zooms to it.
+number, Load against the LVDT stroke in mm only; a point without an NI load or stroke reading is not
+drawn (no time axis substitute). The view grows to fit the data; **Fit** zooms to it.
 
 Verdicts: OK / NG (a value outside the limits) per cable; **INCOMPLETE** for unset rules, missing
 limits, too few or invalid samples, uncovered positions; **ERROR** for a failed machine operation.
@@ -303,7 +302,6 @@ Tk thread; UI updates go through `after()` polling of the controller and store q
 | Status read function | `mapping.word_read_order` (`word_read` = FC04 first, `word_write` = FC03) |
 | Allow writes / sole writer | `live_writes_enabled`, `command_owner_confirmed` |
 | Native M reads | `mapping.cnet_areas.bit_write` (FC01), `internal_bits_enabled` |
-| Stroke completion | `stroke_completion` |
 | MT parallel | `mt_parallel_verified` |
 | Homing policy, fixture checks | `home_before_test`, `home_on_open`, `fixture_checks` |
 | Measurement | `measurement.*` |

@@ -114,11 +114,9 @@ class CablePanel(tk.Frame):
         self.plot.add_series("PULL", PULL_COLOR)
         self.plot.add_series("PUSH", PUSH_COLOR)
         self.plot.pack(fill="both", expand=True, padx=8, pady=(0, 4))
-        self._gcap = None          # capture being drawn, how many of its samples are drawn,
-        self._gn = 0               # its first sample time, and the stroke number on the graph
-        self._gt0 = None
+        self._gcap = None          # capture being drawn, how many of its points are drawn,
+        self._gn = 0               # and the stroke number on the graph
         self._gstroke = None
-        self._gmode = None         # "stroke" (LVDT on the NI card) or "time"
 
         live = tk.Frame(self, bg=theme.PANEL)
         live.pack(fill="x", padx=8, pady=(2, 6))
@@ -288,35 +286,25 @@ class CablePanel(tk.Frame):
         self._gcap, self._gstroke = None, None
 
     def draw_capture(self, cap):
-        """Add a measuring stroke's new graph points (Capture.graph: the NI card load when
-        graph_force = "daq") to the graph: Load against the LVDT stroke (NI card), or
-        against time since the stroke began when no stroke is read.
+        """Add a measuring stroke's new graph points (Capture.graph: NI card load and
+        LVDT stroke when graph_force = "daq") to the Load-vs-Stroke graph. A point
+        without a load or a stroke reading is not drawn (Capture.graph_error says why).
         Each stroke number starts a fresh graph; its PULL and PUSH share it."""
         name = "PULL" if cap.kind == "pull" else "PUSH"
         if cap is not self._gcap:
             if cap.stroke_no != self._gstroke:
                 self.plot.clear()
-                self._gstroke, self._gmode = cap.stroke_no, None
+                self._gstroke = cap.stroke_no
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
-            self._gcap, self._gn, self._gt0 = cap, 0, None
+            self._gcap, self._gn = cap, 0
         new = cap.graph[self._gn:]
         self._gn += len(new)
         series = self.plot.series[name]
-        for t, load, stroke in new:
-            if load is None:
+        for _t, load, stroke in new:
+            if load is None or stroke is None:
                 continue
-            if self._gmode is None:          # chosen once per stroke: PULL and PUSH share the x axis
-                self._gmode = "stroke" if stroke is not None else "time"
-                self.plot.set_xlabel("Stroke [mm]" if stroke is not None else "Time [s]")
-            if self._gt0 is None:
-                self._gt0 = t
-            if self._gmode == "stroke":
-                if stroke is None:
-                    continue
-                series["x"].append(stroke)
-            else:
-                series["x"].append(round(t - self._gt0, 3))
+            series["x"].append(stroke)
             series["y"].append(load)
         if new:
             self.plot.redraw()
@@ -609,9 +597,7 @@ class TestConsolePage(tk.Frame):
         self.pc_log = EventLog(self._result_dir())
         self.pc_log.log("MAPPING", mapping.describe())
         link = PcLink(backend, self.pc_log, owner_confirmed=bool(mp.get("command_owner_confirmed")),
-                      internal_enabled=(("auto" if mp.get("internal_bits_enabled") == "auto"
-                                         else bool(mp.get("internal_bits_enabled"))) if mapping.verified
-                                        else False))
+                      internal_enabled=bool(mp.get("internal_bits_enabled")) and mapping.verified)
         self.sampler = Sampler(self.loadcells, self.daq, self.settings)
         cfg = copy.deepcopy(mp)
         from .. import db
@@ -640,9 +626,13 @@ class TestConsolePage(tk.Frame):
                      if m.get("graph_force") == "daq" else "")
             panel.set_source(f"Source: {src} · stroke {stroke}{graph} · {pp.PROFILE_TITLE}")
             panel.set_result_labels("PULL", "PUSH", "", "Max")
-        values = self.settings["test"].get("plc_params")
-        if values and self.settings["test"]["select"].get("model"):
-            self.ctl.submit("params", self.settings["test"]["select"]["model"], list(values))
+        # The PLC parameters always come from the model in the database, never from the copy
+        # stored in settings.json (it may be stale). If the model cannot be read, nothing is
+        # sent and RUN stays refused (parameters not confirmed) until Model Change succeeds.
+        self.settings["test"]["plc_params"] = None
+        model = self.settings["test"]["select"].get("model")
+        if model:
+            self.fetch_model(model)
         self.ctl.start()
         self.after(100, self._drain_pc)
 
@@ -824,6 +814,10 @@ class TestConsolePage(tk.Frame):
                 cap = self.sampler.captures.get(key)
                 if cap is not None:
                     panel.draw_capture(cap)
+                    err = getattr(cap, "graph_error", None)
+                    if err and getattr(cap, "_graph_error_shown", None) != err:
+                        cap._graph_error_shown = err
+                        self._set_status(f"{pp.AXIS_NAME[key]} graph: {err} - points not drawn", theme.FAIL, 8)
 
     def _drain_monitor(self):
         """UI thread: take what the monitor thread produced (it never touches Tk)."""

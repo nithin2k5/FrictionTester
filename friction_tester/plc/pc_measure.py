@@ -30,6 +30,7 @@ class Capture:
         self.axis, self.kind, self.test_id, self.stroke_no = axis, kind, test_id, stroke_no
         self.samples = []
         self.graph = []                # [(t, graph load, stroke), ...] for the Test Console graph
+        self.graph_error = None        # why graph points are missing (NI card / sensor rows)
         self.errors = 0
         self.last_error = None         # text of the last failed read (why samples are invalid)
         self.stop_event = threading.Event()
@@ -37,8 +38,6 @@ class Capture:
 
 
 class Sampler:
-    DAQ_RETRY_S = 5.0
-
     def __init__(self, loadcells, daq, settings, period=0.02):
         self.loadcells = loadcells
         self.daq = daq
@@ -47,8 +46,7 @@ class Sampler:
         self.latest = {}               # axis -> (load, stroke) for the screen
         self._active = set()           # axes being captured (the screen's poll leaves them alone)
         self.captures = {}             # axis -> the latest Capture (the graph draws its samples)
-        self.daq_error = None          # why the NI card could not be opened (retried each stroke
-        self._daq_failed_at = 0.0      # and every DAQ_RETRY_S seconds)
+        self.daq_error = None          # why the NI card could not be opened (tried again at each stroke start)
         self._daq_lock = threading.Lock()
 
     @property
@@ -78,7 +76,7 @@ class Sampler:
             return False
         if self.daq.is_open:
             return True
-        if self.daq_error and time.monotonic() - self._daq_failed_at < self.DAQ_RETRY_S:
+        if self.daq_error:
             return False
         d = self.settings.get("daq") or {}
         chans = []
@@ -95,7 +93,6 @@ class Sampler:
                               "channels": chans})
         except Exception as exc:
             self.daq_error = str(exc) or type(exc).__name__
-            self._daq_failed_at = time.monotonic()
             return False
         self.daq_error = None
         return True
@@ -146,16 +143,20 @@ class Sampler:
                     if not self._ensure_daq():
                         raise RuntimeError(f"NI card not open: {self.daq_error or 'no device'}")
                     block = self.daq.read_average()
-                except Exception:
+                except Exception as exc:
                     if force_daq:
                         raise
-                    block = {}         # NI card read failed: no stroke, the serial force still counts
+                    block = {}         # NI card read failed: no stroke / graph point (the serial
+                    if graph is not None:  # result load is a separate sensor and still counts)
+                        graph["error"] = f"NI card: {exc}"
         if name:
             stroke, raw_stroke = self._daq_value(name, block)
         if graph is not None:
             graph["stroke"] = stroke
             graph["load"] = (self._daq_value((m.get("daq_force") or {}).get(axis, ""), block)[0]
                              if graph_daq else None)
+            if "error" not in graph and block and (graph["stroke"] is None or (graph_daq and graph["load"] is None)):
+                graph["error"] = "NI card: a graph sensor row is missing or not in the task"
         if force_daq:
             value, raw_load = self._daq_value((m.get("daq_force") or {}).get(axis, ""), block)
         else:
@@ -190,6 +191,8 @@ class Sampler:
                         cap.last_error = str(exc) or type(exc).__name__
                     cap.samples.append((t, load, stroke, raw_load, raw_stroke))
                     cap.graph.append((t, g.get("load"), g.get("stroke")))
+                    if g.get("error"):
+                        cap.graph_error = g["error"]
                     self.latest[axis] = (load, stroke)
                     cap.stop_event.wait(self.period)
             finally:
