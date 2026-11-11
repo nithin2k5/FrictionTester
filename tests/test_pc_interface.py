@@ -1077,3 +1077,36 @@ def test_closing_mid_stroke_stops_the_capture_and_releases_the_bit():
     r.ctl._release_everything("application closing")
     assert not r.sampler.open
     assert not r.sim.D[4100 + idx] >> n & 1                # released
+
+
+def test_measurement_start_waits_for_in_position_at_the_release_step():
+    """The PLC reaches the release step on its position compare; the drive's in-position
+    signal can follow a poll later (seen on the machine, 2026-11-11). That is not the
+    timeout branch - only a target that stays unreached is."""
+    from friction_tester.plc.axis_ops import make_op
+
+    class Snap:
+        def __init__(self, **on):
+            self.on = on
+
+        def st(self, _axis, name):
+            return self.on.get(name, False)
+
+        def meas_step(self, _axis):
+            return pp.MEAS_RELEASE_STEP
+
+        def echo_bit(self, _idx, _n):
+            return True
+
+    def moving():
+        op = make_op("shift", "meas_start")
+        op.state, op.t_state = "moving", 0.0
+        return op
+
+    op = moving()
+    assert op.step(Snap(at_meas_start=True), 0.0) == {} and op.result is None      # in-position not yet ON
+    assert op.step(Snap(at_meas_start=True, pos_complete=True), 0.1) and op.state == "releasing"
+    op = moving()
+    op.step(Snap(at_meas_start=True), 0.0)
+    op.step(Snap(at_meas_start=True), 2.5)
+    assert op.result == "failed" and "in-position signal is OFF" in op.message and "timeout branch" in op.message

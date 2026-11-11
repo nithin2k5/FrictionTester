@@ -57,6 +57,7 @@ DEFAULT_TIMEOUTS = {
     "stroke": 30.0,       # PULL / PUSH completion
     "home": 60.0,
     "meas_start": 8.0,
+    "meas_inpos": 2.0,    # at the release step: wait this long for target compare + in-position
     "release": 3.0,       # sequence reset after the release
     "meas_dwell": 1.0,    # fallback only: minimum hold of the measurement-start request
     "meas_settle": 0.5,   # fallback only: after releasing measurement start
@@ -320,6 +321,7 @@ class HomeOp(AxisOp):
 
 class MeasStartOp(AxisOp):
     kind = "meas_start"
+    _t_release_step = None        # when the release step was first seen without target + in-position
 
     def precheck(self, snap):
         self._common_ready(snap)
@@ -354,8 +356,22 @@ class MeasStartOp(AxisOp):
                     self.evidence.append("step 7 with target compare + in-position")
                     self._set("releasing", now)
                     return self._request(False)
+                # The PLC reaches step 7 on its position compare; the drive's in-position
+                # signal follows a little later (servo settling), so one poll can see step 7
+                # without it. Wait for both before calling it the timeout branch.
+                if self._t_release_step is None:
+                    self._t_release_step = now
+                    self._note("WAIT", "release step reached, waiting for target compare + in-position",
+                               target_compare=int(bool(st("at_meas_start"))),
+                               in_position=int(bool(st("pos_complete"))))
+                if now - self._t_release_step <= self.t["meas_inpos"]:
+                    return {}
+                missing = " and ".join(text for name, text in (("at_meas_start", "the target compare is OFF"),
+                                                               ("pos_complete", "the drive in-position signal is OFF"))
+                                       if not st(name))
                 return self._finish("failed", f"{self.name}: the sequence advanced by its timeout branch without "
-                                              "reaching the target", now, release=True)
+                                              f"reaching the target ({missing} {self.t['meas_inpos']:g} s after "
+                                              "the release step)", now, release=True)
             if step == -1:
                 return self._finish("failed", f"{self.name}: sequence reset before the release step", now,
                                     release=True)
