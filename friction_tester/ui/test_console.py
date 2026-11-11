@@ -1362,10 +1362,41 @@ class TestConsolePage(tk.Frame):
         if out and fb:
             return f"{axis} servo is ON (PLC output {out_addr} and drive status both ON)."
         if out is False:
-            return (f"{axis} servo: the PLC is not sending servo ON ({out_addr} OFF) - the PLC switches it itself "
-                    "after start-up; check the machine (start-up, emergency stop, touch panel).")
+            return f"{axis} servo OFF ({out_addr} OFF): " + self._servo_blockers(key, poll.get("common") or {}, names)
         return (f"{axis} servo: the PLC switches servo ON itself in this program; servo state not read yet "
                 "(PLC lamps not available).")
+
+    def _servo_blockers(self, key, common, names):
+        """Why the PLC holds its servo ON output OFF, from the rung (plc.pdf p27-28):
+        P00030 = [(M00105 AND M00109) OR (NOT M00105 AND M0700F AND M07007) OR (NOT M00105 AND T0050)]
+                 AND P00013 AND P0000D AND P0000F        (SELECT: P00034, M00205, M00209, M0700B, P00017)."""
+        snap = getattr(self, "_pc_snap", None)
+
+        def estop(status_name, addr):
+            v = snap.common(status_name) if snap is not None else None
+            return common.get(names.get(addr)) if v is None and addr in names else v
+
+        why = []
+        if estop("p0000f_input", "P0000F") is False:
+            why.append("emergency stop TOP is pressed (P0000F OFF) - release it")
+        if estop("p0000d_input", "P0000D") is False:
+            why.append("emergency stop BOTTOM is pressed (P0000D OFF) - release it")
+        alarm_addr = pp.STATUS[key]["alarm_normal"][2]
+        if snap is not None and snap.st(key, "alarm_normal") is False:
+            why.append(f"the servo drive is in alarm ({alarm_addr} OFF) - clear the alarm at the drive / touch panel")
+        sel_addr = pp.SELECTOR[key]
+        sel = snap.selector(key) if snap is not None else None
+        if sel:
+            why.append(f"the touch panel is in touch operation ({sel_addr} ON) - press servo ON on the touch panel, "
+                       "or switch touch operation off so the PLC turns the servo on itself")
+        if why:
+            return "; ".join(why) + "."
+        if sel is False:
+            return ("emergency stops, drive alarm and touch-operation select are all normal, so the PLC start-up "
+                    "timer T0050 has not finished - check the PLC is in RUN (power the PLC off and on).")
+        return (f"emergency stops and drive alarm read normal; touch-operation select {sel_addr} cannot be read here. "
+                f"Either touch operation is ON at the touch panel (press servo ON there or switch it off), or the "
+                "PLC has not finished start-up (T0050) - check the PLC is in RUN.")
 
     def toggle_servo(self, key, n):
         """Servo ON/OFF: a maintained PLC bit."""
