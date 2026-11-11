@@ -598,10 +598,24 @@ def test_evaluation_rules_are_explicit():
     assert evaluate_axis(edge, COND, dict(RULES, limit_bounds="exclusive"))["verdict"] == "NG"
     pos = [{"pull": [(0, 2.0, 0.0), (1, 4.0, 10.0), (2, 6.0, 20.0)],
             "push": [(0, 3.0, 0.0), (1, 3.0, 10.0), (2, 3.0, 20.0)]}]
-    res = evaluate_axis(pos, dict(COND, positions=[5.0, 15.0, None]), dict(RULES, judge="positions"))
-    assert res["pull"] == [3.0, 5.0] and res["verdict"] == "OK"
-    out = evaluate_axis(pos, dict(COND, positions=[25.0]), dict(RULES, judge="positions"))
-    assert out["verdict"] == "INCOMPLETE" and "not covered" in out["problems"][0]
+    # judge = positions: the load at -(stroke/2 - 2), 0, +(stroke/2 - 2) on the centred stroke
+    # axis (the LVDT's PULL start = -stroke/2), not at the model's Position 1-3 (PLC limits)
+    res = evaluate_axis(pos, dict(COND, stroke=20.0, positions=[-10.0, None, 11.0]), dict(RULES, judge="positions"))
+    assert res["positions"] == [-8.0, 0.0, 8.0] and res["stroke_source"] == "lvdt"
+    assert [round(v, 6) for v in res["pull"]] == [2.4, 4.0, 5.6] and res["push"] == [3.0, 3.0, 3.0]
+    assert res["verdict"] == "OK"
+    out = evaluate_axis(pos, dict(COND, stroke=30.0), dict(RULES, judge="positions"))   # LVDT covers -15..+5
+    assert out["verdict"] == "INCOMPLETE" and "13 mm not covered" in out["problems"][0]
+    none = evaluate_axis(pos, COND, dict(RULES, judge="positions"))
+    assert none["verdict"] == "INCOMPLETE" and "Stroke condition is empty" in none["problems"][0]
+    # no LVDT: the commanded stroke (speed x time), PULL -11 -> +11 and PUSH back
+    timed = [{"pull": [(10.0, 2.0, None), (10.22, 4.0, None), (10.44, 6.0, None)],
+              "push": [(11.0, 3.0, None), (11.22, 5.0, None), (11.44, 7.0, None)]}]
+    cmd = evaluate_axis(timed, dict(COND, stroke=22.0, speed=50.0), dict(RULES, judge="positions"))
+    assert cmd["stroke_source"] == "speed x time" and cmd["positions"] == [-9.0, 0.0, 9.0]
+    assert [round(v, 3) for v in cmd["pull"]] == [2.364, 4.0, 5.636]
+    assert [round(v, 3) for v in cmd["push"]] == [6.636, 5.0, 3.364]
+    assert evaluate_axis(timed, dict(COND, stroke=22.0), dict(RULES, judge="positions"))["verdict"] == "INCOMPLETE"
 
 
 # ------------------------------------------------------------------ result saving
@@ -946,6 +960,39 @@ def test_graph_without_lvdt_draws_the_commanded_stroke_loop():
         assert panel.plot.series["PUSH"]["x"] == [11.0, 1.0]
         assert panel.plot.xlabel == "Stroke [mm] (speed × time)"
         assert [round(v, 6) for v in panel.plot.xlim] == [-13.2, 13.2]   # the scale did not move
+    finally:
+        root.destroy()
+
+
+def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition():
+    """The LVDT reads an absolute position (never negative here); with a Stroke condition
+    the PULL start is drawn at -stroke/2 and the pull direction is positive."""
+    import tkinter as tk
+    from friction_tester.plc.pc_measure import Capture
+    from friction_tester.ui.test_console import CablePanel
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        import pytest
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        import copy
+        from friction_tester.config import DEFAULT_SETTINGS
+        cfg = dict(copy.deepcopy(DEFAULT_SETTINGS["test"]["select"]), speed=50.0, stroke=22.0)
+        panel = CablePanel(root, "SELECT CABLE", cfg)
+        pull = Capture("select", "pull", "t", 1)
+        pull.graph += [(10.0, 0.0, 40.0), (10.2, 0.4, 51.0), (10.4, 0.4, 62.0)]
+        panel.draw_capture(pull)
+        assert panel.plot.series["PULL"]["x"] == [-11.0, 0.0, 11.0] and panel.plot.xlabel == "Stroke [mm]"
+        push = Capture("select", "push", "t", 1)
+        push.graph += [(11.0, -0.3, 62.0), (11.2, -0.3, 40.0)]
+        panel.draw_capture(push)
+        assert panel.plot.series["PUSH"]["x"] == [11.0, -11.0]
+        pull2 = Capture("select", "pull", "t", 2)                    # LVDT wired the other way round
+        pull2.graph += [(20.0, 0.0, 62.0), (20.2, 0.4, 51.0)]
+        panel.draw_capture(pull2)
+        assert panel.plot.series["PULL"]["x"] == [-11.0, 0.0] and not panel.plot.series["PUSH"]["x"]
     finally:
         root.destroy()
 

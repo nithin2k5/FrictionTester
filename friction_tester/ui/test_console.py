@@ -121,6 +121,7 @@ class CablePanel(tk.Frame):
         self._gstroke = None
         self._gmode = None         # "stroke" (LVDT on the NI card), "commanded" or "time"
         self._gspeed = self._glen = None   # Speed / Stroke conditions of the stroke on the graph
+        self._graw = {"PULL": [], "PUSH": []}   # LVDT readings of the traces on the graph
         self._scale_graph()
 
         live = tk.Frame(self, bg=theme.PANEL)
@@ -306,7 +307,9 @@ class CablePanel(tk.Frame):
     def draw_capture(self, cap):
         """Add a measuring stroke's new graph points (Capture.graph: the NI card load when
         graph_force = "daq") to the graph, Load against Stroke like the LabVIEW screen:
-          - the LVDT stroke (NI card) when one is read;
+          - the LVDT stroke (NI card) when one is read. The LVDT reads an absolute
+            position, so with a Stroke condition it is centred like the LabVIEW graph:
+            the PULL start becomes -stroke/2 and the pull direction is positive;
           - otherwise the commanded stroke, speed x time: PULL runs from -stroke/2 to
             +stroke/2 and PUSH back again, so the two traces close into a loop;
           - time since the stroke began when Speed / Stroke are empty.
@@ -316,8 +319,10 @@ class CablePanel(tk.Frame):
             if cap.stroke_no != self._gstroke:
                 self.plot.clear()
                 self._gstroke, self._gmode = cap.stroke_no, None
+                self._graw = {"PULL": [], "PUSH": []}
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
+                self._graw[name] = []
             self._gcap, self._gn, self._gt0 = cap, 0, None
         new = cap.graph[self._gn:]
         self._gn += len(new)
@@ -340,6 +345,7 @@ class CablePanel(tk.Frame):
             if self._gmode == "stroke":
                 if stroke is None:
                     continue
+                self._graw[name].append(stroke)
                 series["x"].append(stroke)
             elif self._gmode == "commanded":
                 moved = min((t - self._gt0) * self._gspeed, self._glen)
@@ -348,9 +354,19 @@ class CablePanel(tk.Frame):
             else:
                 series["x"].append(round(t - self._gt0, 3))
             series["y"].append(load)
+        if new and self._gmode == "stroke" and self._glen:
+            self._centre_stroke()
         if new:
             self.plot.redraw()
             self.plot.extend_to_data()
+
+    def _centre_stroke(self):
+        """LVDT readings -> the graph's stroke axis: the PULL start is -stroke/2 and the
+        pull direction is positive, whatever the LVDT's zero and polarity. A PUSH drawn
+        without its PULL starts at +stroke/2 and runs negative."""
+        from ..plc.pc_flow import centre_lvdt
+        xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], self._glen / 2)
+        self.plot.series["PULL"]["x"], self.plot.series["PUSH"]["x"] = xs
 
     def set_source(self, text):
         self.source_lbl.config(text=text)
@@ -431,7 +447,11 @@ class CablePanel(tk.Frame):
         self.last_ok = None              # counted per part by the controller
         problems = res.get("problems") or []
         counts = res.get("sample_counts") or {}
-        self.set_source(f"{source_text} · judge: {res.get('judge')} · samples PULL {counts.get('pull', 0)} / "
+        at = ""
+        if res.get("judge") == "positions" and res.get("positions"):
+            at = (" at " + " / ".join(f"{p:g}" for p in res["positions"]) + " mm"
+                  + (f" ({res['stroke_source']})" if res.get("stroke_source") else ""))
+        self.set_source(f"{source_text} · judge: {res.get('judge')}{at} · samples PULL {counts.get('pull', 0)} / "
                         f"PUSH {counts.get('push', 0)}" + (f"\n{'; '.join(problems)}" if problems else ""))
 
     def set_live_values(self, load, stroke, load_unit, stroke_unit):

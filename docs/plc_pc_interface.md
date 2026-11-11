@@ -231,8 +231,10 @@ with acquisition → evaluation. No extra return-to-home and no fixture release 
 
 `measurement`: force source per cable (serial loadcell number or NI DAQ sensor row), stroke source (DAQ
 LVDT row, or none), calibration (scale, offset, unit, verified flag), and the evaluation rules, **all
-unset by default**: `judge` (`peak` | `strokes` | `positions` with linear interpolation on the stroke
-source), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
+unset by default**: `judge` (`peak` | `strokes` | `positions`: the load of the last stroke at −(Stroke/2 − 2), 0 and
++(Stroke/2 − 2) on the centred stroke axis of the graph, linear interpolation; the stroke is the LVDT
+re-zeroed so the PULL start is −Stroke/2, or speed × time when no LVDT is read; the model's
+Position 1–3 are not used for this), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
 `min_samples`. Samples carry timestamp, calibrated and raw force, stroke and raw stroke; a failed read
 is recorded as invalid (no substitute sensor). Positions and repetition count are separate settings.
 

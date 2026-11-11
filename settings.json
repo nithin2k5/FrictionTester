@@ -231,7 +231,7 @@
             "verified": false
           }
         },
-        "judge": "strokes",
+        "judge": "positions",
         "force_sign": "absolute",
         "limit_bounds": "inclusive",
         "min_samples": 3,

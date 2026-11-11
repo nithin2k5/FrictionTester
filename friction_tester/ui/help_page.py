@@ -37,7 +37,7 @@ CHAPTERS = [
     ("p", "The Friction Tester measures how hard it is to pull and push the inner wire of a gear "
           "cable. A part has two cables - SELECT and SHIFT - and each one has its own servo axis "
           "and its own loadcell. The axis moves the cable end back and forth while the force is "
-          "recorded, and the peak force of each stroke is judged against the model's LOAD limits."),
+          "recorded, and the force at three points of the stroke is judged against the model's LOAD limits."),
     ("h", "What is connected"),
     ("kv", [
         ("PLC", "LS XGB (PRINTING PROGRAM OLD). Runs both servo axes; the PC sends it the test "
@@ -175,8 +175,10 @@ CHAPTERS = [
 
 ("Results and Judgement", [
     ("kv", [
-        ("PULL1-3 / PUSH1-3", "The highest force (sign ignored) of each of the three strokes, "
-                              "from the serial loadcell."),
+        ("PULL1-3 / PUSH1-3", "The force (sign ignored) at three points of the last stroke, from the "
+                              "serial loadcell: 2 mm after the start, the middle, and 2 mm before the "
+                              "end. On the graph (stroke from -Stroke/2 to +Stroke/2) these are "
+                              "-(Stroke/2 - 2), 0 and +(Stroke/2 - 2): -9 / 0 / +9 for Stroke 22."),
         ("Mean", "The average of the three PULL / three PUSH values."),
         ("Max", "The largest of all six."),
         ("OK", "All six values inside LOAD min-max (limits included)."),

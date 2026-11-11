@@ -71,14 +71,64 @@ def _interp(points, pos):
     return None
 
 
+CAPTURE_MARGIN = 2.0     # mm: the outer capture points lie this far inside each stroke end
+
+
+def capture_positions(stroke):
+    """The three stroke positions where PULL1-3 / PUSH1-3 are read, on the graph's axis
+    (the stroke runs -stroke/2 .. +stroke/2):  -(stroke/2 - 2),  0,  +(stroke/2 - 2).
+    Empty when the stroke is not set or too short."""
+    if not stroke or stroke / 2 <= CAPTURE_MARGIN:
+        return []
+    p = stroke / 2 - CAPTURE_MARGIN
+    return [-p, 0.0, p]
+
+
+def centre_lvdt(pull, push, half):
+    """LVDT readings of a PULL and its PUSH -> the centred stroke axis: the PULL start is
+    -half and the pull direction is positive, whatever the LVDT's zero and polarity.
+    A PUSH without its PULL starts at +half and runs negative. Returns (pull_x, push_x)."""
+    if pull:
+        ref, start = pull[0], -half
+        sign = -1.0 if pull[-1] < ref else 1.0
+    elif push:
+        ref, start = push[0], half
+        sign = -1.0 if push[-1] > ref else 1.0
+    else:
+        return [], []
+    return tuple([round(start + sign * (v - ref), 3) for v in raw] for raw in (pull, push))
+
+
+def stroke_points(pull, push, stroke, speed):
+    """Valid samples [(t, load, lvdt), ...] of one PULL / PUSH -> ({"pull": [(x, load)],
+    "push": [...]}, source) on the centred stroke axis. Source "lvdt" when the LVDT was
+    read, otherwise "speed x time" (the commanded stroke: PULL -stroke/2 -> +stroke/2,
+    PUSH back), or None when neither is available."""
+    half = stroke / 2
+    lv = {"pull": [s for s in pull if s[2] is not None], "push": [s for s in push if s[2] is not None]}
+    if lv["pull"] or lv["push"]:
+        xs = centre_lvdt([s[2] for s in lv["pull"]], [s[2] for s in lv["push"]], half)
+        return {d: list(zip(x, (s[1] for s in lv[d]))) for d, x in zip(("pull", "push"), xs)}, "lvdt"
+    if not speed:
+        return {"pull": [], "push": []}, None
+    out = {}
+    for d, samples in (("pull", pull), ("push", push)):
+        moved = [min((s[0] - samples[0][0]) * speed, stroke) for s in samples]
+        out[d] = [(m - half if d == "pull" else half - m, s[1]) for m, s in zip(moved, samples)]
+    return out, "speed x time"
+
+
 def evaluate_axis(strokes, cond, mcfg):
     """strokes: [{"pull": [(t, load, stroke)], "push": [...]}, ...].
 
     Rules (machine_profile.measurement), all required - none is chosen silently:
       judge:        "peak"      PULL / PUSH = largest-magnitude load of the last stroke
                     "strokes"   PULL1-3 / PUSH1-3 = peak of strokes 1-3 (repeated strokes)
-                    "positions" PULL1-3 / PUSH1-3 = load at model positions 1-3,
-                                linear interpolation on a verified stroke source
+                    "positions" PULL1-3 / PUSH1-3 = load of the last stroke at the three
+                                capture positions -(stroke/2 - 2), 0, +(stroke/2 - 2)
+                                (capture_positions), linear interpolation on the centred
+                                stroke axis of the graph (stroke_points: LVDT, or
+                                speed x time when no LVDT is read)
       force_sign:   "absolute" (compare |load|) or "signed" (compare load as delivered)
       limit_bounds: "inclusive" (min <= v <= max) or "exclusive" (min < v < max)
       min_samples:  valid samples needed per stroke direction
@@ -89,6 +139,7 @@ def evaluate_axis(strokes, cond, mcfg):
     min_n = int(mcfg.get("min_samples", 3) or 1)
     lo, hi = cond.get("load_min"), cond.get("load_max")
     incomplete, ng = [], []
+    positions, stroke_source = [], None
     if judge not in ("peak", "strokes", "positions"):
         incomplete.append("measurement.judge is not configured")
     if sign not in ("absolute", "signed"):
@@ -117,19 +168,27 @@ def evaluate_axis(strokes, cond, mcfg):
     elif judge == "strokes":
         values = {d: peaks[d][:3] for d in values}
     elif judge == "positions":
-        positions = [p for p in (cond.get("positions") or []) if p is not None]
+        positions = capture_positions(cond.get("stroke"))
         if not positions:
-            incomplete.append("judge = positions but the model has no positions")
+            incomplete.append("judge = positions but the Stroke condition is empty or under "
+                              f"{2 * CAPTURE_MARGIN:g} mm")
         last = strokes[-1] if strokes else {}
+        points = {"pull": [], "push": []}
+        if positions:
+            points, stroke_source = stroke_points(valid(last.get("pull")), valid(last.get("push")),
+                                                  cond["stroke"], cond.get("speed"))
         for d in values:
-            pts = [(x[2], x[1]) for x in valid(last.get(d)) if x[2] is not None]
+            pts = points[d]
             if positions and len(pts) < min_n:
-                incomplete.append(f"{d.upper()}: no verified stroke data for positional sampling")
+                incomplete.append(f"{d.upper()}: no stroke data for positional sampling"
+                                  + ("" if stroke_source else " (no LVDT reading and no Speed condition)"))
             vals = []
             for p in positions:
                 v = _interp(pts, p) if len(pts) >= 2 else None
                 if v is None and len(pts) >= min_n:
-                    incomplete.append(f"{d.upper()}: position {p} not covered by the stroke data")
+                    incomplete.append(f"{d.upper()}: position {p:g} mm not covered by the stroke data "
+                                      f"({min(x for x, _ in pts):.1f} .. {max(x for x, _ in pts):.1f} mm, "
+                                      f"{stroke_source})")
                 vals.append(None if v is None else f(v))
             values[d] = vals or [None]
     for d in values:
@@ -152,7 +211,7 @@ def evaluate_axis(strokes, cond, mcfg):
         graph[d] = [(round(x[0] - t0, 4), x[1], x[2]) for x in pts[::step]]
     return {
         "ok": verdict == "OK", "verdict": verdict,
-        "judge": judge, "force_sign": sign, "limit_bounds": bounds, "min_samples": min_n,
+        "judge": judge, "positions": positions, "stroke_source": stroke_source, "force_sign": sign, "limit_bounds": bounds, "min_samples": min_n,
         "pull": values["pull"], "push": values["push"],
         "max": max(all_vals, key=abs, default=None),
         "sample_counts": {d: sum(len(valid(s.get(d))) for s in strokes) for d in ("pull", "push")},
