@@ -100,19 +100,30 @@ NUMERIC = {cond_col(key, attr) for key in TEST_KEYS for attr, *_ in CONDITION_FI
 PLC_INT = {cond_col(key, attr) for key in TEST_KEYS for attr, *_ in PLC_PARAM_FIELDS}
 
 
+LIMIT_MARGIN = 2.0              # mm between the stroke end (Stroke/2) and the PLC travel limit
+
+
+def travel_limit(stroke):
+    """PLC travel limit (whole mm either side of home) for a stroke: Stroke/2 + 2 mm,
+    rounded up - outside the PULL end (Stroke/2 + 1 mm). None without a stroke."""
+    import math
+    return None if stroke is None else math.ceil(stroke / 2 + LIMIT_MARGIN)
+
+
 def plc_params_from_row(row):
     """The 14 parameter words of a model in D04200 order (int or None).
 
     Taken from each cable's test condition; a stored PLC word is used only
-    where the condition field is empty. Positions are signed distances from
-    home (the PLC's origin D02000), so with the ladder formulas (p20-22)
-        left limit  D02014 = D02000 + L x 100   ->  L = Position 3
-        right limit D02016 = D02000 - R x 100   ->  R = -Position 1
+    where the condition field is empty. With the ladder formulas (p20-22)
         start       D02018 = D02000 - S x 10    ->  S = Stroke / 2 x 10
         PULL target D02004 = start + T x 100    ->  T = Stroke
+        left limit  D02014 = D02000 + L x 100   ->  L = Stroke / 2 + 2 mm, rounded up
+        right limit D02016 = D02000 - R x 100   ->  R = Stroke / 2 + 2 mm, rounded up
     The start is centred automatically: the test runs from -Stroke/2 to
-    +Stroke/2 (+1 mm the PLC adds), so it covers both sides of home.
-    Position 2 is not used for the PLC.
+    +Stroke/2 (+1 mm the PLC adds), so it covers both sides of home, and the
+    travel limits sit just outside it (travel_limit).
+    Position 1-3 are NOT sent to the PLC: they are the stroke positions where
+    PULL1-3 / PUSH1-3 are read (pc_flow.capture_positions), inside the stroke.
     Operating speed = Speed; high jog speed = Speed; low jog speed = half of it.
     A value that comes out negative is left as is, so the parameter check rejects it.
     """
@@ -132,8 +143,8 @@ def plc_params_from_row(row):
             "jog_high": speed,
             "jog_low": None,
             "pull_travel": num(axis, "STROKE"),
-            "limit_left": num(axis, "POSITION_3"),
-            "limit_right": None if num(axis, "POSITION_1") is None else -num(axis, "POSITION_1"),
+            "limit_left": travel_limit(num(axis, "STROKE")),
+            "limit_right": travel_limit(num(axis, "STROKE")),
             "meas_start": None if num(axis, "STROKE") is None else num(axis, "STROKE") / 2 * 10,
         }[key]
         v = derived if derived is not None else num(axis, attr_of[key])

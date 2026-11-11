@@ -109,23 +109,24 @@ CHAPTERS = [
     ("tbl", ["Field", "Used for"], [
         ("Speed (mm/s)", "Test speed and high jog speed; low jog speed is half of it."),
         ("Stroke (mm)", "How far each PULL moves. The start is centred: -Stroke/2."),
-        ("Position 1 (mm)", "The - limit: the axis never goes below it. Not below -30."),
-        ("Position 2 (mm)", "Not used - the start is worked out from the Stroke."),
-        ("Position 3 (mm)", "The + limit: the axis never goes above it. Not above +30."),
+        ("Position 1 (mm)", "Where PULL1 / PUSH1 are read, on the - side of the stroke."),
+        ("Position 2 (mm)", "Where PULL2 / PUSH2 are read, normally 0 (the middle)."),
+        ("Position 3 (mm)", "Where PULL3 / PUSH3 are read, on the + side of the stroke."),
         ("Delay Time (s)", "Not used."),
         ("LOAD min / max (kgf)", "The OK range for every measured value."),
     ]),
     ("h", "Rules a model must follow"),
     ("bul", [
         "Position 1 >= -30 and Position 3 <= +30 (checked on SAVE, with a pop-up).",
-        "Position 1 <= -Stroke/2 (the start must be inside the - limit).",
-        "Position 3 >= Stroke/2 + 1 (the PULL end, including the 1 mm the PLC adds, must be "
-        "inside the + limit).",
+        "Position 1-3 must lie inside the stroke, between -Stroke/2 and +Stroke/2 - otherwise "
+        "that value cannot be read and the result is INCMP.",
+        "Left empty, the positions are -(Stroke/2 - 2), 0 and +(Stroke/2 - 2).",
         "LOAD min must not be above LOAD max.",
         "Type must be AT or MT.",
     ]),
-    ("p", "Example: Stroke 10 -> start -5 mm, PULL end +6 mm, so Position 1 must be -5 or lower "
-          "and Position 3 +6 or higher."),
+    ("p", "Example: Stroke 22 -> the stroke runs from -11 to +11 mm, Position 1 / 2 / 3 = "
+          "-8 / 0 / +8. The axis travel limits are set automatically 2 mm outside the stroke "
+          "(-13 / +13)."),
     ("note", "Unsaved edits are protected: leaving the page, pressing NEW or clicking another "
              "model asks first."),
 ]),
@@ -154,10 +155,10 @@ CHAPTERS = [
 ]),
 
 ("The Test Cycle", [
-    ("p", "For each cable the PLC moves the axis like this (Stroke 10, Position 1 = -10, "
-          "Position 3 = +11):"),
+    ("p", "For each cable the PLC moves the axis like this (Stroke 10; the travel limits are set "
+          "automatically, 2 mm outside the stroke):"),
     ("pre", "  - limit   start          home            PULL end   + limit\n"
-            "   -10       -5              0                +6         +11\n"
+            "    -7       -5              0                +6          +7\n"
             "             |<============= PULL ============>|\n"
             "             |<============= PUSH =============|\n"
             "             3 x PULL + PUSH   ->  PULL1-3 / PUSH1-3"),
@@ -175,10 +176,10 @@ CHAPTERS = [
 
 ("Results and Judgement", [
     ("kv", [
-        ("PULL1-3 / PUSH1-3", "The force (sign ignored) at three points of the last stroke, from the "
-                              "serial loadcell: 2 mm after the start, the middle, and 2 mm before the "
-                              "end. On the graph (stroke from -Stroke/2 to +Stroke/2) these are "
-                              "-(Stroke/2 - 2), 0 and +(Stroke/2 - 2): -9 / 0 / +9 for Stroke 22."),
+        ("PULL1-3 / PUSH1-3", "The force (sign ignored) of the last stroke at the model's Position "
+                              "1, 2 and 3, from the serial loadcell. The positions are read on the "
+                              "graph's stroke axis (-Stroke/2 to +Stroke/2), e.g. -8 / 0 / +8 for "
+                              "Stroke 22."),
         ("Mean", "The average of the three PULL / three PUSH values."),
         ("Max", "The largest of all six."),
         ("OK", "All six values inside LOAD min-max (limits included)."),
@@ -229,7 +230,8 @@ CHAPTERS = [
         ("Parameters not confirmed for …", "Press MODEL CHANGE again; check the database is "
                                            "reachable."),
         ("PLC parameters for … not valid: targets outside the limits",
-         "Fix the model: Position 1 <= -Stroke/2 and Position 3 >= Stroke/2 + 1."),
+         "The travel limits are worked out from the Stroke, so this should not appear - call "
+         "support."),
         ("Position 1 must not be below -30 / Position 3 must not be above 30",
          "Enter a value inside the range."),
         ("Waiting for … to reach origin", "Normal - the test starts when both axes are home."),

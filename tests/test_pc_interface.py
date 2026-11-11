@@ -598,9 +598,11 @@ def test_evaluation_rules_are_explicit():
     assert evaluate_axis(edge, COND, dict(RULES, limit_bounds="exclusive"))["verdict"] == "NG"
     pos = [{"pull": [(0, 2.0, 0.0), (1, 4.0, 10.0), (2, 6.0, 20.0)],
             "push": [(0, 3.0, 0.0), (1, 3.0, 10.0), (2, 3.0, 20.0)]}]
-    # judge = positions: the load at -(stroke/2 - 2), 0, +(stroke/2 - 2) on the centred stroke
-    # axis (the LVDT's PULL start = -stroke/2), not at the model's Position 1-3 (PLC limits)
-    res = evaluate_axis(pos, dict(COND, stroke=20.0, positions=[-10.0, None, 11.0]), dict(RULES, judge="positions"))
+    # judge = positions: the load at the model's Position 1-3 on the centred stroke axis (the
+    # LVDT's PULL start = -stroke/2); without positions -(stroke/2 - 2), 0, +(stroke/2 - 2)
+    given = evaluate_axis(pos, dict(COND, stroke=20.0, positions=[-6.0, 0.0, 8.0]), dict(RULES, judge="positions"))
+    assert given["positions"] == [-6.0, 0.0, 8.0] and [round(v, 6) for v in given["pull"]] == [2.8, 4.0, 5.6]
+    res = evaluate_axis(pos, dict(COND, stroke=20.0), dict(RULES, judge="positions"))
     assert res["positions"] == [-8.0, 0.0, 8.0] and res["stroke_source"] == "lvdt"
     assert [round(v, 6) for v in res["pull"]] == [2.4, 4.0, 5.6] and res["push"] == [3.0, 3.0, 3.0]
     assert res["verdict"] == "OK"
@@ -747,12 +749,20 @@ def test_plc_params_from_cable_conditions():
         row.update({f"MM_{t}_SPEED": 10, f"MM_{t}_STROKE": 5, f"MM_{t}_POSITION_1": -30,
                     f"MM_{t}_POSITION_2": -5, f"MM_{t}_POSITION_3": 30})
     values = db.plc_params_from_row(row)
-    # jog low = speed / 2, jog high = speed, speed, PULL = stroke, left = P3, right = -P1;
-    # start centred: Stroke / 2 x 10 (stroke 5 -> start 2.5 mm on the - side)
-    assert values == [5, 10, 10, 5, 30, 30] * 2 + [25, 25]
+    # jog low = speed / 2, jog high = speed, speed, PULL = stroke, limits = Stroke / 2 + 2 mm
+    # rounded up (Position 1-3 are capture points, not sent); start centred: Stroke / 2 x 10
+    # (stroke 5 -> start 2.5 mm on the - side)
+    assert values == [5, 10, 10, 5, 5, 5] * 2 + [25, 25]
     t = derived_targets(values, False)["shift"]
     assert t["start"] == 1_000_000 - 250 and t["pull"] == t["start"] + 500 + 100
     assert not validate_params(values) and not target_problems(derived_targets(values, False))
+    # the model from the machine: Stroke 30 with Position 1 / 3 = -10 / +10 inside the stroke
+    for t in ("SHIFT", "SELECT"):
+        row.update({f"MM_{t}_STROKE": 30, f"MM_{t}_POSITION_1": -10, f"MM_{t}_POSITION_3": 10})
+    values = db.plc_params_from_row(row)
+    t = derived_targets(values, False)["select"]
+    assert (t["right_limit"], t["start"], t["pull"], t["left_limit"]) == (998300, 998500, 1001600, 1001700)
+    assert not target_problems(derived_targets(values, False))
 
 
 def test_db_schema_names_defined():

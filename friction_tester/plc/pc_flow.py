@@ -74,10 +74,14 @@ def _interp(points, pos):
 CAPTURE_MARGIN = 2.0     # mm: the outer capture points lie this far inside each stroke end
 
 
-def capture_positions(stroke):
-    """The three stroke positions where PULL1-3 / PUSH1-3 are read, on the graph's axis
-    (the stroke runs -stroke/2 .. +stroke/2):  -(stroke/2 - 2),  0,  +(stroke/2 - 2).
-    Empty when the stroke is not set or too short."""
+def capture_positions(stroke, positions=None):
+    """The stroke positions where PULL1-3 / PUSH1-3 are read, on the graph's axis (the
+    stroke runs -stroke/2 .. +stroke/2): the model's Position 1-3 (e.g. -8 / 0 / +8 for a
+    22 mm stroke), or -(stroke/2 - 2), 0, +(stroke/2 - 2) when the model has none.
+    Empty when neither is available."""
+    given = [p for p in positions or [] if p is not None]
+    if given:
+        return given
     if not stroke or stroke / 2 <= CAPTURE_MARGIN:
         return []
     p = stroke / 2 - CAPTURE_MARGIN
@@ -137,9 +141,10 @@ def evaluate_axis(strokes, cond, mcfg):
     Rules (machine_profile.measurement), all required - none is chosen silently:
       judge:        "peak"      PULL / PUSH = largest-magnitude load of the last stroke
                     "strokes"   PULL1-3 / PUSH1-3 = peak of strokes 1-3 (repeated strokes)
-                    "positions" PULL1-3 / PUSH1-3 = load of the last stroke at the three
-                                capture positions -(stroke/2 - 2), 0, +(stroke/2 - 2)
-                                (capture_positions), linear interpolation on the centred
+                    "positions" PULL1-3 / PUSH1-3 = load of the last stroke at the model's
+                                Position 1-3, or at -(stroke/2 - 2), 0, +(stroke/2 - 2) when
+                                the model has none (capture_positions), linear interpolation
+                                on the centred
                                 stroke axis of the graph (stroke_points: LVDT, or
                                 speed x time when no LVDT is read)
       force_sign:   "absolute" (compare |load|) or "signed" (compare load as delivered)
@@ -181,10 +186,13 @@ def evaluate_axis(strokes, cond, mcfg):
     elif judge == "strokes":
         values = {d: peaks[d][:3] for d in values}
     elif judge == "positions":
-        positions = capture_positions(cond.get("stroke"))
-        if not positions:
-            incomplete.append("judge = positions but the Stroke condition is empty or under "
-                              f"{2 * CAPTURE_MARGIN:g} mm")
+        if not cond.get("stroke"):
+            incomplete.append("judge = positions but the Stroke condition is empty")
+        else:
+            positions = capture_positions(cond["stroke"], cond.get("positions"))
+            if not positions:
+                incomplete.append("judge = positions but the model has no Position 1-3 and the Stroke "
+                                  f"is under {2 * CAPTURE_MARGIN:g} mm")
         last = strokes[-1] if strokes else {}
         points = {"pull": [], "push": []}
         if positions:

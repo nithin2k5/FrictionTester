@@ -182,10 +182,10 @@ D00490 = 100 when M0700F is OFF, 0 when ON; speeds × 100; limits D02014 = D0200
 D02016 = D02000 − R × 100. These are counts, not mm or mm/s.
 
 Source (`db.plc_params_from_row`, 2026-11-10): the cable's test condition — operating speed = Speed,
-high jog = Speed, low jog = Speed / 2, PULL travel = Stroke, left limit = Position 3, right limit =
-−Position 1 (positions are signed distances from home), measurement start = Stroke ÷ 2 × 10 — centred
-automatically, so the test runs from −Stroke/2 to +Stroke/2 (+1 mm D00490) across home; Position 2 is
-not sent. A stored PLC word is used only where the condition field is empty.
+high jog = Speed, low jog = Speed / 2, PULL travel = Stroke, left limit = right limit =
+Stroke ÷ 2 + 2 mm rounded up (2026-11-12; before: Position 3 / −Position 1), measurement start =
+Stroke ÷ 2 × 10 — centred automatically, so the test runs from −Stroke/2 to +Stroke/2 (+1 mm D00490)
+across home. Position 1–3 are not sent: they are the stroke positions where PULL1-3 / PUSH1-3 are read. A stored PLC word is used only where the condition field is empty.
 
 App: whole numbers 0..65535 (start 0..32767); derived targets checked (right ≤ start ≤ PULL ≤ left,
 using the PLC's own D00490 from the M0700F echo — the app never adds D00490 itself); written only
@@ -231,10 +231,11 @@ with acquisition → evaluation. No extra return-to-home and no fixture release 
 
 `measurement`: force source per cable (serial loadcell number or NI DAQ sensor row), stroke source (DAQ
 LVDT row, or none), calibration (scale, offset, unit, verified flag), and the evaluation rules, **all
-unset by default**: `judge` (`peak` | `strokes` | `positions`: the load of the last stroke at −(Stroke/2 − 2), 0 and
-+(Stroke/2 − 2) on the centred stroke axis of the graph, linear interpolation; the stroke is the LVDT
-re-zeroed so the PULL start is −Stroke/2, or speed × time when no LVDT is read; the model's
-Position 1–3 are not used for this), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
+unset by default**: `judge` (`peak` | `strokes` | `positions`: the load of the last stroke at the model's Position 1–3 — or
+at −(Stroke/2 − 2), 0 and +(Stroke/2 − 2) when the model has none — on the centred stroke axis of the
+graph, linear interpolation; the stroke is the LVDT
+re-zeroed so the PULL start is −Stroke/2, or speed × time when no LVDT is read or it does not follow
+the stroke), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
 `min_samples`. Samples carry timestamp, calibrated and raw force, stroke and raw stroke; a failed read
 is recorded as invalid (no substitute sensor). Positions and repetition count are separate settings.
 
