@@ -122,6 +122,7 @@ class CablePanel(tk.Frame):
         self._gmode = None         # "stroke" (LVDT on the NI card), "commanded" or "time"
         self._gspeed = self._glen = None   # Speed / Stroke conditions of the stroke on the graph
         self._graw = {"PULL": [], "PUSH": []}   # LVDT readings of the traces on the graph
+        self._gtimes = {"PULL": [], "PUSH": []}  # and their times since the capture began
         self._scale_graph()
 
         live = tk.Frame(self, bg=theme.PANEL)
@@ -320,9 +321,10 @@ class CablePanel(tk.Frame):
                 self.plot.clear()
                 self._gstroke, self._gmode = cap.stroke_no, None
                 self._graw = {"PULL": [], "PUSH": []}
+                self._gtimes = {"PULL": [], "PUSH": []}
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
-                self._graw[name] = []
+                self._graw[name], self._gtimes[name] = [], []
             self._gcap, self._gn, self._gt0 = cap, 0, None
         new = cap.graph[self._gn:]
         self._gn += len(new)
@@ -346,6 +348,7 @@ class CablePanel(tk.Frame):
                 if stroke is None:
                     continue
                 self._graw[name].append(stroke)
+                self._gtimes[name].append(t - self._gt0)
                 series["x"].append(stroke)
             elif self._gmode == "commanded":
                 moved = min((t - self._gt0) * self._gspeed, self._glen)
@@ -364,8 +367,18 @@ class CablePanel(tk.Frame):
         """LVDT readings -> the graph's stroke axis: the PULL start is -stroke/2 and the
         pull direction is positive, whatever the LVDT's zero and polarity. A PUSH drawn
         without its PULL starts at +stroke/2 and runs negative."""
-        from ..plc.pc_flow import centre_lvdt
-        xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], self._glen / 2)
+        from ..plc.pc_flow import centre_lvdt, lvdt_follows
+        half = self._glen / 2
+        lead = "PULL" if self._graw["PULL"] else "PUSH"
+        expected = min(self._gtimes[lead][-1] * self._gspeed, self._glen) if self._gspeed else 0.0
+        if expected >= 1.0 and not lvdt_follows(self._graw[lead], expected):
+            # The LVDT does not follow the axis (not wired / not scaled): commanded stroke
+            moved = {n: [min(t * self._gspeed, self._glen) for t in ts] for n, ts in self._gtimes.items()}
+            xs = ([round(m - half, 3) for m in moved["PULL"]], [round(half - m, 3) for m in moved["PUSH"]])
+            self.plot.set_xlabel("Stroke [mm] (speed × time - LVDT not moving)")
+        else:
+            xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], half)
+            self.plot.set_xlabel("Stroke [mm]")
         self.plot.series["PULL"]["x"], self.plot.series["PUSH"]["x"] = xs
 
     def set_source(self, text):

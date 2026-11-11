@@ -99,23 +99,36 @@ def centre_lvdt(pull, push, half):
     return tuple([round(start + sign * (v - ref), 3) for v in raw] for raw in (pull, push))
 
 
+def lvdt_follows(readings, expected):
+    """True when the LVDT readings moved at least half of the travel the axis was
+    commanded (`expected`, mm). False = the LVDT does not follow the axis: not wired,
+    wrong NI channel, or not scaled to mm."""
+    return bool(readings) and max(readings) - min(readings) >= 0.5 * expected
+
+
 def stroke_points(pull, push, stroke, speed):
     """Valid samples [(t, load, lvdt), ...] of one PULL / PUSH -> ({"pull": [(x, load)],
     "push": [...]}, source) on the centred stroke axis. Source "lvdt" when the LVDT was
-    read, otherwise "speed x time" (the commanded stroke: PULL -stroke/2 -> +stroke/2,
-    PUSH back), or None when neither is available."""
+    read and followed the stroke; otherwise "speed x time" (the commanded stroke: PULL
+    -stroke/2 -> +stroke/2, PUSH back), with the reason when an LVDT reading was
+    rejected; None when neither is available."""
     half = stroke / 2
     lv = {"pull": [s for s in pull if s[2] is not None], "push": [s for s in push if s[2] is not None]}
+    source = "speed x time"
     if lv["pull"] or lv["push"]:
-        xs = centre_lvdt([s[2] for s in lv["pull"]], [s[2] for s in lv["push"]], half)
-        return {d: list(zip(x, (s[1] for s in lv[d]))) for d, x in zip(("pull", "push"), xs)}, "lvdt"
+        moved = [s[2] for s in (lv["pull"] or lv["push"])]
+        if lvdt_follows(moved, stroke) or not speed:
+            xs = centre_lvdt([s[2] for s in lv["pull"]], [s[2] for s in lv["push"]], half)
+            return {d: list(zip(x, (s[1] for s in lv[d]))) for d, x in zip(("pull", "push"), xs)}, "lvdt"
+        source = (f"speed x time - the LVDT reading moved only {max(moved) - min(moved):.2f} of "
+                  f"{stroke:g} mm")
     if not speed:
         return {"pull": [], "push": []}, None
     out = {}
     for d, samples in (("pull", pull), ("push", push)):
         moved = [min((s[0] - samples[0][0]) * speed, stroke) for s in samples]
         out[d] = [(m - half if d == "pull" else half - m, s[1]) for m, s in zip(moved, samples)]
-    return out, "speed x time"
+    return out, source
 
 
 def evaluate_axis(strokes, cond, mcfg):

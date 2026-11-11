@@ -616,6 +616,11 @@ def test_evaluation_rules_are_explicit():
     assert [round(v, 3) for v in cmd["pull"]] == [2.364, 4.0, 5.636]
     assert [round(v, 3) for v in cmd["push"]] == [6.636, 5.0, 3.364]
     assert evaluate_axis(timed, dict(COND, stroke=22.0), dict(RULES, judge="positions"))["verdict"] == "INCOMPLETE"
+    # an LVDT that is read but does not follow the axis (not wired / not scaled): speed x time
+    flat = [{d: [(t, v, 4.97) for t, v, _s in s] for d, s in timed[0].items()}]
+    stuck = evaluate_axis(flat, dict(COND, stroke=22.0, speed=50.0), dict(RULES, judge="positions"))
+    assert stuck["pull"] == cmd["pull"] and stuck["verdict"] == "OK"
+    assert "LVDT reading moved only 0.00 of 22 mm" in stuck["stroke_source"]
 
 
 # ------------------------------------------------------------------ result saving
@@ -993,6 +998,11 @@ def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition():
         pull2.graph += [(20.0, 0.0, 62.0), (20.2, 0.4, 51.0)]
         panel.draw_capture(pull2)
         assert panel.plot.series["PULL"]["x"] == [-11.0, 0.0] and not panel.plot.series["PUSH"]["x"]
+        pull3 = Capture("select", "pull", "t", 3)                    # LVDT read but not moving
+        pull3.graph += [(30.0, 0.0, 4.97), (30.2, 0.4, 4.97), (30.9, 0.4, 4.98)]
+        panel.draw_capture(pull3)
+        assert panel.plot.series["PULL"]["x"] == [-11.0, -1.0, 11.0]
+        assert "speed × time" in panel.plot.xlabel
     finally:
         root.destroy()
 
