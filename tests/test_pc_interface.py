@@ -380,6 +380,20 @@ def test_home_feedback_before_sequence_end_is_not_completion():
     assert r.sim.starts["shift"]["home"] == 1 and "HOME complete" in r.messages()[-1]
 
 
+def test_home_fails_at_once_when_servo_drops_mid_home():
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("home", "shift")
+    r.until(lambda: r.ctl.manual.get("shift") is not None and r.ctl.manual["shift"].state == "running")
+    t0 = r.clock.t
+    r.sim.axes["shift"].servo = False
+    r.until(lambda: not r.ctl.manual)
+    assert r.clock.t - t0 < 2.0, "a servo drop must not wait for the 60 s home timeout"
+    assert r.ctl.fault and "drive/axis fault during homing" in r.ctl.fault
+    r.run(0.5)
+    assert r.requests_clear()
+
+
 def test_home_from_unhomed_power_up():
     """Power-up: origin feedback OFF -> M00122 OFF -> permission OFF. Homing must still start."""
     r = Rig()

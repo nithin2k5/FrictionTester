@@ -288,6 +288,11 @@ class HomeOp(AxisOp):
                 return self._finish("failed", f"{self.name}: PLC did not start homing", now, release=True)
             return {}
         if self.state == "running":
+            # Without this a servo drop (e-stop, PLC start-up interlock) mid-home only shows up as the
+            # timeout below, 60 s later and with the wrong cause.
+            if st("axis_error") or st("alarm_normal") is False or st("servo_on") is False:
+                return self._finish("failed", f"{self.name}: drive/axis fault during homing (servo ON, "
+                                              "alarm-normal or axis error) - check the machine", now)
             if (st("permitted") and st("origin_complete") and not st("axis_error")
                     and snap.echo_bit(self.idx, self.n) is False):
                 self.needs_release = False
