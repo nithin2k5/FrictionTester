@@ -162,14 +162,17 @@ class LoadStrokePlot(tk.Frame):
             step = fixed if span / fixed <= 24 else _nice_step(span, 12 if not horizontal else 9)
             if span / step < 4:                      # zoomed far in
                 step = _nice_step(span, 8)
+            # enough decimals to tell the divisions apart when zoomed in (0.001 steps -> 3)
+            decimals = max(int(fmt[3]), min(6, math.ceil(-math.log10(step) - 1e-9)))
+            fmt = "{:." + str(decimals) + "f}"
             ends = [self._to_px(v, v, w, h)[1 if horizontal else 0] for v in lim]
             every = max(1, math.ceil(gap / (abs(ends[1] - ends[0]) * step / span)))   # label spacing
 
             def label(v, pos):
                 if horizontal:
-                    c.create_text(l - 6, pos, text=fmt.format(v), anchor="e", fill=AXIS, font=font)
+                    c.create_text(l - 6, pos, text=fmt.format(v + 0.0), anchor="e", fill=AXIS, font=font)
                 else:
-                    c.create_text(pos, b + 10, text=fmt.format(v), anchor="n", fill=AXIS, font=font)
+                    c.create_text(pos, b + 10, text=fmt.format(v + 0.0), anchor="n", fill=AXIS, font=font)
 
             for k in range(math.ceil(lim[0] / step - 1e-9), math.floor(lim[1] / step + 1e-9) + 1):
                 v = k * step
