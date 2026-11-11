@@ -24,11 +24,9 @@ from ..devices import loadcell, ni_daq, plc_xgb
 COLS = (("Device", 145), ("COM Port", 130), ("Baud Rate", 105), ("ID", 84), ("", 268), ("Status", 0))
 
 def _id_text(value):
-    """Indicator ID (F-40) box: 0 = stream mode, 1-99 = command mode, blank = not entered yet."""
-    try:
-        return f"{loadcell.parse_id(value):02d}"
-    except ValueError:
-        return ""
+    """Indicator ID (F-40) box: blank = detect on connect, 0 = stream mode, 1-99 = command mode."""
+    dev = loadcell.parse_id(value)
+    return "" if dev is None else f"{dev:02d}"
 
 
 CARD_BG = theme.PANEL
@@ -367,7 +365,7 @@ class ComPortPage(tk.Frame):
 
     # ========================================================== loadcells
     def _build_loadcell_card(self, parent):
-        body = self._card(parent, "Loadcells", f"{loadcell.MODEL}  ·  RS232 8N1  ·  ID (required, = F-40): 00 = stream, 01-99 = command mode")
+        body = self._card(parent, "Loadcells", f"{loadcell.MODEL}  ·  RS232 8N1  ·  ID: blank = auto, 00 = stream, 01-99 = command mode")
         self._table_header(body, COLS)
         for i, lc in enumerate(self.loadcells):
             self._build_loadcell_row(body, i, lc)
@@ -390,23 +388,18 @@ class ComPortPage(tk.Frame):
             body, COLS, f"L{lc.number}", [
                 lambda p: self._combo(p, [], cfg["port"]),
                 lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=9),
-                lambda p: self._entry(p, _id_text(cfg.get("id")), width=5, digits_only=True,
+                lambda p: self._entry(p, _id_text(cfg.get("id", "auto")), width=5, digits_only=True,
                                       justify="center"),
                 actions,
                 StatusPill,
             ])
         self.lc_rows.append(w)
 
-    def _lc_config(self, i, check=True):
-        """check=False (saving the page): an ID not entered yet is stored as "" (CONNECT refuses it)."""
+    def _lc_config(self, i):
         w = self.lc_rows[i]
-        try:
-            dev = loadcell.parse_id(w["id"].get())
-        except ValueError:
-            if check:
-                raise
-            dev = ""
-        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get()), "id": dev}
+        dev = loadcell.parse_id(w["id"].get())
+        return {"port": w["port"].get().strip(), "baudrate": int(w["baud"].get()),
+                "id": "auto" if dev is None else dev}
 
     def _show_lc_state(self, i, error=None, text=None):
         lc, w = self.loadcells[i], self.lc_rows[i]
@@ -453,7 +446,7 @@ class ComPortPage(tk.Frame):
             cfg = self._lc_config(i)
         except ValueError as exc:
             self.log(f"{lc.name}: {exc}")
-            self._show_lc_state(i, error=True, text="Enter ID 00-99")
+            self._show_lc_state(i, error=True, text="ID must be 00-99")
             return
         w = self.lc_rows[i]
         w["busy"] = True
@@ -722,7 +715,7 @@ class ComPortPage(tk.Frame):
     def save(self):
         try:
             self.settings["plc"] = self._plc_config()
-            self.settings["loadcells"] = [self._lc_config(i, check=False) for i in range(len(self.loadcells))]
+            self.settings["loadcells"] = [self._lc_config(i) for i in range(len(self.loadcells))]
             self.settings["daq"] = self._daq_config()
             save_settings(self.settings)
         except Exception as exc:

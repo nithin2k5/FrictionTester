@@ -27,10 +27,10 @@ DEFAULT_SETTINGS = {
         "reg_points": 2,
     },
     # Two KOMEIN AM-50LW indicators on RS232. "id": the indicator's ID (F-40):
-    # 0 = stream mode, 1-99 = command mode (ID01P ...). Required - "" = not entered (no detection).
+    # 0 = stream mode, 1-99 = command mode (ID01P ...), "auto" = detect on connect.
     "loadcells": [
-        {"port": "", "baudrate": 9600, "id": ""},
-        {"port": "", "baudrate": 9600, "id": ""},
+        {"port": "", "baudrate": 9600, "id": "auto"},
+        {"port": "", "baudrate": 9600, "id": "auto"},
     ],
     # Test Console conditions per cable (empty until a model is loaded or they
     # are typed in), plus the PLC bits for its sensor lamps (XGB addresses —
@@ -169,9 +169,12 @@ DEFAULT_SETTINGS = {
             },
             "live_writes_enabled": True,
             "command_owner_confirmed": True,      # no other program writes D04100-D04102
-            # Native M reads (required): proved at every connection (M0800/M0801 = D04003/D04004);
-            # no motion until they pass. PULL/PUSH end = completion flags M00051/52/61/62.
-            "internal_bits_enabled": True,
+            # native M reads: True / False / "auto" (checked at connection: M0800/M0801 = D04003/D04004)
+            "internal_bits_enabled": "auto",
+            # PULL/PUSH completion: "internal_flags" (M00051/52/61/62, needs native M reads) or
+            # "position_fallback" (target compare + in-position + ladder step timing) - select the
+            # fallback only after validating it on the machine.
+            "stroke_completion": "auto",          # "auto" = internal_flags if M reads work, else fallback
             "mt_parallel_verified": False,        # SHIFT and SELECT may move together (MT)
             "home_before_test": "if_not_referenced",   # "never" | "if_not_referenced" | "always"
             "home_on_open": True,                 # home both axes once when the Test Console connects
@@ -181,7 +184,8 @@ DEFAULT_SETTINGS = {
             "poll_interval": 0.1,
             "timeouts": {
                 "freshness": 1.0, "echo": 1.5, "accept": 3.0, "stroke": 30.0, "home": 60.0,
-                "meas_start": 8.0, "release": 3.0, "params": 3.0, "params_settle": 0.5, "part": 600.0,
+                "meas_start": 8.0, "release": 3.0, "meas_dwell": 1.0, "meas_settle": 0.5,
+                "stroke_min_hold": 1.5, "params": 3.0, "params_settle": 0.5, "part": 600.0,
                 "alarm_reset_pulse": None,        # s, from the drive requirements; None = disabled
                 "alarm_reset_check": 3.0,
             },

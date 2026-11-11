@@ -16,12 +16,12 @@
     {
       "port": "",
       "baudrate": 9600,
-      "id": ""
+      "id": "auto"
     },
     {
       "port": "",
       "baudrate": 9600,
-      "id": ""
+      "id": "auto"
     }
   ],
   "test": {
@@ -175,7 +175,8 @@
       },
       "live_writes_enabled": true,
       "command_owner_confirmed": true,
-      "internal_bits_enabled": true,
+      "internal_bits_enabled": "auto",
+      "stroke_completion": "auto",
       "mt_parallel_verified": false,
       "home_before_test": "if_not_referenced",
       "home_on_open": true,
@@ -192,6 +193,9 @@
         "home": 60.0,
         "meas_start": 8.0,
         "release": 3.0,
+        "meas_dwell": 1.0,
+        "meas_settle": 0.5,
+        "stroke_min_hold": 1.5,
         "params": 3.0,
         "params_settle": 0.5,
         "part": 600.0,

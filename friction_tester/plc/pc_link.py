@@ -86,10 +86,9 @@ class PcLink:
         self.backend = backend
         self.log = log
         self.owner_confirmed = owner_confirmed
-        # Native M reads (required for motion): on/off from settings, and proved at each
-        # connection by verify_internal() before the controller allows any motion.
+        # True / False, or "auto": enabled once verify_internal() proves FC01 reaches the M area
+        self.internal_mode = internal_enabled
         self.internal_enabled = internal_enabled is True
-        self.internal_verified = False
         self.words = None              # last command words written/adopted, None = unknown
         self.uncertain = False         # a command write failed: the PLC's words are unknown
         self._lock = threading.Lock()
@@ -99,15 +98,12 @@ class PcLink:
         return read_snapshot(self.backend, self.internal_enabled, now)
 
     def verify_internal(self, tries=3):
-        """Prove that native bit reads reach the M area (required before any motion).
+        """Prove that native bit reads reach the M area (internal_bits_enabled = "auto").
 
         The ladder copies M0800 -> D04003 and M0801 -> D04004 every scan (p31), so
         the 32 bits read as M08000-M0801F must equal those two status words.
-        Returns (ok, detail) and sets internal_verified.
+        Returns (ok, detail); on success internal reads are switched on.
         """
-        self.internal_verified = False
-        if not self.internal_enabled:
-            return False, "native M reads are off (machine_profile.internal_bits_enabled)"
         addrs = [f"M{w:04d}{b:X}" for w in (800, 801) for b in range(16)]
         detail = "not checked"
         for _ in range(tries):
@@ -125,7 +121,7 @@ class PcLink:
             if not any(words):
                 detail = "M0800/M0801 and D04003/D04004 are all 0 - inconclusive"
                 continue
-            self.internal_verified = True
+            self.internal_enabled = True
             return True, f"M0800/M0801 = D04003/D04004 = {words[0]:#06x}/{words[1]:#06x}"
         return False, detail
 

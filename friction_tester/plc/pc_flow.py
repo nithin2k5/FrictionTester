@@ -213,7 +213,12 @@ class CableRoutine:
         home = self.ctl.cfg.get("home_before_test", "if_not_referenced")
         if home == "always" or (home == "if_not_referenced" and st("origin_complete") is not True):
             plan.append("home")
-        plan.append("meas_start")
+        observable = snap.meas_step(self.axis) is not None
+        if not observable and not plan and st("at_meas_start") and st("pos_complete"):
+            self.evidence.append("already on the measurement-start compare and in position; sequence not "
+                                 "observable - no positioning requested")
+        else:
+            plan.append("meas_start")
         n = max(1, int(self.mcfg.get("strokes_per_test", 1)))
         self.plan = plan + ["pull", "push"] * n
 
@@ -242,11 +247,9 @@ class PcController:
         self.link, self.cfg, self.log, self.sampler = link, cfg, log, sampler
         self.interval, self.clock, self.skip_scan = interval, clock, skip_scan
         self.timeouts = cfg.get("timeouts") or {}
-        # PULL/PUSH end = the PLC's completion flags M00051/52/61/62 (native M reads, verified
-        # at each connection). There is no other completion source.
-        self.completion = "internal_flags"
-        self.m_read = None              # None = not checked yet, else (ok, detail) of the last check
-        self._m_read_at = None
+        # "internal_flags", "position_fallback", or "auto": the PLC's completion flags when
+        # native M reads are verified, otherwise target compare + in-position
+        self.completion = cfg.get("stroke_completion", "internal_flags")
         self.events = queue.Queue()
         self.commands = queue.Queue()
         self.connected = False
@@ -329,9 +332,7 @@ class PcController:
             self._link_failed(exc, "status read")
         self._connection(snap, now)
         self.snap = snap
-        if snap is not None:
-            self._check_m_reads(now)
-        if self.home_on_open and self.connected and snap is not None and self.m_read and self.m_read[0]:
+        if self.home_on_open and self.connected and snap is not None:
             self._home_on_open(now)
         self._check_jogs(now)
         self._check_params(snap, now)
@@ -385,7 +386,15 @@ class PcController:
                 self._msg(f"PC request bits are ON in the PLC: {names}. They are not re-sent; inspect the machine "
                           "and press STOP to release them.", "fail")
             self.log.log("CONNECT", "", stale=len(self.stale), pending_release=len(self.pending_release))
-            self.m_read = None              # prove the M-area reads again on every connection
+            if self.link.internal_mode == "auto" and not self.link.internal_enabled:
+                try:
+                    ok, detail = self.link.verify_internal()
+                except Exception as exc:
+                    ok, detail = False, f"bit read failed: {exc}"
+                self.log.log("M-READ", detail, ok=ok)
+                self._msg(f"M-area reads verified ({detail}) - stroke end from the PLC's completion flags"
+                          if ok else f"M-area reads not usable: {detail} - stroke end from "
+                          f"{self._completion()}", "pass" if ok else "busy")
         self.link_state = "ok"
         if self.pending_release and self.link.words is not None:
             try:
@@ -426,32 +435,11 @@ class PcController:
         if op.needs_release:
             self.pending_release.add((op.idx, op.n))
 
-    def _check_m_reads(self, now):
-        """Until verified on this connection: compare M0800/M0801 with D04003/D04004
-        (once a second). Motion stays blocked until it passes."""
-        if not self.connected or (self.m_read and self.m_read[0]):
-            return
-        if self._m_read_at is not None and self.m_read is not None and now - self._m_read_at < 1.0:
-            return
-        self._m_read_at = now
-        try:
-            ok, detail = self.link.verify_internal()
-        except Exception as exc:
-            ok, detail = False, f"bit read failed: {exc}"
-        if self.m_read is None or self.m_read != (ok, detail):
-            self.log.log("M-READ", detail, ok=ok)
-            self._msg(f"M-area reads verified ({detail})" if ok else
-                      f"M-area reads not verified: {detail} - no motion until they are", "pass" if ok else "fail")
-        self.m_read = (ok, detail)
-
     def _can_move(self):
         # Link/register problems first: they are the root cause, and enabling
         # writes would not get past them.
         if not self.connected or self.snap is None:
             return self._not_connected()
-        if not (self.m_read and self.m_read[0]):
-            return ("M-area reads not verified" + (f": {self.m_read[1]}" if self.m_read else " yet")
-                    + " - the PLC's completion flags and sequence steps cannot be read")
         age = self._status_age()
         if age is not None and age > float(self.timeouts.get("freshness", 1.0)):
             return f"PLC status is stale ({age:.1f} s old) - no motion until a fresh poll succeeds"
@@ -655,7 +643,9 @@ class PcController:
         self._cmd_run(info, now)
 
     def _completion(self):
-        """The stroke completion source (always the PLC's completion flags)."""
+        """The stroke completion source in use now."""
+        if self.completion == "auto":
+            return "internal_flags" if self.link.internal_enabled else "position_fallback"
         return self.completion
 
     def _home_on_open(self, now):
