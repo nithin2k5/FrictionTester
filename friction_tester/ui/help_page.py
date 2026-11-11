@@ -161,13 +161,13 @@ CHAPTERS = [
             "    -7       -5              0                +6          +7\n"
             "             |<============= PULL ============>|\n"
             "             |<============= PUSH =============|\n"
-            "             3 x PULL + PUSH   ->  PULL1-3 / PUSH1-3"),
+            "             1 x PULL + PUSH   ->  PULL1-3 / PUSH1-3 at Position 1-3"),
     ("steps", [
         "Home: both axes at origin.",
         "Measurement start: the axis moves to -Stroke/2.",
         "PULL: from the start to +Stroke/2 + 1 mm while the force is recorded.",
         "PUSH: back to the start while the force is recorded.",
-        "PULL and PUSH are repeated three times.",
+        "PULL1-3 / PUSH1-3 are read from this one PULL and PUSH, at Position 1-3.",
     ]),
     ("p", "A stroke ends when the PLC sets its completion flag. Every step is checked: the PLC "
           "must accept the request, start the sequence and finish it in time, or the cable "

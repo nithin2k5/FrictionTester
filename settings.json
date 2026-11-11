@@ -235,7 +235,7 @@
         "force_sign": "absolute",
         "limit_bounds": "inclusive",
         "min_samples": 3,
-        "strokes_per_test": 3
+        "strokes_per_test": 1
       }
     },
     "counters": {
