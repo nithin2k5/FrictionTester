@@ -918,6 +918,38 @@ def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
         root.destroy()
 
 
+def test_graph_without_lvdt_draws_the_commanded_stroke_loop():
+    """Speed and Stroke set, no LVDT: PULL runs -stroke/2 -> +stroke/2 and PUSH back, on
+    the LabVIEW scale (+/-0.6 x stroke, start line at -stroke/2)."""
+    import tkinter as tk
+    from friction_tester.plc.pc_measure import Capture
+    from friction_tester.ui.test_console import CablePanel
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        import pytest
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        import copy
+        from friction_tester.config import DEFAULT_SETTINGS
+        cfg = dict(copy.deepcopy(DEFAULT_SETTINGS["test"]["select"]), speed=50.0, stroke=22.0)
+        panel = CablePanel(root, "SELECT CABLE", cfg)
+        assert [round(v, 6) for v in panel.plot.xlim] == [-13.2, 13.2] and panel.plot.start_x == -11.0
+        pull = Capture("select", "pull", "t", 1)
+        pull.graph += [(10.0, 0.0, None), (10.2, 0.4, None), (10.9, 0.4, None)]
+        panel.draw_capture(pull)
+        assert panel.plot.series["PULL"]["x"] == [-11.0, -1.0, 11.0]  # clamped at the stroke end
+        push = Capture("select", "push", "t", 1)
+        push.graph += [(12.0, 0.0, None), (12.2, -0.3, None)]
+        panel.draw_capture(push)
+        assert panel.plot.series["PUSH"]["x"] == [11.0, 1.0]
+        assert panel.plot.xlabel == "Stroke [mm] (speed × time)"
+        assert [round(v, 6) for v in panel.plot.xlim] == [-13.2, 13.2]   # the scale did not move
+    finally:
+        root.destroy()
+
+
 def test_sampler_retries_the_ni_card_after_a_failed_open():
     from friction_tester.plc.pc_measure import Sampler
     daq = FakeDaq({"ai0": 0.25, "ai2": 3.0}, fail="Dev1 not found")

@@ -119,7 +119,9 @@ class CablePanel(tk.Frame):
         self._gn = 0               # its first sample time, and the stroke number on the graph
         self._gt0 = None
         self._gstroke = None
-        self._gmode = None         # "stroke" (LVDT on the NI card) or "time"
+        self._gmode = None         # "stroke" (LVDT on the NI card), "commanded" or "time"
+        self._gspeed = self._glen = None   # Speed / Stroke conditions of the stroke on the graph
+        self._scale_graph()
 
         live = tk.Frame(self, bg=theme.PANEL)
         live.pack(fill="x", padx=8, pady=(2, 6))
@@ -167,6 +169,8 @@ class CablePanel(tk.Frame):
             e.insert(0, "" if value is None else fmt.format(value))
         self.cfg.update(cond, model=model)
         self._show_model(model)
+        if not any(s["x"] for s in self.plot.series.values()):
+            self._scale_graph()              # empty graph: rescale to the new stroke
 
     def _build_tables(self):
         """TEST CONDITION and TEST RESULTS in one grid, so their rows line up.
@@ -285,13 +289,27 @@ class CablePanel(tk.Frame):
             lbl.config(text=NO_DATA)     # "—" = not measured, distinct from a measured 0
         self.judge.config(text="– – –", fg=T.L_TEXT_3)
         self.plot.clear()
-        self.plot.reset_view()
+        self._scale_graph()
         self._gcap, self._gstroke = None, None
+
+    def _condition(self, key):
+        """A test condition as typed in its box (None when empty or not a number)."""
+        try:
+            return float(self.ent[key].get().strip())
+        except ValueError:
+            return None
+
+    def _scale_graph(self):
+        """Stroke axis of the graph from the Stroke condition (+/-0.6 x stroke, start line)."""
+        self.plot.set_stroke(self._condition("stroke"))
 
     def draw_capture(self, cap):
         """Add a measuring stroke's new graph points (Capture.graph: the NI card load when
-        graph_force = "daq") to the graph: Load against the LVDT stroke (NI card), or
-        against time since the stroke began when no stroke is read.
+        graph_force = "daq") to the graph, Load against Stroke like the LabVIEW screen:
+          - the LVDT stroke (NI card) when one is read;
+          - otherwise the commanded stroke, speed x time: PULL runs from -stroke/2 to
+            +stroke/2 and PUSH back again, so the two traces close into a loop;
+          - time since the stroke began when Speed / Stroke are empty.
         Each stroke number starts a fresh graph; its PULL and PUSH share it."""
         name = "PULL" if cap.kind == "pull" else "PUSH"
         if cap is not self._gcap:
@@ -308,14 +326,25 @@ class CablePanel(tk.Frame):
             if load is None:
                 continue
             if self._gmode is None:          # chosen once per stroke: PULL and PUSH share the x axis
-                self._gmode = "stroke" if stroke is not None else "time"
-                self.plot.set_xlabel("Stroke [mm]" if stroke is not None else "Time [s]")
+                self._gspeed, self._glen = self._condition("speed"), self._condition("stroke")
+                if stroke is not None:
+                    self._gmode = "stroke"
+                elif self._gspeed and self._glen:
+                    self._gmode = "commanded"
+                else:
+                    self._gmode = "time"
+                self.plot.set_xlabel({"stroke": "Stroke [mm]", "commanded": "Stroke [mm] (speed × time)",
+                                      "time": "Time [s]"}[self._gmode])
             if self._gt0 is None:
                 self._gt0 = t
             if self._gmode == "stroke":
                 if stroke is None:
                     continue
                 series["x"].append(stroke)
+            elif self._gmode == "commanded":
+                moved = min((t - self._gt0) * self._gspeed, self._glen)
+                half = self._glen / 2
+                series["x"].append(round(moved - half if cap.kind == "pull" else half - moved, 3))
             else:
                 series["x"].append(round(t - self._gt0, 3))
             series["y"].append(load)
