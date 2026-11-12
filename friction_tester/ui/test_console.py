@@ -116,7 +116,6 @@ class CablePanel(tk.Frame):
         self.plot.add_series("PULL", PULL_COLOR)
         self.plot.add_series("PUSH", PUSH_COLOR)
         self.plot.pack(fill="both", expand=True, padx=8, pady=(0, 4))
-        self._gfit = None          # the finished capture the graph was last auto-fitted to
         self._gcap = None          # capture being drawn, how many of its samples are drawn,
         self._gn = 0               # its first sample time, and the stroke number on the graph
         self._gt0 = None
@@ -311,7 +310,7 @@ class CablePanel(tk.Frame):
         self.plot.set_stroke(self._condition("stroke"))
 
     LVDT_MISSING = 10      # samples without an LVDT stroke before the graph reports it
-    GRAPH_PER_MM = 3       # graph points per mm of stroke: each is the mean of its samples
+    GRAPH_PER_MM = 1.5     # graph points per mm of stroke: each is the mean of its samples
 
     def draw_capture(self, cap):
         """Add a measuring stroke's new graph points (Capture.graph: the NI card load when
@@ -384,11 +383,6 @@ class CablePanel(tk.Frame):
         if drawn:
             self.plot.redraw()
             self.plot.extend_to_data()
-        # The stroke has ended and all of it is drawn: fit the graph to the traces (once)
-        if cap is not self._gfit and ended:
-            self._gfit = cap
-            if any(s["x"] for s in self.plot.series.values()):
-                self.plot.fit_data()
 
     def _centre_stroke(self):
         """LVDT readings -> the graph's stroke axis: the PULL start is -stroke/2 and the

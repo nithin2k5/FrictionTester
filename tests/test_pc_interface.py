@@ -1096,8 +1096,8 @@ def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition(monkeypatch):
         root.destroy()
 
 
-def test_graph_has_three_averaged_points_per_mm_of_stroke():
-    """The NI card delivers every analog sample; the graph draws one point per 1/3 mm of
+def test_graph_has_three_averaged_points_per_2_mm_of_stroke():
+    """The NI card delivers every analog sample; the graph draws one point per 2/3 mm of
     LVDT stroke, the mean of the samples in it, so the sensor noise is not drawn."""
     import tkinter as tk
     from friction_tester.plc.pc_measure import Capture
@@ -1118,12 +1118,12 @@ def test_graph_has_three_averaged_points_per_mm_of_stroke():
                        for i in range(200)]
         panel.draw_capture(pull)
         xs, ys = panel.plot.series["PULL"]["x"], panel.plot.series["PULL"]["y"]
-        assert len(xs) == 6 and xs == sorted(xs)                     # 3 points per mm
+        assert len(xs) == 3 and xs == sorted(xs)                     # 1.5 points per mm
         assert all(abs(y - 0.30) < 0.002 for y in ys)                # the noise is averaged out
-        assert abs(xs[0] - 40.165) < 0.01 and abs(xs[1] - xs[0] - 1 / 3) < 0.01
+        assert abs(xs[0] - 40.33) < 0.01 and abs(xs[1] - xs[0] - 2 / 3) < 0.01
         pull.graph += [(10.2 + i * 0.001, 0.50, 42.0) for i in range(50)]   # dwell at the stroke end
         panel.draw_capture(pull)
-        assert len(xs) == 7 and ys[-1] == 0.50                       # one point, not a blob
+        assert len(xs) == 4 and ys[-1] == 0.50                       # one point, not a blob
     finally:
         root.destroy()
 
