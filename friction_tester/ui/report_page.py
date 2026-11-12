@@ -40,6 +40,20 @@ def _fmt(v):
     return str(v)
 
 
+def _draw_graph(plot, graph):
+    """Draw a stored graph on a LoadStrokePlot; False (and nothing drawn) when it has no points."""
+    plot.set_stroke((graph or {}).get("stroke"))
+    plot.clear()
+    pull, push = ((graph or {}).get(d) or [] for d in ("pull", "push"))
+    if not (pull or push):
+        return False
+    plot.set_note("")
+    for name, pts in (("PULL", pull), ("PUSH", push)):
+        plot.set_data(name, [p[0] for p in pts], [p[1] for p in pts])
+    plot.extend_to_data()
+    return True
+
+
 class ReportPage(tk.Frame):
     def __init__(self, master, settings):
         super().__init__(master, bg=theme.BG)
@@ -165,13 +179,22 @@ class ReportPage(tk.Frame):
         body.pack(fill="x", padx=12, pady=8)
         grid = tk.Frame(body, bg=CARD_BG)
         grid.pack(side="left", anchor="n")
-        # The stored Load-Stroke graph of the selected row (TBL_TEST_GRAPHS), as the Test Console drew it
-        self.plot = LoadStrokePlot(body)
-        self.plot.canvas.config(height=220)
+        # The stored Load-Stroke graph of the selected row (TBL_TEST_GRAPHS) as a small preview;
+        # a click opens it large (enlarge_graph)
+        thumb = tk.Frame(body, bg=CARD_BG)
+        thumb.pack(side="right", anchor="n", padx=(16, 0))
+        self.plot = LoadStrokePlot(thumb, controls=False)
+        self.plot.canvas.config(width=320, height=150, cursor="hand2")
         self.plot.add_series("PULL", PULL_COLOR)
         self.plot.add_series("PUSH", PUSH_COLOR)
-        self.plot.pack(side="left", fill="both", expand=True, padx=(16, 0))
+        self.plot.pack()
+        self.plot.canvas.bind("<Button-1>", lambda _e: self.enlarge_graph())
+        hint = self._label(thumb, "Click the graph to enlarge", fg=theme.MUTED, size=8, cursor="hand2")
+        hint.pack(anchor="e")
+        hint.bind("<Button-1>", lambda _e: self.enlarge_graph())
         self._graph_for = None            # ID of the row whose graph was last requested
+        self._graph = None                # the graph shown in the preview (None = none)
+        self._graph_title = ""
         self.cells = {}
         heads = ["", "FWD 1", "FWD 2", "FWD 3", "RET 1", "RET 2", "RET 3", "Final", "Limit"]
         for c, h in enumerate(heads):
@@ -258,7 +281,7 @@ class ReportPage(tk.Frame):
         for lbl in self.cells.values():
             lbl.config(text="—")
         self.lbl_detail.config(text="Click a row to see its readings and graph")
-        self._graph_for = None
+        self._graph_for, self._graph = None, None
         self.plot.clear()
         self.plot.set_note("")
 
@@ -276,11 +299,13 @@ class ReportPage(tk.Frame):
                 lbl.config(text=_fmt(v), fg="#0b3a75")
         self.lbl_detail.config(text=f"{_fmt(r.get('TR_DATETIME'))} · {r.get('TR_MODEL')} · {r.get('TR_STAGE')} · "
                                     f"{r.get('TR_LABEL')} · source {r.get('TR_SOURCE')}")
+        self._graph_title = (f"{r.get('TR_STAGE')} · {r.get('TR_MODEL')} · {r.get('TR_LABEL')} · "
+                             f"{_fmt(r.get('TR_DATETIME'))} · {r.get('TR_STAGE_RESULT') or '—'}")
         self._load_graph(r["ID"])
 
     def _load_graph(self, row_id):
         """Fetch the row's stored graph on a worker thread and draw it (the newest click wins)."""
-        self._graph_for = row_id
+        self._graph_for, self._graph = row_id, None
         self.plot.clear()
         self.plot.set_note("Loading graph…")
         result = {}
@@ -306,19 +331,35 @@ class ReportPage(tk.Frame):
         self.after(100, collect)
 
     def show_graph(self, graph):
-        """Draw a stored graph ({"pull": [[x, load]], "push": [...], "stroke": ...}) or say
-        why there is none."""
-        self.plot.set_stroke((graph or {}).get("stroke"))
-        self.plot.clear()
-        pull, push = ((graph or {}).get(d) or [] for d in ("pull", "push"))
-        if not (pull or push):
-            self.plot.set_note("No graph stored for this cycle (saved before graphs were stored, "
-                               "or no LVDT stroke was read)")
+        """Draw a stored graph ({"pull": [[x, load]], "push": [...], "stroke": ...}) in the
+        preview, or say why there is none."""
+        self._graph = graph if _draw_graph(self.plot, graph) else None
+        if self._graph is None:
+            self.plot.set_note("No graph stored for this cycle")
+
+    def enlarge_graph(self):
+        """The previewed graph in a large window, with the zoom / pan controls."""
+        if self._graph is None:
             return
-        self.plot.set_note("")
-        for name, pts in (("PULL", pull), ("PUSH", push)):
-            self.plot.set_data(name, [p[0] for p in pts], [p[1] for p in pts])
-        self.plot.extend_to_data()
+        top = tk.Toplevel(self)
+        top.title(f"Load-Stroke graph · {self._graph_title}")
+        top.configure(bg=theme.PANEL)
+        top.transient(self.winfo_toplevel())
+        root = self.winfo_toplevel()
+        w, h = max(700, int(root.winfo_width() * 0.75)), max(450, int(root.winfo_height() * 0.75))
+        top.geometry(f"{w}x{h}+{root.winfo_rootx() + (root.winfo_width() - w) // 2}"
+                     f"+{root.winfo_rooty() + (root.winfo_height() - h) // 3}")
+        self._label(top, self._graph_title, size=11, bold=True).pack(anchor="w", padx=12, pady=(10, 4))
+        big = LoadStrokePlot(top)
+        big.add_series("PULL", PULL_COLOR)
+        big.add_series("PUSH", PUSH_COLOR)
+        big.pack(fill="both", expand=True, padx=12)
+        tk.Button(top, text="CLOSE", command=top.destroy, bg=T.L_NEUTRAL_BTN, fg="white", bd=0, padx=18,
+                  pady=4, font=(theme.FONT, 10, "bold"), cursor="hand2").pack(anchor="e", padx=12, pady=10)
+        top.bind("<Escape>", lambda _e: top.destroy())
+        _draw_graph(big, self._graph)
+        top.focus_set()
+        return top
 
     def export_csv(self):
         if not self.rows:

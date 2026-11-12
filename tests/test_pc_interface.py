@@ -1332,7 +1332,13 @@ def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
         page.show_graph(stored)
         assert page.plot.series["PULL"]["x"] == [p[0] for p in curve["pull"]]
         assert page.plot.series["PUSH"]["y"] == [p[1] for p in curve["push"]] and page.plot.note == ""
+        assert int(page.plot.canvas["width"]) <= 400                         # a small preview ...
+        big = page.enlarge_graph()                                           # ... a click enlarges it
+        plots = [w for w in big.winfo_children() if isinstance(w, report_page.LoadStrokePlot)]
+        assert len(plots) == 1 and plots[0].series["PULL"]["x"] == page.plot.series["PULL"]["x"]
+        big.destroy()
         page.show_graph(None)
         assert page.plot.series["PULL"]["x"] == [] and "No graph stored" in page.plot.note
+        assert page.enlarge_graph() is None                                  # nothing to enlarge
     finally:
         root.destroy()

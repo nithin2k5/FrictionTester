@@ -32,7 +32,8 @@ class LoadStrokePlot(tk.Frame):
     X_STEP, Y_STEP = 2.0, 0.2          # divisions of the LabVIEW graph: 2 mm, 0.20 kgf
 
     def __init__(self, master, xlim=DEFAULT_XLIM, ylim=(-1.8, 1.8),
-                 xlabel="Stroke [mm]", ylabel="Load [kgf]"):
+                 xlabel="Stroke [mm]", ylabel="Load [kgf]", controls=True):
+        """controls=False: no zoom / pan buttons (a small preview)."""
         super().__init__(master, bg=theme.PANEL)
         self.start_x = None            # x of the stroke start line (set_stroke)
         self._margin_l = self.MARGIN_L # grows with the width of the load labels (redraw)
@@ -46,6 +47,8 @@ class LoadStrokePlot(tk.Frame):
                                 highlightbackground=theme.BORDER, height=180)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _e: self.redraw())
+        if not controls:
+            return
 
         bar = tk.Frame(self, bg=theme.PANEL)
         bar.pack(fill="x", pady=(4, 0))
