@@ -214,7 +214,7 @@ def test_only_home_and_move_bits_are_writable():
 
 def test_settings_migrate_pc_interface_to_kd():
     new = migrate({"settings_version": 4, "test": {"integration": {"mode": "pc_interface"}}})
-    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 6
+    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 7
     other = migrate({"settings_version": 4, "test": {"integration": {"mode": "shared_cycle"}}})
     assert other["test"]["integration"]["mode"] == "shared_cycle"
 
@@ -285,3 +285,13 @@ def test_run_blocker_names_the_kd_settings():
     msg = live_start_blocker({}, False, link.write_blocker)
     assert "kd_profile.command_owner_confirmed" in msg and "integration.shared" not in msg
     assert "integration.shared" in live_start_blocker({}, False)          # shared_cycle mode unchanged
+
+
+def test_migration_scales_the_ni_load_cells_5_kgf_per_volt():
+    from friction_tester.config import migrate
+    old = {"settings_version": 6, "daq": {"sensors": [
+        {"name": "Loadcell 1", "scale": 1.0}, {"name": "Loadcell 2", "scale": 4.9},
+        {"name": "LVDT 1", "scale": 1.0}]}}
+    new = migrate(old)
+    assert [s["scale"] for s in new["daq"]["sensors"]] == [5.0, 4.9, 1.0]   # a set scale and the LVDT are kept
+    assert new["settings_version"] == 7 and "Loadcell 1" in new["migrated"][0]

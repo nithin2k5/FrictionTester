@@ -9,7 +9,10 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # settings.json layout version. 2 = machine profile "PRINTING PROGRAM OLD"
 # (plc.pdf, PC word interface) is this machine's integration.
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
-SETTINGS_VERSION = 6
+# 7 = NI card load cells scaled 5 kgf/V (amplifier: +10 V = +50 kgf, -10 V = -50 kgf).
+SETTINGS_VERSION = 7
+
+LOADCELL_KGF_PER_V = 5.0       # load cell amplifiers on the NI card: +/-10 V = +/-50 kgf
 
 DEFAULT_SETTINGS = {
     "settings_version": SETTINGS_VERSION,
@@ -223,8 +226,8 @@ DEFAULT_SETTINGS = {
         "sample_rate": 1000.0,
         "samples_per_channel": 100,
         "sensors": [
-            {"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "kgf"},
-            {"name": "Loadcell 2", "channel": "ai1", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "kgf"},
+            {"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset_v": 0.0, "unit": "kgf"},
+            {"name": "Loadcell 2", "channel": "ai1", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset_v": 0.0, "unit": "kgf"},
             {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "mm"},
             {"name": "LVDT 2", "channel": "ai3", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "mm"},
         ],
@@ -325,6 +328,19 @@ def migrate(loaded):
                 notes.append("integration.shared: " + ", ".join(filled) +
                              " (AT one cable at a time; channels/directions from the plc Auto.pdf labels)")
         loaded["settings_version"] = 6
+        version = 6
+    if version < 7:
+        scaled = []
+        for sen in (loaded.get("daq") or {}).get("sensors") or []:
+            # only a row still at the uncalibrated default (1 kgf/V); a scale set on the machine is kept
+            if (isinstance(sen, dict) and str(sen.get("name", "")).startswith("Loadcell")
+                    and sen.get("scale", 1.0) == 1.0):
+                sen["scale"] = LOADCELL_KGF_PER_V
+                scaled.append(sen["name"])
+        if scaled:
+            notes.append(f"daq {', '.join(scaled)}: scale 1 -> {LOADCELL_KGF_PER_V:g} kgf/V "
+                         "(amplifier +/-10 V = +/-50 kgf)")
+        loaded["settings_version"] = 7
     if notes:
         loaded["migrated"] = notes
     return loaded

@@ -1,5 +1,5 @@
 {
-  "settings_version": 6,
+  "settings_version": 7,
   "plc": {
     "port": "COM13",
     "baudrate": 115200,
@@ -261,7 +261,7 @@
         "name": "Loadcell 1",
         "channel": "ai0",
         "range": "±10 V",
-        "scale": 1.0,
+        "scale": 5.0,
         "offset_v": 0.0,
         "unit": "kgf"
       },
@@ -269,7 +269,7 @@
         "name": "Loadcell 2",
         "channel": "ai1",
         "range": "±10 V",
-        "scale": 1.0,
+        "scale": 5.0,
         "offset_v": 0.0,
         "unit": "kgf"
       },
