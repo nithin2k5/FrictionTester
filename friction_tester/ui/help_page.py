@@ -146,7 +146,6 @@ CHAPTERS = [
         ("STOP", "Cancels the running test or a waiting RUN and releases the PC requests."),
         ("ORIGIN", "Homes the axes."),
         ("Manual", "Opens the manual operation view (see Manual Operation)."),
-        ("Save Conditions", "Keeps edits made to the conditions on the console."),
         ("Clear Results", "Clears the result boxes."),
     ]),
     ("note", "A SELECT result of INCOMPLETE ends the part - SHIFT is not tested."),

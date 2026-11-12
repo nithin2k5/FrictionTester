@@ -56,7 +56,6 @@ class App:
         self._build_body()
         self.load_page("test_console")
         root.protocol("WM_DELETE_WINDOW", self.close)
-        root.bind("<<AppExit>>", lambda _e: self.close(confirmed=True))
         self._autoconnect_thread = threading.Thread(target=self._autoconnect, daemon=True)
         self._autoconnect_thread.start()
 
@@ -88,7 +87,7 @@ class App:
     def close(self, confirmed=False):
         """Close the app, releasing everything in order:
 
-        1. ask first if a part is being tested (window X; EXIT has asked already)
+        1. ask first if a part is being tested (window X)
         2. stop page background work (PLC monitor, live polling, test flow)
         3. wait briefly for worker threads to finish their current read
         4. close PLC, loadcells and NI DAQ (each on its own, with a time limit,

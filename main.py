@@ -32,7 +32,7 @@ def main():
     loadcells = [Loadcell(1), Loadcell(2)]
     app = App(root, load_settings(), plc, daq, loadcells)
 
-    # Closing (window X, EXIT button) is App.close(): stop page work, then
+    # Closing (window X) is App.close(): stop page work, then
     # release PLC, loadcells and NI DAQ, then destroy the window.
     # Backstops so the ports are freed however the process ends:
     atexit.register(app.release_devices)                   # normal interpreter exit / errors

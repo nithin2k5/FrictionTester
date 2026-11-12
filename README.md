@@ -101,11 +101,10 @@ Laid out like the LabVIEW *Friction Test Machine* measurement screen:
     with **Del**). Day counts reset at the date change. `record_result()` updates them.
   - **Scan Result** — SELECT and SHIFT text boxes for the scanned barcodes.
   - **Test Run, Test Stop, Move Origin** (RUN / STOP / ORIGIN).
-- **EXIT** closes the app (with confirmation).
 
 ### Closing
 
-The window's X and **EXIT** run the same shutdown, in order: if a part is mid-test (a cycle running,
+The window's X runs the shutdown, in order: if a part is mid-test (a cycle running,
 or an AT part with SELECT done and SHIFT not) it asks first; then the PLC monitor, live polling and
 test flow are stopped; reads in progress get a moment to finish and result rows still being written
 to `TBL_TEST_RESULTS` up to 10 s; then the PLC, both loadcells and the NI DAQ task are released,

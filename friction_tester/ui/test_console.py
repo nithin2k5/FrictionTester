@@ -619,12 +619,6 @@ class TestConsolePage(tk.Frame):
         self.screen_tag.pack()
         tk.Frame(tag, bg=theme.TITLE_FG, height=3).pack(fill="x")
 
-        tk.Button(bar, text="⏻  EXIT", command=self.exit_app, bg=T.L_NG, fg="white",
-                  activebackground="#a61f1f", activeforeground="white", bd=0, padx=16, pady=5,
-                  font=_font(10, True), cursor="hand2").pack(side="right")
-        tk.Button(bar, text="Save Conditions", command=self.save_conditions, bg=theme.SAVE, fg="white",
-                  activebackground=theme.SAVE, activeforeground="white", bd=0, padx=14, pady=5,
-                  font=_font(10, True), cursor="hand2").pack(side="right", padx=(0, 8))
         tk.Button(bar, text="Clear Results", command=self.clear_results, bg=T.L_NEUTRAL_BTN, fg="white",
                   activebackground="#4b5560", activeforeground="white", bd=0, padx=14, pady=5,
                   font=_font(10, True), cursor="hand2").pack(side="right", padx=8)
@@ -1396,30 +1390,9 @@ class TestConsolePage(tk.Frame):
         cv.create_rectangle(0, 0, int(w * frac), 8, fill=theme.PASS if frac >= 1 else T.L_PRIMARY, width=0)
 
     # ----------------------------------------------------------- actions
-    def save_conditions(self):
-        try:
-            for i, ((key, _t, _s), panel) in enumerate(zip(self.SIDES, self.panels)):
-                panel.read_conditions()
-                count = self.clamps[i].get().strip()
-                self.settings["test"][key]["clamp_count"] = int(count) if count.isdigit() else 0
-            save_settings(self.settings)
-        except Exception as exc:
-            messagebox.showerror("Save Conditions", str(exc), parent=self)
-            return
-        self._set_status("Test conditions saved", theme.PASS)
-
     def clear_results(self):
         for p in self.panels:
             p.reset_results()
-
-    def exit_app(self):
-        """EXIT: close the app through the same shutdown as the window's close button."""
-        busy = self.test_in_progress()
-        text = (f"{busy}.\n\nClose the Friction Tester anyway? The part will not be recorded."
-                if busy else "Close the Friction Tester?")
-        if not messagebox.askyesno("Exit", text, icon="warning" if busy else "question", parent=self):
-            return
-        self.winfo_toplevel().event_generate("<<AppExit>>")      # App.close(), already confirmed
 
     def test_in_progress(self):
         """Why closing now would lose a part, or None."""
