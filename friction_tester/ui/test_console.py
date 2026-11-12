@@ -115,6 +115,7 @@ class CablePanel(tk.Frame):
         self.plot.add_series("PULL", PULL_COLOR)
         self.plot.add_series("PUSH", PUSH_COLOR)
         self.plot.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        self._gfit = None          # the finished capture the graph was last auto-fitted to
         self._gcap = None          # capture being drawn, how many of its samples are drawn,
         self._gn = 0               # its first sample time, and the stroke number on the graph
         self._gt0 = None
@@ -362,6 +363,12 @@ class CablePanel(tk.Frame):
         if new:
             self.plot.redraw()
             self.plot.extend_to_data()
+        # The stroke has ended and all of it is drawn: fit the graph to the traces (once)
+        if (cap is not self._gfit and cap.stop_event.is_set()
+                and not (cap.thread and cap.thread.is_alive()) and self._gn == len(cap.graph)):
+            self._gfit = cap
+            if any(s["x"] for s in self.plot.series.values()):
+                self.plot.fit_data()
 
     def _centre_stroke(self):
         """LVDT readings -> the graph's stroke axis: the PULL start is -stroke/2 and the

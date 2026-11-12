@@ -30,11 +30,13 @@ class LoadStrokePlot(tk.Frame):
     MARGIN_L, MARGIN_R, MARGIN_T, MARGIN_B = 62, 14, 12, 40
     DEFAULT_XLIM = (-30.0, 30.0)
     X_STEP, Y_STEP = 2.0, 0.2          # divisions of the LabVIEW graph: 2 mm, 0.20 kgf
+    MIN_FIT_LOAD = 0.05                # Fit never zooms the load axis in closer than this span
 
     def __init__(self, master, xlim=DEFAULT_XLIM, ylim=(-1.8, 1.8),
                  xlabel="Stroke [mm]", ylabel="Load [kgf]"):
         super().__init__(master, bg=theme.PANEL)
         self.start_x = None            # x of the stroke start line (set_stroke)
+        self._margin_l = self.MARGIN_L # grows with the width of the load labels (redraw)
         self.home = (tuple(xlim), tuple(ylim))
         self.xlim, self.ylim = list(xlim), list(ylim)
         self.xlabel, self.ylabel = xlabel, ylabel
@@ -117,8 +119,11 @@ class LoadStrokePlot(tk.Frame):
         ys = [v for s in self.series.values() for v in s["y"]]
         if not xs:
             return self.reset_view()
-        for lim, lo, hi in ((self.xlim, min(xs), max(xs)), (self.ylim, min(ys), max(ys))):
+        for lim, lo, hi, least in ((self.xlim, min(xs), max(xs), 0.0),
+                                   (self.ylim, min(ys), max(ys), self.MIN_FIT_LOAD)):
             span = hi - lo or max(abs(hi), 1.0)
+            if span < least:                 # sensor noise only: a flat trace, not a magnified one
+                lo, hi, span = (lo + hi - least) / 2, (lo + hi + least) / 2, least
             lim[0], lim[1] = lo - span * 0.08, hi + span * 0.08
         self.redraw()
 
@@ -139,8 +144,19 @@ class LoadStrokePlot(tk.Frame):
         self.redraw()
 
     # -------------------------------------------------------------- drawing
+    def _axis(self, lim, fixed, decimals, target):
+        """(division, label format) of an axis: the LabVIEW division (2 mm / 0.20 kgf), a
+        coarser 1/2/5 step once zoomed far out, a finer one - with enough decimals to tell
+        the divisions apart - when zoomed far in."""
+        span = lim[1] - lim[0]
+        step = fixed if span / fixed <= 24 else _nice_step(span, target)
+        if span / step < 4:
+            step = _nice_step(span, 8)
+        decimals = max(decimals, min(6, math.ceil(-math.log10(step) - 1e-9)))
+        return step, "{:." + str(decimals) + "f}"
+
     def _to_px(self, x, y, w, h):
-        l, r, t, b = self.MARGIN_L, w - self.MARGIN_R, self.MARGIN_T, h - self.MARGIN_B
+        l, r, t, b = self._margin_l, w - self.MARGIN_R, self.MARGIN_T, h - self.MARGIN_B
         px = l + (x - self.xlim[0]) / (self.xlim[1] - self.xlim[0]) * (r - l)
         py = b - (y - self.ylim[0]) / (self.ylim[1] - self.ylim[0]) * (b - t)
         return px, py
@@ -151,21 +167,20 @@ class LoadStrokePlot(tk.Frame):
         w, h = c.winfo_width(), c.winfo_height()
         if w < 120 or h < 80:
             return
-        l, r, t, b = self.MARGIN_L, w - self.MARGIN_R, self.MARGIN_T, h - self.MARGIN_B
         font = (theme.FONT, 8)
+        axes = ((self.xlim, False, 32) + self._axis(self.xlim, self.X_STEP, 1, 12),
+                (self.ylim, True, 12) + self._axis(self.ylim, self.Y_STEP, 2, 9))
+        # Left margin: room for the longest load label beside the axis title
+        widest = max(len(axes[1][4].format(v)) for v in self.ylim)
+        self._margin_l = max(self.MARGIN_L, 32 + 6 * widest)
+        l, r, t, b = self._margin_l, w - self.MARGIN_R, self.MARGIN_T, h - self.MARGIN_B
 
         # Grid and tick labels: 2 mm / 0.20 kgf divisions like the LabVIEW graph (a coarser
         # 1/2/5 step once the view is zoomed far out), plus a label at each end of the axis.
-        for lim, horizontal, fixed, fmt, gap in ((self.xlim, False, self.X_STEP, "{:.1f}", 32),
-                                                 (self.ylim, True, self.Y_STEP, "{:.2f}", 12)):
+        for lim, horizontal, gap, step, fmt in axes:
             span = lim[1] - lim[0]
-            step = fixed if span / fixed <= 24 else _nice_step(span, 12 if not horizontal else 9)
-            if span / step < 4:                      # zoomed far in
-                step = _nice_step(span, 8)
-            # enough decimals to tell the divisions apart when zoomed in (0.001 steps -> 3)
-            decimals = max(int(fmt[3]), min(6, math.ceil(-math.log10(step) - 1e-9)))
-            fmt = "{:." + str(decimals) + "f}"
             ends = [self._to_px(v, v, w, h)[1 if horizontal else 0] for v in lim]
+            end_texts = {fmt.format(v + 0.0) for v in lim}
             every = max(1, math.ceil(gap / (abs(ends[1] - ends[0]) * step / span)))   # label spacing
 
             def label(v, pos):
@@ -182,8 +197,9 @@ class LoadStrokePlot(tk.Frame):
                     c.create_line(l, py, r, py, fill=GRID)
                 else:
                     c.create_line(px, t, px, b, fill=GRID)
-                if k % every == 0 and min(abs(pos - e) for e in ends) >= gap:
-                    label(v, pos)                    # not where it would run into an end label
+                if (k % every == 0 and min(abs(pos - e) for e in ends) >= gap
+                        and fmt.format(v + 0.0) not in end_texts):
+                    label(v, pos)                    # not where it would run into / repeat an end label
             for v, e in zip(lim, ends):
                 label(v, e)
         # Zero-load line and the stroke start line
