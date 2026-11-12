@@ -46,14 +46,17 @@ CHAPTERS = [
                       "Loadcell 2 = SHIFT. Their readings are the test results."),
         ("NI card", "NI USB-6210. Loadcell and LVDT signals for the graph "
                     "(load against stroke)."),
-        ("Database", "MySQL: the models (TBL_MODEL_MASTER) and every test result."),
+        ("Label printer", "Windows printer named FTM_PRINTER. Prints the model's PRN label "
+                          "for every OK part."),
+        ("Database", "MySQL: the models (TBL_MODEL_MASTER), every test result (TBL_TEST_RESULTS) "
+                     "and the user accounts (TBL_ADMIN, TBL_LOGIN_HISTORY)."),
     ]),
     ("h", "Pages"),
     ("kv", [
         ("Test Console", "Load a model, run tests, see results, the graph and the counters."),
         ("Model Settings", "Create and edit models (sign-in needed)."),
         ("Report", "Look up and export saved test results."),
-        ("Admin", "User accounts (sign-in needed)."),
+        ("Admin", "User accounts and the sign-in history (sign-in needed)."),
         ("COM Setting", "PLC, loadcell and NI card connections (sign-in needed)."),
         ("Help / Contact", "This manual and who to call."),
     ]),
@@ -105,6 +108,15 @@ CHAPTERS = [
     ("p", "A model holds the part details and one test condition per cable (SELECT CABLE SLOT "
           "and SHIFT CABLE SLOT). Click a model in the list to edit it, NEW for an empty form, "
           "SAVE to store it, DELETE to remove it."),
+    ("h", "Model Information"),
+    ("kv", [
+        ("Model", "The model name - the key of the model; it cannot be changed once saved."),
+        ("Type", "AT (SELECT, then SHIFT) or MT (both cables together)."),
+        ("Part Number", "Scanned labels must contain it."),
+        ("Customer / ALC Code", "Part details; they can also be printed on the label."),
+        ("PRN Template", "The label printed for every OK part. The list shows the .prn files in "
+                         "the prn_templates folder; leave it blank for no label."),
+    ]),
     ("h", "Condition fields"),
     ("tbl", ["Field", "Used for"], [
         ("Speed (mm/s)", "Test speed and high jog speed; low jog speed is half of it."),
@@ -140,7 +152,11 @@ CHAPTERS = [
         "\"Waiting for … to reach origin\" and the test starts by itself when both are home.",
         "AT: the SELECT cable is tested. The step strip then says \"press RUN for the SHIFT "
         "routine\" - press RUN again for the SHIFT cable.",
-        "When both cables are done the part is judged OK or NG, saved and counted.",
+        "When both cables are done the part is judged OK or NG, saved and counted. An OK part "
+        "prints its label on FTM_PRINTER (see Label Printing).",
+        "Once the part is saved the results, graphs and labels clear by themselves - the console "
+        "is ready for the next part of the same model. INCMP parts stay on screen so the reason "
+        "can be read.",
     ]),
     ("kv", [
         ("STOP", "Cancels the running test or a waiting RUN and releases the PC requests."),
@@ -220,9 +236,51 @@ CHAPTERS = [
     ]),
 ]),
 
+("Label Printing", [
+    ("p", "When a part is judged OK, the PRN Template of the loaded model is sent to the Windows "
+          "printer FTM_PRINTER. NG and INCMP parts print nothing. Printing runs in the background "
+          "and never holds up the next part."),
+    ("steps", [
+        "Install the label printer in Windows and name it exactly FTM_PRINTER (another name can "
+        "be set in settings.json, test.printer_name).",
+        "Copy the .prn label files into the prn_templates folder.",
+        "Model Settings: pick the model's PRN Template and press SAVE.",
+        "Test Console: press MODEL CHANGE so the console picks up the template.",
+    ]),
+    ("h", "Fields filled in on the label"),
+    ("p", "The .prn file is sent to the printer as it is (it must already be in the printer's "
+          "language - ZPL, TSPL, ...). These placeholders are replaced if the file contains them:"),
+    ("tbl", ["Placeholder", "Printed as"], [
+        ("{MODEL} {TYPE}", "Model name and AT / MT."),
+        ("{PART_NUMBER}", "The model's part number."),
+        ("{CUSTOMER} {ALC_CODE}", "From Model Information."),
+        ("{LABEL} {LABEL_SELECT} {LABEL_SHIFT}", "The scanned label(s)."),
+        ("{VERDICT}", "OK."),
+        ("{DATE} {TIME} {DATETIME}", "2026-11-12 / 14:05:09 / both."),
+        ("{YYYYMMDD} {HHMMSS}", "20261112 / 140509."),
+    ]),
+    ("note", "A model saved without a PRN Template prints nothing; the status line says so."),
+]),
+
 ("Report", [
     ("p", "Filter the saved results, see the part summary, select a row for its readings, and "
-          "export to CSV."),
+          "export to CSV. The selected cycle shows its values against the LOAD limits, why it was "
+          "NG / INCOMPLETE, and a small Load-Stroke graph - click the graph to enlarge it."),
+]),
+
+("Admin", [
+    ("p", "Admin, Model Settings and COM Setting need a sign-in with an Employee ID and password. "
+          "The Admin page manages those accounts."),
+    ("kv", [
+        ("Save / Update", "Add a user, or update the selected one. When editing, leave Password "
+                          "empty to keep the current password."),
+        ("Delete", "Remove the selected user."),
+        ("Clear", "Empty the form."),
+        ("Login history", "The latest sign-in attempts: time, page, user and whether it "
+                          "succeeded."),
+    ]),
+    ("note", "Passwords are stored only as a salted hash (TBL_ADMIN), never as text. The first "
+             "user (or a forgotten password) is set on the PC with: python init_db.py --admin E1001 \"Name\""),
 ]),
 
 ("Messages and What to Do", [
@@ -245,6 +303,10 @@ CHAPTERS = [
         ("PC request bits are ON in the PLC", "Inspect the machine, then press STOP."),
         ("FAULT latched: …", "Inspect the machine, then press STOP to acknowledge."),
         ("RUN blocked: … not saved yet", "Wait for the database; the part is retried every 15 s."),
+        ("label NOT printed on FTM_PRINTER: …", "Check the printer is on, installed with that exact "
+                                               "name, and the PRN file is in prn_templates."),
+        ("no label printed: the model has no PRN Template", "Set the PRN Template in Model "
+                                                             "Settings, then MODEL CHANGE."),
     ]),
 ]),
 ]
