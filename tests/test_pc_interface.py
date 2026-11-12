@@ -1085,13 +1085,45 @@ def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition(monkeypatch):
         pull3 = Capture("select", "pull", "t", 3)                    # LVDT read but not moving
         pull3.graph += [(30.0, 0.0, 4.97), (30.2, 0.4, 4.97), (30.9, 0.4, 4.98)]
         panel.draw_capture(pull3)
-        assert panel.plot.series["PULL"]["x"] == [-11.0, -11.0, -10.99]   # drawn as read
+        assert panel.plot.series["PULL"]["x"] == [-11.0]             # drawn as read: one point
         assert not popups                                            # reported when the stroke ends
         pull3.stop_event.set()
         panel.draw_capture(pull3)
         root.update()
         assert panel.plot.xlabel == "Stroke [mm]" and len(popups) == 1
-        assert "LVDT moved only 0.01 mm" in panel.plot.note and "22.0 mm" in popups[0][1]
+        assert "LVDT moved only 0.00 mm" in panel.plot.note and "22.0 mm" in popups[0][1]
+    finally:
+        root.destroy()
+
+
+def test_graph_has_three_averaged_points_per_mm_of_stroke():
+    """The NI card delivers every analog sample; the graph draws one point per 1/3 mm of
+    LVDT stroke, the mean of the samples in it, so the sensor noise is not drawn."""
+    import tkinter as tk
+    from friction_tester.plc.pc_measure import Capture
+    from friction_tester.ui.test_console import CablePanel
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        import pytest
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        import copy
+        from friction_tester.config import DEFAULT_SETTINGS
+        panel = CablePanel(root, "SELECT CABLE", copy.deepcopy(DEFAULT_SETTINGS["test"]["select"]))
+        pull = Capture("select", "pull", "t", 1)
+        # 2 mm of stroke, 100 samples per mm, the load 0.30 kgf +/- 0.05 of noise
+        pull.graph += [(10.0 + i * 0.001, 0.30 + (0.05 if i % 2 else -0.05), 40.0 + i * 0.01)
+                       for i in range(200)]
+        panel.draw_capture(pull)
+        xs, ys = panel.plot.series["PULL"]["x"], panel.plot.series["PULL"]["y"]
+        assert len(xs) == 6 and xs == sorted(xs)                     # 3 points per mm
+        assert all(abs(y - 0.30) < 0.002 for y in ys)                # the noise is averaged out
+        assert abs(xs[0] - 40.165) < 0.01 and abs(xs[1] - xs[0] - 1 / 3) < 0.01
+        pull.graph += [(10.2 + i * 0.001, 0.50, 42.0) for i in range(50)]   # dwell at the stroke end
+        panel.draw_capture(pull)
+        assert len(xs) == 7 and ys[-1] == 0.50                       # one point, not a blob
     finally:
         root.destroy()
 

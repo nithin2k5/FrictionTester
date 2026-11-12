@@ -61,6 +61,8 @@ def model_page(monkeypatch):
     from friction_tester.ui import model_page as mp
     monkeypatch.setattr(db, "init_database", lambda: None)
     monkeypatch.setattr(db, "list_models", lambda *a, **k: [])
+    # "discard the unsaved edits?" is answered Yes here: a real dialog would wait for a click
+    monkeypatch.setattr(mp.messagebox, "askyesno", lambda *a, **k: True)
     # database work runs in place (no worker thread: tests have no Tk main loop)
     monkeypatch.setattr(mp.ModelSettingsPage, "_run",
                         lambda self, work, _text, done=None: done(work()) if done else work())

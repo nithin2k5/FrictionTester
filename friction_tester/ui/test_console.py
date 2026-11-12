@@ -16,6 +16,7 @@ run the automatic test sequence; `CablePanel.show_results`, `set_live` and
 """
 
 import datetime
+import math
 import os
 import threading
 import time
@@ -125,6 +126,7 @@ class CablePanel(tk.Frame):
         self._gspeed = self._glen = None   # Speed / Stroke conditions of the stroke on the graph
         self._graw = {"PULL": [], "PUSH": []}   # LVDT readings of the traces on the graph
         self._gtimes = {"PULL": [], "PUSH": []}  # and their times since the capture began
+        self._gbins = {"PULL": {}, "PUSH": {}}   # stroke bin -> [point index, samples] (GRAPH_PER_MM)
         self._scale_graph()
 
         live = tk.Frame(self, bg=theme.PANEL)
@@ -309,6 +311,7 @@ class CablePanel(tk.Frame):
         self.plot.set_stroke(self._condition("stroke"))
 
     LVDT_MISSING = 10      # samples without an LVDT stroke before the graph reports it
+    GRAPH_PER_MM = 3       # graph points per mm of stroke: each is the mean of its samples
 
     def draw_capture(self, cap):
         """Add a measuring stroke's new graph points (Capture.graph: the NI card load when
@@ -316,6 +319,10 @@ class CablePanel(tk.Frame):
         LabVIEW screen. The LVDT reads an absolute position, so with a Stroke condition it
         is centred like the LabVIEW graph: the PULL start becomes -stroke/2 and the pull
         direction is positive.
+        The trace has GRAPH_PER_MM points per mm of stroke: every sample (the NI card
+        delivers each analog sample) falls into a 1/GRAPH_PER_MM mm bin of the LVDT
+        reading, and a bin is drawn as one point, the mean load at the mean stroke of its
+        samples - a smooth line like the LabVIEW graph instead of the sensor noise.
         The LVDT is the only stroke axis. When it gives no reading nothing is drawn, and
         when it does not follow the axis the trace is drawn as read; either way a red note
         on the graph and an error popup (once a test) say why.
@@ -327,10 +334,11 @@ class CablePanel(tk.Frame):
                 self._gstroke = cap.stroke_no
                 self._graw = {"PULL": [], "PUSH": []}
                 self._gtimes = {"PULL": [], "PUSH": []}
+                self._gbins = {"PULL": {}, "PUSH": {}}
                 self.plot.set_xlabel("Stroke [mm]")
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
-                self._graw[name], self._gtimes[name] = [], []
+                self._graw[name], self._gtimes[name], self._gbins[name] = [], [], {}
             self._gcap, self._gn, self._gt0, self._gmiss = cap, 0, None, 0
             self._gspeed, self._glen = self._condition("speed"), self._condition("stroke")
         new = cap.graph[self._gn:]
@@ -345,11 +353,20 @@ class CablePanel(tk.Frame):
             if stroke is None:
                 self._gmiss += 1
                 continue
-            self._graw[name].append(stroke)
-            self._gtimes[name].append(t - self._gt0)
-            series["x"].append(stroke)
-            series["y"].append(load)
-            drawn = True
+            raw, times, drawn = self._graw[name], self._gtimes[name], True
+            entry = self._gbins[name].setdefault(math.floor(stroke * self.GRAPH_PER_MM), [len(raw), 0])
+            i, n = entry
+            entry[1] = n + 1
+            if n == 0:                       # a new bin: the next point of the trace
+                raw.append(stroke)
+                times.append(t - self._gt0)
+                series["x"].append(stroke)
+                series["y"].append(load)
+            else:                            # running mean of the bin's samples
+                raw[i] += (stroke - raw[i]) / (n + 1)
+                series["y"][i] += (load - series["y"][i]) / (n + 1)
+                series["x"][i] = raw[i]
+                times[i] = t - self._gt0
         if drawn and self._glen:
             self._centre_stroke()
         ended = (cap.stop_event.is_set() and not (cap.thread and cap.thread.is_alive())
@@ -388,7 +405,7 @@ class CablePanel(tk.Frame):
         if not (self._gspeed and self._glen):
             return None
         raw = self._graw[name]
-        expected = min(self._gtimes[name][-1] * self._gspeed, self._glen)
+        expected = min(max(self._gtimes[name]) * self._gspeed, self._glen)
         if expected < 1.0 or lvdt_follows(raw, expected):
             return None
         return (f"The LVDT moved only {max(raw) - min(raw):.2f} mm while the axis travelled about "
@@ -2172,6 +2189,9 @@ class TestConsolePage(tk.Frame):
         """Every POLL_MS, read the connected devices on a worker thread."""
         if not self._alive:
             return
+        snapshot, self._poll_snapshot = getattr(self, "_poll_snapshot", None), None
+        if snapshot is not None:           # what the worker read: applied here, on the UI thread
+            self._apply(snapshot)
         if not self._polling:
             self._polling = True
             self._poll_thread = threading.Thread(target=self._poll_worker, daemon=True)
@@ -2208,9 +2228,8 @@ class TestConsolePage(tk.Frame):
             if self.plc.is_open:
                 self._read_sensor_lamps(snapshot["sides"], snapshot["common"])
         finally:
+            self._poll_snapshot = snapshot     # the worker never touches Tk: _poll applies it
             self._polling = False
-        if self._alive:
-            self.after(0, lambda: self._apply(snapshot))
 
     def _lamp_backend(self):
         """Read-only view of the P inputs through machine_profile.mapping (bit_read area, FC02)."""
