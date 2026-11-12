@@ -31,6 +31,7 @@ class Capture:
         self.samples = []
         self.graph = []                # [(t, graph load, stroke), ...] for the Test Console graph
         self.graph_note = None         # why the graph load is not the NI card's (shown on the graph)
+        self.lvdt_note = None          # why the last sample has no LVDT stroke (graph error popup)
         self.errors = 0
         self.last_error = None         # text of the last failed read (why samples are invalid)
         self.stop_event = threading.Event()
@@ -139,7 +140,8 @@ class Sampler:
     def read_once(self, axis, graph=None):
         """(load, stroke, raw_load, raw_stroke) for the result. With graph_force = "daq"
         the graph load is the NI card's daq_force row (the result load stays the serial
-        loadcell); `graph`, a dict, receives {"load", "stroke"} even if the result read fails.
+        loadcell); `graph`, a dict, receives {"load", "stroke"} even if the result read fails,
+        and graph["lvdt"] says why when there is no LVDT stroke.
         When the NI card gives no load the graph falls back to the result load and
         graph["note"] says why."""
         m = self.mcfg
@@ -162,6 +164,11 @@ class Sampler:
             stroke, raw_stroke = self._daq_value(name, block)
         if graph is not None:
             graph["stroke"] = stroke
+            if stroke is None:                 # why there is no LVDT stroke (the graph needs it)
+                graph["lvdt"] = ("no LVDT sensor row is selected (measurement.stroke)" if not name
+                                 else "NI card: " + self.daq_error if self.daq_error
+                                 else f"no reading for '{name}'" if self._sensor(name)
+                                 else f"no sensor row named '{name}'")
             graph["load"] = None
             if graph_daq:
                 row = (m.get("daq_force") or {}).get(axis, "")
@@ -206,6 +213,7 @@ class Sampler:
                     cap.samples.append((t, load, stroke, raw_load, raw_stroke))
                     cap.graph.append((t, g.get("load"), g.get("stroke")))
                     cap.graph_note = g.get("note")
+                    cap.lvdt_note = g.get("lvdt")
                     self.latest[axis] = (load, stroke)
                     cap.stop_event.wait(self.period)
             finally:

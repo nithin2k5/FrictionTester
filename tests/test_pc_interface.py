@@ -937,8 +937,11 @@ def test_sampler_keeps_the_capture_for_the_graph():
     assert s.captures["select"] is cap and cap.samples[0][1:3] == (0.5, 5.0)
 
 
-def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
+def test_graph_draws_the_lvdt_stroke_and_restarts_per_stroke(monkeypatch):
     import tkinter as tk
+    from friction_tester.ui import test_console
+    popups = []
+    monkeypatch.setattr(test_console.messagebox, "showerror", lambda *a, **k: popups.append(a))
     from friction_tester.plc.pc_measure import Capture
     from friction_tester.ui.test_console import CablePanel
     try:
@@ -965,16 +968,24 @@ def test_graph_draws_stroke_or_time_and_restarts_per_stroke():
         pull2 = Capture("select", "pull", "t", 2)                    # next stroke: fresh graph
         pull2.graph += [(20.0, 0.2, None), (20.5, 0.3, None)]
         panel.draw_capture(pull2)
-        assert not panel.plot.series["PUSH"]["x"] and panel.plot.series["PULL"]["x"] == [0.0, 0.5]
-        assert panel.plot.xlabel == "Time [s]"                       # no LVDT reading: Load vs time
+        assert not panel.plot.series["PUSH"]["x"] and not panel.plot.series["PULL"]["x"]
+        assert not panel.plot.note and not popups                    # still running: not reported yet
+        pull2.stop_event.set()                                       # ended without an LVDT reading
+        panel.draw_capture(pull2)
+        root.update()
+        assert not panel.plot.series["PULL"]["x"] and panel.plot.xlabel == "Stroke [mm]"
+        assert "No LVDT reading" in panel.plot.note and len(popups) == 1
     finally:
         root.destroy()
 
 
-def test_graph_without_lvdt_draws_the_commanded_stroke_loop():
-    """Speed and Stroke set, no LVDT: PULL runs -stroke/2 -> +stroke/2 and PUSH back, on
-    the LabVIEW scale (+/-0.6 x stroke, start line at -stroke/2)."""
+def test_graph_without_lvdt_is_not_drawn_and_reports_it_once_a_test(monkeypatch):
+    """Speed and Stroke set, no LVDT: nothing is drawn (no speed x time stroke); a red note
+    and one error popup a test say why. The scale stays the LabVIEW one."""
     import tkinter as tk
+    from friction_tester.ui import test_console
+    popups = []
+    monkeypatch.setattr(test_console.messagebox, "showerror", lambda *a, **k: popups.append(a))
     from friction_tester.plc.pc_measure import Capture
     from friction_tester.ui.test_console import CablePanel
     try:
@@ -990,23 +1001,38 @@ def test_graph_without_lvdt_draws_the_commanded_stroke_loop():
         panel = CablePanel(root, "SELECT CABLE", cfg)
         assert [round(v, 6) for v in panel.plot.xlim] == [-13.2, 13.2] and panel.plot.start_x == -11.0
         pull = Capture("select", "pull", "t", 1)
-        pull.graph += [(10.0, 0.0, None), (10.2, 0.4, None), (10.9, 0.4, None)]
-        panel.draw_capture(pull)
-        assert panel.plot.series["PULL"]["x"] == [-11.0, -1.0, 11.0]  # clamped at the stroke end
+        pull.lvdt_note = "NI card: Dev1 not found"
+        pull.graph += [(10.0 + i * 0.03, 0.4, None) for i in range(10)]
+        panel.draw_capture(pull)                                     # 10 samples without a stroke
+        root.update()
+        assert not panel.plot.series["PULL"]["x"] and len(popups) == 1
+        assert "SELECT CABLE" in popups[0][1] and "Dev1 not found" in popups[0][1]
+        assert "No LVDT reading" in panel.plot.note
         push = Capture("select", "push", "t", 1)
         push.graph += [(12.0, 0.0, None), (12.2, -0.3, None)]
+        push.stop_event.set()
         panel.draw_capture(push)
-        assert panel.plot.series["PUSH"]["x"] == [11.0, 1.0]
-        assert panel.plot.xlabel == "Stroke [mm] (speed × time)"
+        root.update()
+        assert not panel.plot.series["PUSH"]["x"] and len(popups) == 1   # same test: one popup
+        assert panel.plot.xlabel == "Stroke [mm]"
         assert [round(v, 6) for v in panel.plot.xlim] == [-13.2, 13.2]   # the scale did not move
+        again = Capture("select", "pull", "t2", 1)                    # the next test reports it again
+        again.graph += [(20.0, 0.1, None)]
+        again.stop_event.set()
+        panel.draw_capture(again)
+        root.update()
+        assert len(popups) == 2
     finally:
         root.destroy()
 
 
-def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition():
+def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition(monkeypatch):
     """The LVDT reads an absolute position (never negative here); with a Stroke condition
     the PULL start is drawn at -stroke/2 and the pull direction is positive."""
     import tkinter as tk
+    from friction_tester.ui import test_console
+    popups = []
+    monkeypatch.setattr(test_console.messagebox, "showerror", lambda *a, **k: popups.append(a))
     from friction_tester.plc.pc_measure import Capture
     from friction_tester.ui.test_console import CablePanel
     try:
@@ -1035,8 +1061,13 @@ def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition():
         pull3 = Capture("select", "pull", "t", 3)                    # LVDT read but not moving
         pull3.graph += [(30.0, 0.0, 4.97), (30.2, 0.4, 4.97), (30.9, 0.4, 4.98)]
         panel.draw_capture(pull3)
-        assert panel.plot.series["PULL"]["x"] == [-11.0, -1.0, 11.0]
-        assert "speed × time" in panel.plot.xlabel
+        assert panel.plot.series["PULL"]["x"] == [-11.0, -11.0, -10.99]   # drawn as read
+        assert not popups                                            # reported when the stroke ends
+        pull3.stop_event.set()
+        panel.draw_capture(pull3)
+        root.update()
+        assert panel.plot.xlabel == "Stroke [mm]" and len(popups) == 1
+        assert "LVDT moved only 0.01 mm" in panel.plot.note and "22.0 mm" in popups[0][1]
     finally:
         root.destroy()
 
@@ -1148,4 +1179,6 @@ def test_graph_falls_back_to_the_result_load_when_the_ni_card_fails():
     ok = Sampler([_Lc(), _Lc()], FakeDaq({"ai0": 0.25}), _sampler_settings("serial", graph_force="daq"))
     g = {}
     ok.read_once("select", g)
-    assert g == {"load": 0.5, "stroke": None}                       # NI card fine: no note
+    assert g["load"] == 0.5 and "note" not in g                     # NI card fine: no note
+    assert g["stroke"] is None and g["lvdt"] == "no reading for 'LVDT 1'"   # why there is no stroke
+    assert "Select a DAQ device" in cap.lvdt_note                   # the failed card: no LVDT either

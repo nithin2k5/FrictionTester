@@ -120,7 +120,8 @@ class CablePanel(tk.Frame):
         self._gn = 0               # its first sample time, and the stroke number on the graph
         self._gt0 = None
         self._gstroke = None
-        self._gmode = None         # "stroke" (LVDT on the NI card), "commanded" or "time"
+        self._gmiss = 0            # samples of the capture being drawn that had no LVDT stroke
+        self._gerr = None          # test id the LVDT error popup was last shown for (once a test)
         self._gspeed = self._glen = None   # Speed / Stroke conditions of the stroke on the graph
         self._graw = {"PULL": [], "PUSH": []}   # LVDT readings of the traces on the graph
         self._gtimes = {"PULL": [], "PUSH": []}  # and their times since the capture began
@@ -307,67 +308,67 @@ class CablePanel(tk.Frame):
         """Stroke axis of the graph from the Stroke condition (+/-0.6 x stroke, start line)."""
         self.plot.set_stroke(self._condition("stroke"))
 
+    LVDT_MISSING = 10      # samples without an LVDT stroke before the graph reports it
+
     def draw_capture(self, cap):
         """Add a measuring stroke's new graph points (Capture.graph: the NI card load when
-        graph_force = "daq") to the graph, Load against Stroke like the LabVIEW screen:
-          - the LVDT stroke (NI card) when one is read. The LVDT reads an absolute
-            position, so with a Stroke condition it is centred like the LabVIEW graph:
-            the PULL start becomes -stroke/2 and the pull direction is positive;
-          - otherwise the commanded stroke, speed x time: PULL runs from -stroke/2 to
-            +stroke/2 and PUSH back again, so the two traces close into a loop;
-          - time since the stroke began when Speed / Stroke are empty.
+        graph_force = "daq") to the graph, Load against the LVDT stroke (NI card) like the
+        LabVIEW screen. The LVDT reads an absolute position, so with a Stroke condition it
+        is centred like the LabVIEW graph: the PULL start becomes -stroke/2 and the pull
+        direction is positive.
+        The LVDT is the only stroke axis. When it gives no reading nothing is drawn, and
+        when it does not follow the axis the trace is drawn as read; either way a red note
+        on the graph and an error popup (once a test) say why.
         Each stroke number starts a fresh graph; its PULL and PUSH share it."""
         name = "PULL" if cap.kind == "pull" else "PUSH"
         if cap is not self._gcap:
             if cap.stroke_no != self._gstroke:
                 self.plot.clear()
-                self._gstroke, self._gmode = cap.stroke_no, None
+                self._gstroke = cap.stroke_no
                 self._graw = {"PULL": [], "PUSH": []}
                 self._gtimes = {"PULL": [], "PUSH": []}
+                self.plot.set_xlabel("Stroke [mm]")
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
                 self._graw[name], self._gtimes[name] = [], []
-            self._gcap, self._gn, self._gt0 = cap, 0, None
+            self._gcap, self._gn, self._gt0, self._gmiss = cap, 0, None, 0
+            self._gspeed, self._glen = self._condition("speed"), self._condition("stroke")
         new = cap.graph[self._gn:]
         self._gn += len(new)
-        self.plot.set_note(getattr(cap, "graph_note", None))
         series = self.plot.series[name]
+        drawn = False
         for t, load, stroke in new:
             if load is None:
                 continue
-            if self._gmode is None:          # chosen once per stroke: PULL and PUSH share the x axis
-                self._gspeed, self._glen = self._condition("speed"), self._condition("stroke")
-                if stroke is not None:
-                    self._gmode = "stroke"
-                elif self._gspeed and self._glen:
-                    self._gmode = "commanded"
-                else:
-                    self._gmode = "time"
-                self.plot.set_xlabel({"stroke": "Stroke [mm]", "commanded": "Stroke [mm] (speed × time)",
-                                      "time": "Time [s]"}[self._gmode])
             if self._gt0 is None:
                 self._gt0 = t
-            if self._gmode == "stroke":
-                if stroke is None:
-                    continue
-                self._graw[name].append(stroke)
-                self._gtimes[name].append(t - self._gt0)
-                series["x"].append(stroke)
-            elif self._gmode == "commanded":
-                moved = min((t - self._gt0) * self._gspeed, self._glen)
-                half = self._glen / 2
-                series["x"].append(round(moved - half if cap.kind == "pull" else half - moved, 3))
-            else:
-                series["x"].append(round(t - self._gt0, 3))
+            if stroke is None:
+                self._gmiss += 1
+                continue
+            self._graw[name].append(stroke)
+            self._gtimes[name].append(t - self._gt0)
+            series["x"].append(stroke)
             series["y"].append(load)
-        if new and self._gmode == "stroke" and self._glen:
+            drawn = True
+        if drawn and self._glen:
             self._centre_stroke()
-        if new:
+        ended = (cap.stop_event.is_set() and not (cap.thread and cap.thread.is_alive())
+                 and self._gn == len(cap.graph))
+        problem = None
+        if not self._graw[name]:
+            if self._gmiss >= self.LVDT_MISSING or (ended and self._gmiss):
+                problem = ("No LVDT reading - the graph is not drawn ("
+                           + (getattr(cap, "lvdt_note", None) or "no stroke value from the NI card") + ")")
+        elif ended:
+            problem = self._lvdt_stuck(name)
+        self.plot.set_note(problem or getattr(cap, "graph_note", None))
+        if problem:
+            self._lvdt_error(cap, problem)
+        if drawn:
             self.plot.redraw()
             self.plot.extend_to_data()
         # The stroke has ended and all of it is drawn: fit the graph to the traces (once)
-        if (cap is not self._gfit and cap.stop_event.is_set()
-                and not (cap.thread and cap.thread.is_alive()) and self._gn == len(cap.graph)):
+        if cap is not self._gfit and ended:
             self._gfit = cap
             if any(s["x"] for s in self.plot.series.values()):
                 self.plot.fit_data()
@@ -376,19 +377,29 @@ class CablePanel(tk.Frame):
         """LVDT readings -> the graph's stroke axis: the PULL start is -stroke/2 and the
         pull direction is positive, whatever the LVDT's zero and polarity. A PUSH drawn
         without its PULL starts at +stroke/2 and runs negative."""
-        from ..plc.pc_flow import centre_lvdt, lvdt_follows
-        half = self._glen / 2
-        lead = "PULL" if self._graw["PULL"] else "PUSH"
-        expected = min(self._gtimes[lead][-1] * self._gspeed, self._glen) if self._gspeed else 0.0
-        if expected >= 1.0 and not lvdt_follows(self._graw[lead], expected):
-            # The LVDT does not follow the axis (not wired / not scaled): commanded stroke
-            moved = {n: [min(t * self._gspeed, self._glen) for t in ts] for n, ts in self._gtimes.items()}
-            xs = ([round(m - half, 3) for m in moved["PULL"]], [round(half - m, 3) for m in moved["PUSH"]])
-            self.plot.set_xlabel("Stroke [mm] (speed × time - LVDT not moving)")
-        else:
-            xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], half)
-            self.plot.set_xlabel("Stroke [mm]")
+        from ..plc.pc_flow import centre_lvdt
+        xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], self._glen / 2)
         self.plot.series["PULL"]["x"], self.plot.series["PUSH"]["x"] = xs
+
+    def _lvdt_stuck(self, name):
+        """Why a finished trace's LVDT readings cannot be the stroke (the LVDT did not
+        follow the axis: not wired, wrong NI channel, or not scaled to mm), else None."""
+        from ..plc.pc_flow import lvdt_follows
+        if not (self._gspeed and self._glen):
+            return None
+        raw = self._graw[name]
+        expected = min(self._gtimes[name][-1] * self._gspeed, self._glen)
+        if expected < 1.0 or lvdt_follows(raw, expected):
+            return None
+        return (f"The LVDT moved only {max(raw) - min(raw):.2f} mm while the axis travelled about "
+                f"{expected:.1f} mm - check its wiring and the Scale / Offset of its NI card row")
+
+    def _lvdt_error(self, cap, text):
+        """Error popup for a graph without a usable LVDT stroke, once a test."""
+        if self._gerr == cap.test_id:
+            return
+        self._gerr = cap.test_id
+        self.after_idle(lambda: messagebox.showerror("LVDT", f"{self.title}: {text}", parent=self))
 
     def set_source(self, text):
         self.source_lbl.config(text=text)
