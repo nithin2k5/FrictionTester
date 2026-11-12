@@ -424,20 +424,40 @@ def _migrate_results(cur):
         cur.execute(f"ALTER TABLE {RESULTS_TABLE} DROP COLUMN TR_GRAPH")
 
 
+def _json_value(v):
+    """A JSON column as read by the driver (text, bytes or already parsed) -> Python, or None."""
+    import json
+    if v is None:
+        return None
+    if isinstance(v, (bytes, bytearray)):
+        v = v.decode("utf-8")
+    try:
+        return json.loads(v) if isinstance(v, str) else v
+    except ValueError:
+        return None
+
+
 def get_test_graph(row_id):
     """The stored Load-Stroke graph of one TBL_TEST_RESULTS row (from TBL_TEST_GRAPHS):
     {"pull": [[x, load]], "push": [...], "stroke", "positions", "limits"}, or None when
     the row has none."""
-    import json
     with cursor() as cur:
         cur.execute(f"SELECT TG_GRAPH FROM {GRAPHS_TABLE} WHERE TG_RESULT_ID = %s", (int(row_id),))
         row = cur.fetchone()
-    if not row or row[0] is None:
-        return None
-    graph = row[0]
-    if isinstance(graph, (bytes, bytearray)):
-        graph = graph.decode("utf-8")
-    return json.loads(graph) if isinstance(graph, str) else graph
+    return _json_value(row[0]) if row else None
+
+
+def get_test_record(row_id):
+    """What the Report page shows for one TBL_TEST_RESULTS row beyond the list columns:
+    {"detail": TR_DETAIL (limits, positions, problems, ...), "graph": its stored graph}
+    (either None when missing)."""
+    with cursor() as cur:
+        cur.execute(f"SELECT r.TR_DETAIL, g.TG_GRAPH FROM {RESULTS_TABLE} r "
+                    f"LEFT JOIN {GRAPHS_TABLE} g ON g.TG_RESULT_ID = r.ID WHERE r.ID = %s", (int(row_id),))
+        row = cur.fetchone()
+    if not row:
+        return {"detail": None, "graph": None}
+    return {"detail": _json_value(row[0]), "graph": _json_value(row[1])}
 
 
 def _migrate(cur):
@@ -506,11 +526,15 @@ def delete_model(model):
         return cur.rowcount
 
 
-def list_test_results(date_from=None, date_to=None, model="", text="", lot_result="", limit=2000):
+PART_RESULTS = ("OK", "NG", "INCOMPLETE", "ABORTED")
+
+
+def list_test_results(date_from=None, date_to=None, model="", text="", lot_result="", limit=2000, stage=""):
     """TBL_TEST_RESULTS rows (newest first) for the Report page.
 
     date_from / date_to: datetime.date, inclusive. text matches the label or
-    lot value. lot_result: "" (all), "OK" or "NG".
+    lot value. lot_result: "" (all) or one of PART_RESULTS (the part's result).
+    stage: "" (all) or a TR_STAGE such as "SELECT" / "SHIFT".
     """
     import datetime as _dt
     where, args = [], []
@@ -526,9 +550,12 @@ def list_test_results(date_from=None, date_to=None, model="", text="", lot_resul
     if text:
         where.append("(TR_LABEL LIKE %s OR TR_LOT_VALUE LIKE %s)")
         args += [f"%{text}%", f"%{text}%"]
-    if lot_result in ("OK", "NG"):
+    if lot_result in PART_RESULTS:
         where.append("TR_LOT_RESULT = %s")
         args.append(lot_result)
+    if stage:
+        where.append("TR_STAGE = %s")
+        args.append(stage)
     sql = (f"SELECT ID, {', '.join(c for c in RESULT_COLUMNS if c not in BULK_COLUMNS)} FROM {RESULTS_TABLE}"
            + (" WHERE " + " AND ".join(where) if where else "")
            + " ORDER BY TR_DATETIME DESC, ID DESC LIMIT %s")

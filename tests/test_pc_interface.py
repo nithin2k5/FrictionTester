@@ -1316,23 +1316,62 @@ def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
     assert [t for t, _a in cur.sql].count(db.RESULTS_TABLE) == 2
     assert graphs == [[1, "uid", "SELECT", row["GRAPH"]]]
 
+    _check_report_page(stored, curve, row)
+
+
+def _check_report_page(stored, curve, row):
+    """The Report page with the database stubbed: list, filters, sorting, the selected
+    cycle (values against the limits, problems) and the graph preview / enlarge."""
+    import datetime
+    import json
     import tkinter as tk
+    from decimal import Decimal
+    from friction_tester.ui import report_page
     try:
         root = tk.Tk()
     except tk.TclError:
         pytest.skip("no display")
     root.withdraw()
+    calls = []
+    t = datetime.datetime(2026, 11, 12, 10, 0, 0)
+    base = {c: None for c in report_page.db.RESULT_COLUMNS if c not in report_page.db.BULK_COLUMNS}
+    rows = [dict(base, ID=1, TR_PART_UID="p1", TR_DATETIME=t, TR_MODEL="M", TR_STAGE="SELECT", TR_LABEL="L1",
+                 TR_STAGE_RESULT="OK", TR_LOT_RESULT="NG", TR_CH1_FWD_1=Decimal("0.380"), TR_CH1_FINAL=Decimal("0.4")),
+            dict(base, ID=2, TR_PART_UID="p1", TR_DATETIME=t, TR_MODEL="M", TR_STAGE="SHIFT", TR_LABEL="L1",
+                 TR_STAGE_RESULT="NG", TR_LOT_RESULT="NG", TR_CH1_FWD_1=Decimal("0.700"), TR_CH1_FINAL=Decimal("0.7")),
+            dict(base, ID=3, TR_PART_UID="p2", TR_DATETIME=t - datetime.timedelta(hours=1), TR_MODEL="M",
+                 TR_STAGE="SELECT", TR_STAGE_RESULT="OK", TR_LOT_RESULT="OK", TR_CH1_FWD_1=Decimal("0.2"))]
+    saved = (report_page.db.init_database, report_page.db.list_test_results, report_page.db.get_test_record)
+    report_page.db.init_database = lambda: None
+    report_page.db.list_test_results = lambda **kw: (calls.append(kw), rows)[1]
+    report_page.db.get_test_record = lambda rid: {"graph": stored, "detail": {"result": {
+        "limits": [0.0, 0.6], "positions": [-8.0, 0.0, 8.0], "problems": ["PULL1 0.700 outside 0.0..0.6"]}}}
     try:
-        from friction_tester.ui import report_page
-        page = report_page.ReportPage.__new__(report_page.ReportPage)
-        tk.Frame.__init__(page, root)
-        page._alive, page.rows, page._iid_rows = True, [], {}
-        page.status = tk.Label(page)
-        page._build_detail()
-        page.show_graph(stored)
-        assert page.plot.series["PULL"]["x"] == [p[0] for p in curve["pull"]]
-        assert page.plot.series["PUSH"]["y"] == [p[1] for p in curve["push"]] and page.plot.note == ""
-        assert int(page.plot.canvas["width"]) <= 400                         # a small preview ...
+        page = report_page.ReportPage(root, {})
+        page.pack()
+        root.update()
+        page._show_rows(rows)
+        assert page.tiles["parts"]["text"] == "2" and page.tiles["ng"]["text"] == "1"
+        assert page.tiles["yield"]["text"] == "50.0%"
+        iids = page.tree.get_children()
+        assert page.tree.set(iids[0], "TR_CH1_FWD_1") == "0.38"                 # PULL 1 in kgf
+        assert "NG" not in page.tree.item(iids[0], "tags")                     # the OK cable of an NG part
+        assert "NG" in page.tree.item(iids[1], "tags")
+        page.cb_stage.set("SHIFT")
+        page.cb_result.set("NG")
+        f = page._filters()
+        assert f["stage"] == "SHIFT" and f["lot_result"] == "NG"
+        page.sort_by("TR_CH1_FWD_1")                                          # numeric sort, largest first
+        assert [page._iid_rows[i]["ID"] for i in page.tree.get_children()] == [2, 1, 3]
+        page.tree.selection_set(page.tree.get_children()[0])                  # the NG cable (0.70)
+        page._show_detail()
+        page.show_record(page_record := report_page.db.get_test_record(2))
+        assert page.badge["text"] == "NG" and page.cells["TR_CH1_FWD_1"]["text"] == "0.70"
+        assert str(page.cells["TR_CH1_FWD_1"]["fg"]).lower() == report_page.T.L_NG.lower()   # outside 0..0.6
+        assert "0.00 ~ 0.60" in page.lbl_limits["text"] and "P1 -8" in page.lbl_positions["text"]
+        assert "outside" in page.lbl_problems["text"]
+        assert page.plot.series["PULL"]["x"] == [p[0] for p in curve["pull"]] and page.plot.note == ""
+        assert int(page.plot.canvas["width"]) <= report_page.DETAIL_W              # a small preview ...
         big = page.enlarge_graph()                                           # ... a click enlarges it
         plots = [w for w in big.winfo_children() if isinstance(w, report_page.LoadStrokePlot)]
         assert len(plots) == 1 and plots[0].series["PULL"]["x"] == page.plot.series["PULL"]["x"]
@@ -1340,5 +1379,7 @@ def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
         page.show_graph(None)
         assert page.plot.series["PULL"]["x"] == [] and "No graph stored" in page.plot.note
         assert page.enlarge_graph() is None                                  # nothing to enlarge
+        assert page_record["detail"] and json.loads(row["GRAPH"]) == stored
     finally:
+        (report_page.db.init_database, report_page.db.list_test_results, report_page.db.get_test_record) = saved
         root.destroy()
