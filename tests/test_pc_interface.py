@@ -263,7 +263,7 @@ def test_at_part_order_and_one_result():
     assert len(parts) == 1 and parts[0]["verdict"] == "OK" and parts[0]["counted"]
     assert [s["stage"] for s in parts[0]["stages"]] == ["select", "shift"]
     for axis in pp.AXES:
-        assert r.sim.starts[axis] == {"home": 0, "pull": 1, "push": 1, "meas": 1}
+        assert r.sim.starts[axis] == {"home": 1, "pull": 1, "push": 1, "meas": 1}   # ends back at home
     assert r.requests_clear()
 
 
@@ -336,8 +336,9 @@ def test_position_fallback_only_when_selected():
     f.run_part("AT")
     assert f.parts()[-1]["verdict"] == "OK"
     assert any("fresh target compare OFF->ON" in e for e in f.parts()[-1]["evidence"]["select"])
-    f.run_part("AT")                                    # axis now already on the start compare
-    assert any("no positioning requested" in e for e in f.parts()[-1]["evidence"]["select"])
+    f.run_part("AT")                                    # the routine ended at home: P1 is positioned again
+    assert f.parts()[-1]["verdict"] == "OK"
+    assert any("fresh target compare OFF->ON" in e for e in f.parts()[-1]["evidence"]["select"])
 
 
 # ------------------------------------------------------------------ handshake failures

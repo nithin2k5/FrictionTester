@@ -7,7 +7,8 @@ The Tk thread only submits commands and reads `events`.
 
 Cable routine: fixture checks (configured) -> home if needed (configured) ->
 verified measurement-start positioning -> PULL / PUSH strokes (acquisition
-armed before each request, window closed at completion) -> evaluation.
+armed before each request, window closed at completion) -> home -> evaluation.
+On the model's positions: HOME (P2) -> P1 -> P3 -> P1 -> HOME (P2).
 
 Part flow (application requirement - the PDF does not define barcodes):
   AT: RUN -> SELECT label -> SELECT routine -> SHIFT label -> SHIFT routine -> one part
@@ -293,7 +294,8 @@ class CableRoutine:
         else:
             plan.append("meas_start")
         n = max(1, int(self.mcfg.get("strokes_per_test", 1)))
-        self.plan = plan + ["pull", "push"] * n
+        # HOME (P2) -> P1 (measurement start) -> P3 (PULL) -> P1 (PUSH) -> HOME (P2)
+        self.plan = plan + ["pull", "push"] * n + ["home"]
 
     def close_capture(self):
         if self.capture is None:
