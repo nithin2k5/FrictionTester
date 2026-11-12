@@ -451,6 +451,26 @@ def test_home_on_open_homes_both_axes_once():
     assert r.sim.starts["shift"]["home"] == 1 and r.sim.starts["select"]["home"] == 1
     assert all(a.origin_complete and a.seq["home"].word == 0 for a in r.sim.axes.values())
     assert r.ctl.fault is None and r.requests_clear()
+    homing = [e for e in r.events if e[0] == "open_home"]   # the UI locks the console in between
+    assert homing[0][:2] == ("open_home", "start") and sorted(homing[0][2]) == ["SELECT", "SHIFT"]
+    assert len(homing) == 2 and homing[1][:3] == ("open_home", "end", True)
+
+
+def test_home_on_open_end_event_on_failure_and_on_stop():
+    """The console's homing popup closes however homing ends: a failed axis, or STOP."""
+    r = Rig(cfg={"home_on_open": True})
+    r.until(lambda: r.ctl.manual.get("shift") is not None and r.ctl.manual["shift"].state == "running")
+    r.sim.axes["shift"].servo = False
+    r.until(lambda: not r.ctl.manual)
+    end = [e for e in r.events if e[:2] == ("open_home", "end")]
+    assert len(end) == 1 and end[0][2] is False and any("drive/axis fault" in m for m in end[0][3])
+
+    s = Rig(cfg={"home_on_open": True})
+    s.ctl.submit("stop")
+    s.step()
+    end = [e for e in s.events if e[:2] == ("open_home", "end")]
+    assert len(end) == 1 and end[0][2] is False and not s.ctl.open_homing and not s.ctl.manual
+    assert all("cancelled by STOP" in m for m in end[0][3])
 
 
 def test_home_on_open_off_by_default_and_blocked_without_writes():
@@ -458,6 +478,7 @@ def test_home_on_open_off_by_default_and_blocked_without_writes():
     r = Rig(cfg={"home_on_open": True}, owner=False)
     assert not r.ctl.manual and r.sim.starts["shift"]["home"] == 0
     assert any("Automatic home on open skipped" in m for m in r.messages())
+    assert not [e for e in r.events if e[0] == "open_home"]          # nothing started: no popup
 
 
 def test_home_refused_when_permission_off_but_origin_on():

@@ -740,6 +740,56 @@ class TestConsolePage(tk.Frame):
         self.ctl.start()
         self.after(100, self._drain_pc)
 
+    def _show_homing_popup(self, axes):
+        """Modal popup while the axes go to origin after the console opened: it grabs the
+        app's input, so nothing else can be pressed until homing ends; its STOP cancels it."""
+        self._close_homing_popup()
+        top = tk.Toplevel(self)
+        top.title("Going to origin")
+        top.configure(bg=theme.PANEL)
+        top.resizable(False, False)
+        top.transient(self.winfo_toplevel())
+        top.protocol("WM_DELETE_WINDOW", lambda: None)        # cannot be closed while homing
+        tk.Label(top, text="Going to origin", bg=theme.PANEL, fg=T.L_TEXT,
+                 font=_font(14, True)).pack(padx=30, pady=(20, 6))
+        tk.Label(top, text=f"{' and '.join(axes)} moving to the home position (P2).\n"
+                           "Please wait - the console is locked until homing is complete.",
+                 bg=theme.PANEL, fg=T.L_TEXT_2, font=_font(10), justify="center").pack(padx=30)
+        bar = ttk.Progressbar(top, mode="indeterminate", length=280)
+        bar.pack(padx=30, pady=14)
+        bar.start(12)
+        tk.Button(top, text="STOP", command=self.stop_flow, bg=theme.FAIL, fg="white",
+                  activebackground=theme.FAIL, activeforeground="white", bd=0, padx=24, pady=6,
+                  font=_font(10, True), cursor="hand2").pack(pady=(0, 18))
+        top.update_idletasks()
+        root = self.winfo_toplevel()
+        x = root.winfo_rootx() + (root.winfo_width() - top.winfo_reqwidth()) // 2
+        y = root.winfo_rooty() + (root.winfo_height() - top.winfo_reqheight()) // 3
+        top.geometry(f"+{max(0, x)}+{max(0, y)}")
+        try:
+            top.grab_set()                                    # block the rest of the app
+        except tk.TclError:                                   # not viewable yet: grab once it is
+            top.after(50, lambda: top.winfo_exists() and top.grab_set())
+        top.focus_set()
+        self._homing_popup = top
+        self._set_status("Going to origin - the console is locked until homing is complete", theme.BUSY, 0)
+
+    def _close_homing_popup(self, ok=None, messages=()):
+        """Close the homing popup; ok False = say why homing did not complete."""
+        top, self._homing_popup = getattr(self, "_homing_popup", None), None
+        if top is not None and top.winfo_exists():
+            try:
+                top.grab_release()
+            except tk.TclError:
+                pass
+            top.destroy()
+        if ok is True:
+            self._set_status("Both axes at origin", theme.PASS, 4)
+        elif ok is False:
+            text = "\n".join(messages) or "Homing did not complete"
+            self._set_status("Homing did not complete - see the message", theme.FAIL, 10)
+            messagebox.showerror("Going to origin", text, parent=self)
+
     def _pc_info(self):
         t = self.settings["test"]
         conds = {key: panel.read_conditions() for (key, _t, _s), panel in zip(self.SIDES, self.panels)}
@@ -774,6 +824,11 @@ class TestConsolePage(tk.Frame):
                 self.panels[n].show_pc_result(ev[2], f"Source: {pp.PROFILE_TITLE}")
             elif kind == "part_done":
                 self._pc_part_done(ev[1])
+            elif kind == "open_home":
+                if ev[1] == "start":
+                    self._show_homing_popup(ev[2])
+                else:
+                    self._close_homing_popup(ev[2], ev[3])
             elif kind == "fault" and ev[1]:
                 self._set_status(f"FAULT latched: {ev[1]} - inspect the machine, then STOP to acknowledge",
                                  theme.FAIL, 15)

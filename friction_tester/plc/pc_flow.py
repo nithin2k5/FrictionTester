@@ -386,6 +386,9 @@ class PcController:
         # Home both axes once, on the first good status read after the Test Console opens
         self.home_on_open = bool(cfg.get("home_on_open", False))
         self.pending_run = None         # RUN waiting for both axes to reach origin
+        # Axes still homing from the automatic home on open, and the end message of each that
+        # finished: the UI blocks the console between the "open_home" start and end events.
+        self.open_homing, self._open_home_done = set(), []
         self.params = {"state": "not_confirmed", "values": None, "model": None, "message": "no model loaded"}
         self._seq = 0
         self._stop = threading.Event()
@@ -461,6 +464,8 @@ class PcController:
                 self._msg(op.message, "pass" if op.result == "done" else "fail")
                 if op.result == "failed" and op.kind != "alarm_reset":
                     self._latch(op.message)
+                if axis in self.open_homing:
+                    self._open_home_finished(axis, op.result == "done", op.message)
         if self.pending_run is not None and not self.manual:
             self._start_pending_run(now)
         for r in list(self.routines.values()):
@@ -783,8 +788,24 @@ class PcController:
         self.log.log("HOME", "automatic home on open", axes=",".join(pp.AXES))
         for axis in pp.AXES:
             self._cmd_manual("home", axis, now)
+        self.open_homing = {a for a in pp.AXES if a in self.manual}
+        self._open_home_done = []
+        if self.open_homing:
+            self._emit("open_home", "start", [pp.AXIS_NAME[a] for a in pp.AXES if a in self.open_homing])
+
+    def _open_home_finished(self, axis, ok, message):
+        """One axis of the automatic home on open ended; the last one ends the homing:
+        ("open_home", "end", all_ok, [messages])."""
+        self.open_homing.discard(axis)
+        self._open_home_done.append((ok, message))
+        if not self.open_homing:
+            done, self._open_home_done = self._open_home_done, []
+            self._emit("open_home", "end", all(ok for ok, _m in done), [m for _ok, m in done])
 
     def _cmd_stop(self, now):
+        if self.open_homing:
+            for axis in list(self.open_homing):
+                self._open_home_finished(axis, False, f"{pp.AXIS_NAME[axis]} home cancelled by STOP")
         if self.pending_run is not None:
             self.pending_run = None
             self._msg("Waiting RUN cancelled", "busy")
