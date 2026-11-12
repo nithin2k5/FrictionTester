@@ -179,8 +179,8 @@ class NIDaq:
             finally:
                 task.close()
 
-    def read_average(self):
-        """Acquire one finite block and return {channel: mean voltage}."""
+    def read_block(self):
+        """Acquire one finite block and return {channel: [voltage of every sample]}."""
         if not self.is_open:
             raise RuntimeError("DAQ task is not configured")
         n = int(self._cfg["samples_per_channel"])
@@ -189,4 +189,8 @@ class NIDaq:
         self._task.stop()
         if len(self._channels) == 1:
             data = [data]
-        return {ch: sum(vals) / len(vals) for ch, vals in zip(self._channels, data)}
+        return {ch: list(vals) for ch, vals in zip(self._channels, data)}
+
+    def read_average(self):
+        """Acquire one finite block and return {channel: mean voltage}."""
+        return {ch: sum(vals) / len(vals) for ch, vals in self.read_block().items()}

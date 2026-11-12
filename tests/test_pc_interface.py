@@ -852,7 +852,9 @@ def test_stop_cancels_a_waiting_run():
 
 
 class FakeDaq:
-    """NIDaq stand-in: connect() opens, read_average() returns fixed volts."""
+    """NIDaq stand-in: connect() opens, read_block() returns BLOCK samples of fixed volts
+    per channel (a list in `volts` is one block's samples as given)."""
+    BLOCK = 4
 
     def __init__(self, volts=None, fail=None):
         self.volts, self.fail, self.cfg, self.reads = volts or {}, fail, None, 0
@@ -866,9 +868,10 @@ class FakeDaq:
             raise RuntimeError(self.fail)
         self.cfg = cfg
 
-    def read_average(self):
+    def read_block(self):
         self.reads += 1
-        return dict(self.volts)
+        time.sleep(0.002)                          # a real block takes its acquisition time
+        return {ch: list(v) if isinstance(v, list) else [v] * self.BLOCK for ch, v in self.volts.items()}
 
 
 def _sampler_settings(force_source="serial", stroke=None, graph_force="result"):
@@ -900,7 +903,28 @@ def test_sampler_opens_the_ni_card_and_reads_load_and_stroke_in_one_block():
     assert (load, stroke, raw_load, raw_stroke) == (0.5, 10.0, 0.25, 3.0)
     assert daq.reads == 1                                          # one acquisition per sample
     assert [c["channel"] for c in daq.cfg["channels"]] == ["ai2", "ai0"]
-    assert daq.cfg["samples_per_channel"] == 10                    # ~10 ms block
+    assert daq.cfg["samples_per_channel"] == 50                    # 50 ms block at 1000 S/s
+
+
+def test_graph_takes_every_analog_sample_of_the_ni_card():
+    """graph_force = "daq": each sample of a block is a graph point (load against LVDT),
+    not one averaged point per result sample; the result takes the newest ~10 ms."""
+    from friction_tester.plc.pc_measure import Sampler
+    ramp = [0.01 * i for i in range(50)]                           # one 50 ms block at 1000 S/s
+    daq = FakeDaq({"ai0": ramp, "ai2": [1.0 + v for v in ramp]})
+    s = Sampler([_Lc(), _Lc()], daq, _sampler_settings("serial", graph_force="daq"), period=0.005)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.05)
+    s.stop(cap)
+    time.sleep(0.02)                                               # the reader thread ends
+    assert s._ni_thread is None and s._ni_live is None
+    assert len(cap.graph) >= 50 and len(cap.graph) % 50 == 0       # whole blocks, no result points
+    first = cap.graph[:50]
+    assert [round(g[1], 6) for g in first] == [round(2.0 * v, 6) for v in ramp]      # x 2.0 kgf/V
+    assert [round(g[2], 6) for g in first] == [round(5.0 * v, 6) for v in ramp]      # (V - 1.0) x 5.0
+    assert round(first[-1][0] - first[0][0], 6) == 0.049           # 1 ms apart
+    load, stroke = cap.samples[-1][1:3]
+    assert load == 0.5 and round(stroke, 6) == round(5.0 * sum(ramp[-10:]) / 10, 6)   # newest 10 ms
 
 
 def test_sampler_reopens_the_ni_card_when_the_daq_settings_change():
@@ -1095,7 +1119,8 @@ def test_results_from_serial_graph_from_the_ni_card():
     s.stop(cap)
     assert cap.samples[0][1:4] == (0.5, 10.0, "ID001,+0000.50")   # result: serial loadcell
     assert cap.graph[0][1:] == (0.5, 10.0)                          # graph: NI 0.25 V x 2.0, LVDT
-    assert daq.reads == len(cap.samples)                            # one NI block per sample
+    assert len(cap.graph) > len(cap.samples)                        # every analog sample, not one per result
+    time.sleep(0.02)                                                # the reader thread ends
     daq.volts["ai0"] = 0.1
     g = {}
     assert s.read_once("select", g)[0] == 0.5 and g == {"load": 0.2, "stroke": 10.0}

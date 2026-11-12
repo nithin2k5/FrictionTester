@@ -194,7 +194,9 @@ CHAPTERS = [
 ("The Graph", [
     ("p", "Each cable panel draws Load against Stroke live while the strokes run: PULL and PUSH "
           "share a graph, and each new stroke starts a fresh one. The graph uses the NI card "
-          "(loadcell channel and LVDT); the results always use the serial loadcells. The "
+          "(loadcell channel and LVDT); the results always use the serial loadcells. Every "
+          "analog sample the NI card takes during a stroke is a graph point, so the Rate "
+          "on the COM Port page sets how many points per second are drawn. The "
           "stroke axis is the LVDT only: when the LVDT gives no reading, or does not follow "
           "the axis, a red note on the graph and an error popup (once a test) say why."),
     ("kv", [
