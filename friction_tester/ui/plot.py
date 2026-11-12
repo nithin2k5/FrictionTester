@@ -140,9 +140,12 @@ class LoadStrokePlot(tk.Frame):
         ys = [v for s in self.series.values() for v in s["y"]]
         if not xs:
             return self.reset_view()
-        lo, hi = min(xs), max(xs)
-        span = hi - lo or max(abs(hi), 1.0)
-        self.xlim = [lo - span * 0.08, hi + span * 0.08]
+        # Stroke axis: out to the 2 mm divisions around the traces
+        lo = round(math.floor(min(xs) / self.X_STEP + 1e-9) * self.X_STEP, 6)
+        hi = round(math.ceil(max(xs) / self.X_STEP - 1e-9) * self.X_STEP, 6)
+        if hi - lo < self.X_STEP / 2:        # a single point lying on a division
+            lo, hi = lo - self.X_STEP, hi + self.X_STEP
+        self.xlim = [lo, hi]
         # Load axis: out to the 0.20 kgf divisions around the traces, never a finer scale
         lo, hi = self._snap_load(min(ys), math.floor), self._snap_load(max(ys), math.ceil)
         if hi - lo < self.Y_STEP / 2:        # a flat trace lying on a division
