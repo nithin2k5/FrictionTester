@@ -208,11 +208,14 @@ class App:
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
+        # The tiles share the sidebar's height evenly, so the column is filled top to bottom
+        # whatever the window size (the tile content is placed, so it never sets the height).
         self.nav_tiles = {}
-        for icon, text, page, _title in self.PAGES:
-            f = tk.Frame(sidebar, bg=theme.NAV_TILE, height=88, highlightbackground=theme.NAV_TILE,
+        for i, (icon, text, page, _title) in enumerate(self.PAGES):
+            f = tk.Frame(sidebar, bg=theme.NAV_TILE, highlightbackground=theme.NAV_TILE,
                          highlightthickness=2, cursor="hand2")
-            f.pack(fill="x", padx=(6, 0), pady=3)
+            f.pack(fill="both", expand=True, padx=(6, 0),
+                   pady=(6 if i == 0 else 3, 6 if i == len(self.PAGES) - 1 else 3))
             inner = tk.Frame(f, bg=theme.NAV_TILE, cursor="hand2")
             inner.place(relx=0.5, rely=0.5, anchor="center")
             lbl_icon = tk.Label(inner, text=icon, bg=theme.NAV_TILE, fg=theme.NAV_FG, font=(theme.FONT, 18),
