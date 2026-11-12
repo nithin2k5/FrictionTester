@@ -897,6 +897,24 @@ def test_sampler_opens_the_ni_card_and_reads_load_and_stroke_in_one_block():
     assert daq.cfg["samples_per_channel"] == 10                    # ~10 ms block
 
 
+def test_sampler_reopens_the_ni_card_when_the_daq_settings_change():
+    from friction_tester.plc.pc_measure import Sampler
+    daq = FakeDaq({"ai0": 0.25, "ai1": 0.75, "ai2": 3.0})
+    settings = _sampler_settings("daq")
+    s = Sampler([_Lc(), _Lc()], daq, settings)
+    assert s.read_once("select")[0] == 0.5
+    first = daq.cfg
+    assert s.read_once("select")[0] == 0.5 and daq.cfg is first    # unchanged settings: same task
+    # COM Port page SAVE replaces settings["daq"]: Loadcell 1 moved to ai1, wiring RSE
+    new = {**settings["daq"], "terminal_config": "RSE",
+           "sensors": [dict(sen, channel="ai1") if sen["name"] == "Loadcell 1" else sen
+                       for sen in settings["daq"]["sensors"]]}
+    settings["daq"] = new
+    assert s.read_once("select")[0] == 1.5                         # the new channel, not the old task
+    assert [c["channel"] for c in daq.cfg["channels"]] == ["ai2", "ai1"]
+    assert daq.cfg["terminal_config"] == "RSE"
+
+
 def test_sampler_keeps_the_serial_load_when_the_ni_card_fails():
     from friction_tester.plc.pc_measure import Sampler
     s = Sampler([_Lc(), _Lc()], FakeDaq(fail="Dev1 not found"), _sampler_settings("serial"))

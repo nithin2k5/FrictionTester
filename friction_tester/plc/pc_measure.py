@@ -50,6 +50,7 @@ class Sampler:
         self.daq_error = None          # why the NI card could not be opened (retried each stroke
         self._daq_failed_at = 0.0      # and every DAQ_RETRY_S seconds)
         self._daq_lock = threading.Lock()
+        self._daq_cfg = None           # the task settings this sampler opened the NI card with
 
     @property
     def mcfg(self):
@@ -76,10 +77,6 @@ class Sampler:
         settings). A short averaging block (~10 ms) keeps the sample rate up."""
         if self.daq is None:
             return False
-        if self.daq.is_open:
-            return True
-        if self.daq_error and time.monotonic() - self._daq_failed_at < self.DAQ_RETRY_S:
-            return False
         d = self.settings.get("daq") or {}
         chans = []
         for n in self._daq_names():
@@ -87,16 +84,24 @@ class Sampler:
             if sen and sen["channel"] not in [c["channel"] for c in chans]:
                 chans.append({"channel": sen["channel"], "range": sen.get("range", "±10 V")})
         rate = float(d.get("sample_rate") or 1000.0)
+        cfg = {"device": d.get("device", ""), "terminal_config": d.get("terminal_config", "Differential"),
+               "sample_rate": rate, "samples_per_channel": max(1, int(rate * 0.01)), "channels": chans}
+        # An open task is kept only while it still matches the settings: a channel, range,
+        # wiring or device changed on the COM Port page reopens it instead of reading the old one.
+        if self.daq.is_open and cfg == self._daq_cfg:
+            return True
+        if self.daq_error and time.monotonic() - self._daq_failed_at < self.DAQ_RETRY_S:
+            return False
+        self._daq_cfg = None
         try:
             if not chans:
                 raise ValueError("no NI card sensor rows match the stroke / force names")
-            self.daq.connect({"device": d.get("device", ""), "terminal_config": d.get("terminal_config", "Differential"),
-                              "sample_rate": rate, "samples_per_channel": max(1, int(rate * 0.01)),
-                              "channels": chans})
+            self.daq.connect(cfg)
         except Exception as exc:
             self.daq_error = str(exc) or type(exc).__name__
             self._daq_failed_at = time.monotonic()
             return False
+        self._daq_cfg = cfg
         self.daq_error = None
         return True
 
