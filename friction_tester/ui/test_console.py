@@ -933,11 +933,15 @@ class TestConsolePage(tk.Frame):
         for e in self.scan_entries.values():
             e.delete(0, "end")
         model = self.settings["test"]["select"].get("model") or "the model"
+        if record["verdict"] == "OK" and getattr(self, "_label_error", None):
+            self._set_status(f"Part OK saved - {self._label_error}", theme.FAIL, 15)
+            return
         self._set_status(f"Part {record['verdict']} saved - ready for the next {model} part: press RUN",
                          theme.PASS if record["verdict"] == "OK" else theme.FAIL, 8)
 
     def _pc_part_done(self, record):
         """A finalized part: one CSV line, then the database (counters follow the confirmed save)."""
+        self._print_label(record)
         try:
             self._append_result_row(record)
         except Exception as exc:
@@ -1056,12 +1060,48 @@ class TestConsolePage(tk.Frame):
 
     def record_part(self, record):
         """One confirmed part: production counters once, and one row in the Saved-to folder."""
+        self._print_label(record)
         self._count_part(record)
         try:
             self._append_result_row(record)
         except Exception as exc:
             self._set_status(f"Part counted, but the result file could not be written: {exc}", theme.FAIL, 10)
         self._save_result_rows(record)
+
+    def _print_label(self, record):
+        """An OK part: print the loaded model's PRN template on the label printer (worker thread)."""
+        if record.get("verdict") != "OK":
+            return
+        from .. import label_printer
+        self._label_error = None
+        t = self.settings["test"]
+        template = (t.get("prn_template") or "").strip()
+        printer = (t.get("printer_name") or "").strip() or label_printer.DEFAULT_PRINTER
+        if not template:
+            self._set_status("Part OK - no label printed: the model has no PRN Template (Model Settings)",
+                             theme.FAIL, 10)
+            return
+        record, info = copy.deepcopy(record), dict(t.get("model_info") or {})
+
+        def worker():
+            try:
+                label_printer.print_label(template, record, info, printer)
+                err = None
+            except Exception as exc:
+                err = exc
+            if self._alive:
+                self.after(0, lambda: done(err))
+
+        def done(err):
+            log = getattr(self, "pc_log", None)
+            if log is not None:
+                log.log("LABEL", record.get("part_id", "-"), printer=printer, template=template,
+                        result="printed" if err is None else f"failed: {err}")
+            self._label_error = None if err is None else f"label NOT printed on {printer}: {err}"
+            if err is not None:
+                self._set_status(f"Part OK - {self._label_error}", theme.FAIL, 15)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _count_part(self, record):
         """Production and OK/NG counters for one finished part."""
@@ -1678,6 +1718,10 @@ class TestConsolePage(tk.Frame):
         model_type = (row.get("MM_TYPE") or "").strip().upper()
         self.settings["test"]["model_type"] = model_type
         self.settings["test"]["part_number"] = (row.get("MM_PART_NUMBER") or "").strip()
+        self.settings["test"]["prn_template"] = (row.get("MM_PRN_TEMPLATE") or "").strip()
+        self.settings["test"]["model_info"] = {k: ("" if row.get(k) is None else str(row.get(k)))
+                                               for k in ("MM_MODEL", "MM_TYPE", "MM_PART_NUMBER",
+                                                         "MM_CUSTOMER_NAME", "MM_ALC_CODE")}
         self._show_current_model()
         save_settings(self.settings)
         self._set_status(f"Model changed to {row['MM_MODEL']}" + (f" ({model_type})" if model_type else ""),

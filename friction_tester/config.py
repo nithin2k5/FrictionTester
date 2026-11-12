@@ -84,6 +84,11 @@ DEFAULT_SETTINGS = {
         "label_rule": {"mode": "contains_part_number", "select": "", "shift": ""},
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
         "part_number": "",         # part number of the loaded model; scanned labels must contain it
+        # Label printing: an OK part prints the loaded model's PRN Template (Model Settings)
+        # as a RAW job on this Windows printer. Blank template = no label.
+        "printer_name": "FTM_PRINTER",
+        "prn_template": "",        # PRN Template of the loaded model (set by Model Change)
+        "model_info": {},          # customer / ALC code of the loaded model, for the label fields
         # How the Test Console talks to the PLC.
         #   "kd":           client's updated reference "plc kd.pdf" (NLF, X axis):
         #                   ORIGIN = M00050, moves M00030-M00034, status D00500..
