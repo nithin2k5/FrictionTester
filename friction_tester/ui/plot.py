@@ -41,6 +41,7 @@ class LoadStrokePlot(tk.Frame):
         self.xlim, self.ylim = list(xlim), list(ylim)
         self.xlabel, self.ylabel = xlabel, ylabel
         self.series = {}   # name -> {"color": c, "x": [...], "y": [...]}
+        self.note = ""     # a warning drawn inside the plot (e.g. why the NI card gave no load)
 
         self.canvas = tk.Canvas(self, bg=PLOT_BG, highlightthickness=1,
                                 highlightbackground=theme.BORDER, height=180)
@@ -91,6 +92,11 @@ class LoadStrokePlot(tk.Frame):
         self.xlim = [self.xlim[0] + dx, self.xlim[1] + dx]
         self.ylim = [self.ylim[0] + dy, self.ylim[1] + dy]
         self.redraw()
+
+    def set_note(self, text):
+        if (text or "") != self.note:
+            self.note = text or ""
+            self.redraw()
 
     def set_xlabel(self, text):
         if text != self.xlabel:
@@ -223,6 +229,10 @@ class LoadStrokePlot(tk.Frame):
                 c.create_line(*pts, fill=s["color"], width=1.5)
             elif len(pts) == 2:
                 c.create_oval(pts[0] - 2, pts[1] - 2, pts[0] + 2, pts[1] + 2, fill=s["color"], outline="")
+
+        if self.note:
+            c.create_text(l + 8, b - 6, text=self.note, anchor="sw", fill=theme.FAIL, font=font,
+                          width=max(60, r - l - 16))
 
         # Legend, top right
         y = t + 8

@@ -640,7 +640,7 @@ class PcController:
             return why
         snap = self.snap
         if not snap.st(axis, "servo_on"):
-            return f"{a} servo is not ON (P0001{'0' if axis == 'shift' else '4'})"
+            return f"{a} servo is not ON ({pp.STATUS[axis]['servo_on'][2]})"
         if not snap.st(axis, "alarm_normal"):
             return f"{a} drive alarm"
         if snap.st(axis, "axis_error"):

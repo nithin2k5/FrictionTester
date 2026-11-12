@@ -27,31 +27,48 @@ accepted), alarm on an axis (alarm_normal False; clearable or not).
 """
 
 ORIGIN = 1_000_000
-AXES = ("shift", "select")
-CMD = {"shift": {"home": (0, 9), "meas_start": (2, 8), "pull": (1, 1), "push": (1, 0), "alarm_reset": (0, 10)},
-       "select": {"home": (0, 13), "meas_start": (2, 9), "pull": (1, 3), "push": (1, 2), "alarm_reset": (0, 14)}}
+AXES = ("X", "Y")
+CMD = {"X": {"home": (0, 9), "meas_start": (2, 8), "pull": (1, 1), "push": (1, 0), "alarm_reset": (0, 10)},
+       "Y": {"home": (0, 13), "meas_start": (2, 9), "pull": (1, 3), "push": (1, 2), "alarm_reset": (0, 14)}}
 STATUS = {
-    "shift": {"servo_on": (0, 14), "pos_complete": (0, 15), "origin_complete": (1, 0), "alarm_normal": (1, 1),
+    "X": {"servo_on": (0, 14), "pos_complete": (0, 15), "origin_complete": (1, 0), "alarm_normal": (1, 1),
               "pull_active": (1, 6), "push_active": (1, 7), "permitted": (1, 10), "axis_error": (2, 0),
               "at_pull": (2, 2), "at_push": (2, 3), "at_meas_start": (2, 14)},
-    "select": {"servo_on": (1, 2), "pos_complete": (1, 3), "origin_complete": (1, 4), "alarm_normal": (1, 5),
+    "Y": {"servo_on": (1, 2), "pos_complete": (1, 3), "origin_complete": (1, 4), "alarm_normal": (1, 5),
                "pull_active": (1, 8), "push_active": (1, 9), "permitted": (1, 11), "axis_error": (2, 1),
                "at_pull": (2, 4), "at_push": (2, 5), "at_meas_start": (2, 15)},
 }
-JOG = {"shift": {"jog_left_high": (1, 4), "jog_left_low": (1, 5), "jog_right_low": (1, 6), "jog_right_high": (1, 7)},
-       "select": {"jog_left_high": (1, 8), "jog_left_low": (1, 9), "jog_right_low": (1, 10),
+JOG = {"X": {"jog_left_high": (1, 4), "jog_left_low": (1, 5), "jog_right_low": (1, 6), "jog_right_high": (1, 7)},
+       "Y": {"jog_left_high": (1, 8), "jog_left_low": (1, 9), "jog_right_low": (1, 10),
                   "jog_right_high": (1, 11)}}
-LIMIT_STATUS = {"shift": {"limit_left": (1, 12), "limit_right": (1, 13)},
-                "select": {"limit_left": (1, 14), "limit_right": (1, 15)}}
-COMPLETE = {"shift": {"pull": "M00051", "push": "M00052"}, "select": {"pull": "M00061", "push": "M00062"}}
-PARAM_ORDER = [("shift", k) for k in ("jog_low", "jog_high", "speed", "pull_travel", "limit_left", "limit_right")] + \
-              [("select", k) for k in ("jog_low", "jog_high", "speed", "pull_travel", "limit_left", "limit_right")] + \
-              [("shift", "meas_start"), ("select", "meas_start")]
+LIMIT_STATUS = {"X": {"limit_left": (1, 12), "limit_right": (1, 13)},
+                "Y": {"limit_left": (1, 14), "limit_right": (1, 15)}}
+COMPLETE = {"X": {"pull": "M00051", "push": "M00052"}, "Y": {"pull": "M00061", "push": "M00062"}}
+PARAM_ORDER = [("X", k) for k in ("jog_low", "jog_high", "speed", "pull_travel", "limit_left", "limit_right")] + \
+              [("Y", k) for k in ("jog_low", "jog_high", "speed", "pull_travel", "limit_left", "limit_right")] + \
+              [("X", "meas_start"), ("Y", "meas_start")]
 
 # step timers (s) per sequence; None = no timer, "wait" handled in code
 PULL_T = {0: 0, 1: 0, 2: 0.2, 3: 1.0, 5: 0.1, 6: 0.1, 7: 0.1}
 HOME_T = {0: 0.1, 1: 0.1, 2: 0.5, 3: 0.1, 5: 1.0}
 MEAS_T = {2: 0.2, 5: 0.2}
+
+
+def _ladder_axis(key):
+    """'shift' / 'select' name the CABLE in the tests; its drive is the ladder axis pc_profile.DRIVE_OF
+    gives ('X' = the ladder's SHIFT axis, 'Y' = its SELECT axis)."""
+    from friction_tester.plc import pc_profile as pp
+    return {"shift": "X", "select": "Y"}[pp.DRIVE_OF[key]] if key in pp.DRIVE_OF else key
+
+
+class ByCable(dict):
+    """Per-axis simulator state, stored by ladder axis ('X', 'Y') and also reachable by cable name."""
+
+    def __getitem__(self, key):
+        return super().__getitem__(_ladder_axis(key))
+
+    def __setitem__(self, key, value):
+        super().__setitem__(_ladder_axis(key), value)
 
 
 class _Mapping:
@@ -95,16 +112,16 @@ class PcLadderSim:
     def __init__(self, clock):
         self.clock = clock
         self.D = {n: 0 for n in list(range(4000, 4021)) + list(range(4100, 4103)) + list(range(4200, 4214))}
-        self.axes = {a: Axis() for a in AXES}
+        self.axes = ByCable({a: Axis() for a in AXES})
         self.connected = True
         self.fail_next_write = False
-        self.stuck = {a: False for a in AXES}
-        self.ignore = {a: False for a in AXES}
-        self.local = {a: False for a in AXES}
-        self.alarm_clearable = {a: True for a in AXES}
+        self.stuck = ByCable({a: False for a in AXES})
+        self.ignore = ByCable({a: False for a in AXES})
+        self.local = ByCable({a: False for a in AXES})
+        self.alarm_clearable = ByCable({a: True for a in AXES})
         self.writes = []                     # (time, address, values)
-        self.requests_seen = {a: {k: 0 for k in CMD[a]} for a in AXES}   # rising edges of request bits
-        self.starts = {a: {k: 0 for k in ("home", "pull", "push", "meas")} for a in AXES}  # sequences started
+        self.requests_seen = ByCable({a: {k: 0 for k in CMD[a]} for a in AXES})   # rising edges of request bits
+        self.starts = ByCable({a: {k: 0 for k in ("home", "pull", "push", "meas")} for a in AXES})  # sequences started
         self._last_req = {a: {k: False for k in CMD[a]} for a in AXES}
         self.mapping = _Mapping()
         self.allow_writes = True
@@ -136,8 +153,8 @@ class PcLadderSim:
     def read_bits(self, addresses):
         self._check()
         out = {}
-        sel = {"M00105": "shift", "M00205": "select"}
-        meas = {"shift": "M0204", "select": "M0214"}
+        sel = {"M00105": "X", "M00205": "Y"}
+        meas = {"X": "M0204", "Y": "M0214"}
         for a in addresses:
             for axis in AXES:
                 for kind, name in COMPLETE[axis].items():
@@ -191,7 +208,7 @@ class PcLadderSim:
                 if r and not self._last_req[axis][kind]:
                     self.requests_seen[axis][kind] += 1
                 self._last_req[axis][kind] = r
-            reset_bit = 10 if axis == "shift" else 14
+            reset_bit = 10 if axis == "X" else 14
             if (self.D[4100] >> reset_bit) & 1 and not self.local[axis] and self.alarm_clearable[axis]:
                 a.alarm_normal = True                       # P00033 / P00037 pulse
             if self.ignore[axis]:

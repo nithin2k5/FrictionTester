@@ -129,9 +129,14 @@ class Rig:
 
 # ------------------------------------------------------------------ map / masks
 def test_alarm_reset_masks_and_coupled_bits():
-    assert pp.COMMANDS["shift"]["alarm_reset"] == (0, 10) and pp.m_address(700, 0, 10) == "M0700A"
-    assert pp.COMMANDS["select"]["alarm_reset"] == (0, 14) and pp.m_address(700, 0, 14) == "M0700E"
-    assert pp.SELECTOR == {"shift": "M00105", "select": "M00205"}
+    # the drives are exchanged (pp.DRIVE_OF): the SHIFT cable is moved by the ladder's SELECT drive
+    assert pp.DRIVE_OF == {"select": "shift", "shift": "select"}
+    assert pp.COMMANDS["shift"]["alarm_reset"] == (0, 14) and pp.m_address(700, 0, 14) == "M0700E"
+    assert pp.COMMANDS["select"]["alarm_reset"] == (0, 10) and pp.m_address(700, 0, 10) == "M0700A"
+    assert pp.SELECTOR == {"shift": "M00205", "select": "M00105"}
+    assert pp.STATUS["shift"]["servo_on"][2] == "P00014" and pp.STATUS["select"]["servo_on"][2] == "P00010"
+    assert pp.STATUS["shift"]["clamp_on"][2] == "P00003"            # fixtures stay with their cable
+    assert pp.param_index("select", "speed") == 2 and pp.param_index("shift", "speed") == 8
     assert "torque-limit P00031" in pp.COUPLED_BITS["M07008"] and "lamp P0002D" in pp.COUPLED_BITS["M07008"]
     assert "not alarm reset" in pp.COUPLED_BITS["M07008"]
     used = {(i, n) for ops in pp.COMMANDS.values() for i, n in ops.values()}
@@ -146,7 +151,7 @@ def test_alarm_reset_selector_pulse_and_no_retry():
     r.step()
     r.ctl.submit("alarm_reset", "shift")
     r.step()
-    assert "local/touch operation selected (M00105 ON)" in r.messages()[-1]
+    assert "local/touch operation selected (M00205 ON)" in r.messages()[-1]
     assert r.sim.requests_seen["shift"]["alarm_reset"] == 0
     r.sim.local["shift"] = False
     r.step()                                         # commands use the latest poll's snapshot
@@ -296,9 +301,10 @@ def test_request_held_through_completion_then_released():
     r = Rig()
     r.confirm_params()
     r.run_part("AT")
-    seen = [(word & 0b10 != 0, step) for word, step, _sl in r.trace if step is not None]
+    pull_bit = 1 << pp.COMMANDS["shift"]["pull"][1]     # the SHIFT cable's PULL request in D04101
+    seen = [(word & pull_bit != 0, step) for word, step, _sl in r.trace if step is not None]
     for held, step in seen:
-        if step <= 5:                                   # M00051 is set at step 6
+        if step <= 5:                                   # the completion flag is set at step 6
             assert held, f"PULL request released at step {step}, before the completion flag"
     # released while the sequence (and its exported "active" bit) was still in step 6/7
     assert any(not held and step in (6, 7) for held, step in seen)
@@ -362,7 +368,7 @@ def test_stale_completion_and_position_bits_refused():
     a.complete["pull"] = True
     r.step()
     snap = read_snapshot(r.sim, internal_enabled=True, now=r.clock())
-    with pytest.raises(OpBlocked, match="stale completion flag M00051"):
+    with pytest.raises(OpBlocked, match="stale completion flag M00061"):
         StrokeOp("shift", "pull").start(snap, r.clock())
 
 
@@ -483,10 +489,10 @@ def test_stale_request_bits_reported_not_resent_released_by_stop():
     r = Rig()
     r.sim.connected = False
     r.run(0.5)
-    r.sim.D[4101] |= 1 << 1
+    r.sim.D[4101] |= 1 << 1                          # M07011: the drive that moves the SELECT cable
     r.sim.connected = True
     r.step()
-    assert r.ctl.stale == [("shift", "pull")]
+    assert r.ctl.stale == [("select", "pull")]
     r.ctl.submit("run", dict(INFO, type="AT"))
     r.step()
     assert "press STOP" in r.messages()[-1]
@@ -669,10 +675,10 @@ def _hold(r, axis, op, seconds):
 
 
 def test_jog_bits_follow_the_comment_table():
-    assert pp.command_name("shift", "jog_left_high").endswith("M07014")
-    assert pp.command_name("shift", "jog_right_high").endswith("M07017")
-    assert pp.command_name("select", "jog_left_high").endswith("M07018")
-    assert pp.command_name("select", "jog_right_high").endswith("M0701B")
+    assert pp.command_name("select", "jog_left_high").endswith("M07014")     # drives exchanged
+    assert pp.command_name("select", "jog_right_high").endswith("M07017")
+    assert pp.command_name("shift", "jog_left_high").endswith("M07018")
+    assert pp.command_name("shift", "jog_right_high").endswith("M0701B")
 
 
 def test_jog_runs_while_held_and_stops_on_release():
@@ -1128,3 +1134,18 @@ def test_measurement_start_waits_for_in_position_at_the_release_step():
     op.step(Snap(at_meas_start=True), 0.0)
     op.step(Snap(at_meas_start=True), 2.5)
     assert op.result == "failed" and "in-position signal is OFF" in op.message and "timeout branch" in op.message
+
+
+def test_graph_falls_back_to_the_result_load_when_the_ni_card_fails():
+    from friction_tester.plc.pc_measure import Sampler
+    s = Sampler([_Lc(), _Lc()], FakeDaq(fail="Select a DAQ device"),
+                _sampler_settings("serial", graph_force="daq"), period=0.005)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.03)
+    s.stop(cap)
+    assert cap.graph[0][1] == 0.5                                   # the serial load, so the graph still draws
+    assert "Select a DAQ device" in cap.graph_note and "result load cell" in cap.graph_note
+    ok = Sampler([_Lc(), _Lc()], FakeDaq({"ai0": 0.25}), _sampler_settings("serial", graph_force="daq"))
+    g = {}
+    ok.read_once("select", g)
+    assert g == {"load": 0.5, "stroke": None}                       # NI card fine: no note

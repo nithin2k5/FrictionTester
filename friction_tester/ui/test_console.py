@@ -292,6 +292,7 @@ class CablePanel(tk.Frame):
             lbl.config(text=NO_DATA)     # "—" = not measured, distinct from a measured 0
         self.judge.config(text="– – –", fg=T.L_TEXT_3)
         self.plot.clear()
+        self.plot.set_note(None)
         self._scale_graph()
         self._gcap, self._gstroke = None, None
 
@@ -329,6 +330,7 @@ class CablePanel(tk.Frame):
             self._gcap, self._gn, self._gt0 = cap, 0, None
         new = cap.graph[self._gn:]
         self._gn += len(new)
+        self.plot.set_note(getattr(cap, "graph_note", None))
         series = self.plot.series[name]
         for t, load, stroke in new:
             if load is None:
@@ -1412,7 +1414,8 @@ class TestConsolePage(tk.Frame):
 
         threading.Thread(target=run, daemon=True).start()
 
-    SERVO_OUT = {"shift": "P00030", "select": "P00034"}       # "Servo ON Output" (PLC backup 2026-11-08)
+    # "Servo ON Output" (PLC backup 2026-11-08: P00030 = the ladder's SHIFT drive, P00034 = SELECT), by cable
+    SERVO_OUT = {cable: {"shift": "P00030", "select": "P00034"}[drive] for cable, drive in pp.DRIVE_OF.items()}
 
     def _servo_explanation(self, key, n):
         """PRINTING PROGRAM OLD: the PLC drives servo ON itself (automatic branch, M0700F OFF);
@@ -1426,7 +1429,7 @@ class TestConsolePage(tk.Frame):
         axis = pp.AXIS_NAME[key]
         if out and not fb:
             return (f"{axis} servo: the PLC already sends servo ON ({out_addr} ON) but the drive does not confirm "
-                    f"it (servo status {'P00010' if key == 'shift' else 'P00014'} OFF) - check the servo drive at "
+                    f"it (servo status {pp.STATUS[key]['servo_on'][2]} OFF) - check the servo drive at "
                     "the machine (display, main power, reset after an emergency stop). The app cannot fix this.")
         if out and fb:
             return f"{axis} servo is ON (PLC output {out_addr} and drive status both ON)."

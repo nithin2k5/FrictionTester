@@ -4,7 +4,8 @@ printed 2026-11-06) - the PC word interface.
 Everything here was traced from the printout; page numbers are given so each
 entry can be checked. The earlier "NEW NLF MC KOREA" assumptions (M00029 start,
 D05010 step, M0000C/M0000D verdict) belong to a different program and are not
-used by this profile. SH = SHIFT cable (X axis), SL = SELECT cable (Y axis).
+used by this profile. In the ladder SH = SHIFT (X axis), SL = SELECT (Y axis); on the
+machine the two servo drives are exchanged - see DRIVE_OF below.
 
 PC -> PLC (page 29, every scan):  D04100 -> M0700,  D04101 -> M0701,  D04102 -> M0702
 Echo      (page 30, every scan):  M0700 -> D04000,  M0701 -> D04001,  M0702 -> D04002
@@ -199,6 +200,27 @@ FIXTURE_COMMANDS = {
 }
 
 JOG_OPS = ("jog_left_high", "jog_left_low", "jog_right_low", "jog_right_high")
+
+# ---------------------------------------------------------------------------------------
+# Machine wiring (found on the machine, 2026-11-12): the servo drive the ladder calls SHIFT
+# (X axis) moves the SELECT cable, and the drive it calls SELECT (Y axis) moves the SHIFT
+# cable. The tables above are as printed in the ladder; from here on every drive function
+# (motion / jog / alarm-reset requests, servo status, parameters, sequence words, completion
+# bits, local/PC selector) is keyed by the CABLE it moves. Fixture and product-detection
+# signals are not drive functions and stay as printed. {} for both = as printed.
+DRIVE_OF = {"select": "shift", "shift": "select"}     # cable -> the ladder axis whose drive moves it
+DRIVE_STATUS = ("servo_on", "pos_complete", "origin_complete", "alarm_normal", "pull_active", "push_active",
+                "permitted", "limit_left", "limit_right", "axis_error", "at_pull", "at_push", "at_meas_start")
+LADDER_AXIS_NAME = {"shift": "SHIFT (X)", "select": "SELECT (Y)"}
+
+_cable_of = {drive: cable for cable, drive in DRIVE_OF.items()}
+COMMANDS = {cable: COMMANDS[DRIVE_OF[cable]] for cable in AXES}
+STATUS = {cable: {**STATUS[cable], **{k: STATUS[DRIVE_OF[cable]][k] for k in DRIVE_STATUS}} for cable in AXES}
+SELECTOR = {cable: SELECTOR[DRIVE_OF[cable]] for cable in AXES}
+SEQ_WORDS = {cable: SEQ_WORDS[DRIVE_OF[cable]] for cable in AXES}
+MEAS_STEP_BITS = {cable: MEAS_STEP_BITS[DRIVE_OF[cable]] for cable in AXES}
+INTERNAL_COMPLETE = {cable: INTERNAL_COMPLETE[DRIVE_OF[cable]] for cable in AXES}
+PARAMS = [(_cable_of[drive], key, label, dest, scaling) for drive, key, label, dest, scaling in PARAMS]
 
 # Request bits the app must never leave set by accident (motion requests, jog and
 # alarm reset).
