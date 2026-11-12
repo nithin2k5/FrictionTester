@@ -1244,7 +1244,8 @@ def test_graph_falls_back_to_the_result_load_when_the_ni_card_fails():
 
 def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
     """evaluate_axis keeps the Load-Stroke graph as drawn (centred, 1.5 averaged points
-    per mm); it is saved as TR_GRAPH and the Report page draws it for the selected row."""
+    per mm); it is saved to TBL_TEST_GRAPHS with its result row and the Report page draws
+    it for the selected row."""
     import json
     from friction_tester import db
     from friction_tester.plc.pc_flow import graph_curve
@@ -1264,9 +1265,35 @@ def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
               "type": "AT", "verdict": res["verdict"], "label_select": "L1",
               "stages": [{"stage": "select", "verdict": res["verdict"], "result": json.loads(json.dumps(res))}]}
     row = db.result_rows(record, "uid", "test")[0]
-    stored = json.loads(row["TR_GRAPH"])
+    assert "GRAPH" not in db.RESULT_COLUMNS
+    stored = json.loads(row["GRAPH"])
     assert stored["pull"] == curve["pull"] and stored["push"] == curve["push"]
     assert "curve" not in json.loads(row["TR_DETAIL"])["result"]          # not stored twice
+
+    class Cur:                                   # each graph is inserted with its result row's ID
+        def __init__(self):
+            self.sql, self.lastrowid = [], 0
+
+        def execute(self, sql, args=()):
+            self.sql.append((sql.split()[2], list(args)))
+            if sql.startswith(f"INSERT INTO {db.RESULTS_TABLE}"):
+                self.lastrowid += 1
+
+        def fetchone(self):
+            return (0,)
+
+    from contextlib import contextmanager
+    cur = Cur()
+    saved = db.cursor
+    db.cursor = contextmanager(lambda **_kw: (yield cur))
+    try:
+        no_graph = dict(row, TR_STAGE="SHIFT", GRAPH=None)
+        assert db.insert_test_results([row, no_graph]) == 2
+    finally:
+        db.cursor = saved
+    graphs = [a for t, a in cur.sql if t == db.GRAPHS_TABLE]
+    assert [t for t, _a in cur.sql].count(db.RESULTS_TABLE) == 2
+    assert graphs == [[1, "uid", "SELECT", row["GRAPH"]]]
 
     import tkinter as tk
     try:

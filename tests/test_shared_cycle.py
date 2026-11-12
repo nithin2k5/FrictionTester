@@ -348,7 +348,7 @@ def test_result_rows_at_two_stages_share_lot():
     assert rows[0]["TR_PART_NUMBER"] == "43794-B4000"
     assert rows[1]["TR_CH1_FINAL"] == 720 and rows[1]["TR_CH1_LIMIT_NG"] == 1
     assert rows[0]["TR_CH1_FWD_1"] > 0 and rows[0]["TR_CH1_RET_1"] < 0
-    assert set(db.RESULT_COLUMNS) <= set(rows[0]) and len(db.RESULT_COLUMNS) == 29
+    assert set(db.RESULT_COLUMNS) <= set(rows[0]) and len(db.RESULT_COLUMNS) == 28
 
 
 def test_result_rows_mt_one_row():

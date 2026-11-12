@@ -211,6 +211,7 @@ def init_database():
         cur.execute(SCHEMA)
         _migrate(cur)
         cur.execute(RESULTS_SCHEMA)
+        cur.execute(GRAPHS_SCHEMA)
         _migrate_results(cur)
         cur.execute(ADMIN_SCHEMA)
         cur.execute(LOGIN_HISTORY_SCHEMA)
@@ -233,10 +234,10 @@ RESULT_COLUMNS = (
      "TR_STAGE", "TR_LABEL", "TR_STAGE_RESULT"]
     + _CH_COLS
     + ["TR_CH1_FINAL", "TR_CH2_FINAL", "TR_CH1_LIMIT_NG", "TR_CH2_LIMIT_NG",
-       "TR_LOT_VALUE", "TR_LOT_RESULT", "TR_SOURCE", "TR_DETAIL", "TR_GRAPH"]
+       "TR_LOT_VALUE", "TR_LOT_RESULT", "TR_SOURCE", "TR_DETAIL"]
 )
-# Large JSON columns: not read by the result list, fetched per row when needed
-BULK_COLUMNS = ("TR_DETAIL", "TR_GRAPH")
+# Large JSON columns: not read by the result list
+BULK_COLUMNS = ("TR_DETAIL",)
 
 RESULTS_SCHEMA = f"""
     CREATE TABLE IF NOT EXISTS {RESULTS_TABLE} (
@@ -258,11 +259,30 @@ RESULTS_SCHEMA = f"""
         TR_LOT_RESULT VARCHAR(10),
         TR_SOURCE VARCHAR(50),
         TR_DETAIL JSON,
-        TR_GRAPH JSON,
         TR_CREATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         KEY idx_tr_part (TR_PART_UID),
         KEY idx_tr_lot (TR_LOT_VALUE),
         KEY idx_tr_datetime (TR_DATETIME)
+    )
+"""
+
+# The Load-Stroke graph of a result row, as the Test Console drew it: one row per
+# TBL_TEST_RESULTS row that has a graph (a SELECT / SHIFT cable of the PC profile),
+# written in the same transaction and deleted with it. TG_GRAPH = {"pull": [[x, load]],
+# "push": [...], "stroke", "positions", "limits"}.
+GRAPHS_TABLE = "TBL_TEST_GRAPHS"
+
+GRAPHS_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS {GRAPHS_TABLE} (
+        ID INT AUTO_INCREMENT PRIMARY KEY,
+        TG_RESULT_ID INT NOT NULL,
+        TG_PART_UID VARCHAR(40) NOT NULL,
+        TG_STAGE VARCHAR(10),
+        TG_GRAPH JSON NOT NULL,
+        TG_CREATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_tg_result (TG_RESULT_ID),
+        KEY idx_tg_part (TG_PART_UID),
+        CONSTRAINT fk_tg_result FOREIGN KEY (TG_RESULT_ID) REFERENCES {RESULTS_TABLE} (ID) ON DELETE CASCADE
     )
 """
 
@@ -298,7 +318,8 @@ def _pc_result_rows(record, part_uid, source):
             for i, v in enumerate((res.get(key) or [])[:3]):
                 row[f"TR_CH1_{d}_{i + 1}"] = v
         curve = res.get("curve")
-        row["TR_GRAPH"] = json.dumps(curve, default=str) if curve else None
+        # not a TBL_TEST_RESULTS column: insert_test_results writes it to TBL_TEST_GRAPHS
+        row["GRAPH"] = json.dumps(curve, default=str) if curve and (curve.get("pull") or curve.get("push")) else None
         row["TR_DETAIL"] = json.dumps({
             "profile": record.get("profile"), "part_id": record.get("part_id"), "started": record.get("started"),
             "verdict_basis": record.get("verdict_basis"), "counted": record.get("counted"),
@@ -349,7 +370,6 @@ def result_rows(record, part_uid, source):
             "TR_LOT_VALUE": record.get("label_select") or record.get("label_shift"),
             "TR_LOT_RESULT": record.get("verdict"),
             "TR_SOURCE": source,
-            "TR_GRAPH": None,
         }
         for ch in (1, 2):
             for d, key in (("FWD", "forward"), ("RET", "return")):
@@ -369,7 +389,8 @@ def result_rows(record, part_uid, source):
 
 
 def insert_test_results(rows):
-    """Insert the rows of one part in a single transaction.
+    """Insert the rows of one part, and their graphs (a row's "GRAPH", JSON text) into
+    TBL_TEST_GRAPHS, in a single transaction.
 
     Idempotent per part: if rows with this TR_PART_UID already exist (a retry
     after a lost acknowledgement), nothing is inserted and 0 is returned.
@@ -378,29 +399,38 @@ def insert_test_results(rows):
         return 0
     sql = (f"INSERT INTO {RESULTS_TABLE} ({', '.join(RESULT_COLUMNS)}) "
            f"VALUES ({', '.join(['%s'] * len(RESULT_COLUMNS))})")
+    graph_sql = (f"INSERT INTO {GRAPHS_TABLE} (TG_RESULT_ID, TG_PART_UID, TG_STAGE, TG_GRAPH) "
+                 f"VALUES (%s, %s, %s, %s)")
     with cursor(commit=True) as cur:
         cur.execute(f"SELECT COUNT(*) FROM {RESULTS_TABLE} WHERE TR_PART_UID = %s FOR UPDATE",
                     (rows[0]["TR_PART_UID"],))
         if cur.fetchone()[0]:
             return 0
-        cur.executemany(sql, [[r.get(c) for c in RESULT_COLUMNS] for r in rows])
-        return cur.rowcount
+        for r in rows:                       # one by one: each graph needs its result row's ID
+            cur.execute(sql, [r.get(c) for c in RESULT_COLUMNS])
+            if r.get("GRAPH"):
+                cur.execute(graph_sql, (cur.lastrowid, r["TR_PART_UID"], r.get("TR_STAGE"), r["GRAPH"]))
+        return len(rows)
 
 
 def _migrate_results(cur):
-    """Add TR_GRAPH to a TBL_TEST_RESULTS made by an earlier version (its rows keep no graph)."""
+    """A version stored the graphs in a TBL_TEST_RESULTS.TR_GRAPH column: move them to
+    TBL_TEST_GRAPHS and drop the column (run after GRAPHS_SCHEMA)."""
     cur.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS "
                 "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s", (DATABASE, RESULTS_TABLE))
-    if "TR_GRAPH" not in {r[0].upper() for r in cur.fetchall()}:
-        cur.execute(f"ALTER TABLE {RESULTS_TABLE} ADD COLUMN TR_GRAPH JSON AFTER TR_DETAIL")
+    if "TR_GRAPH" in {r[0].upper() for r in cur.fetchall()}:
+        cur.execute(f"INSERT IGNORE INTO {GRAPHS_TABLE} (TG_RESULT_ID, TG_PART_UID, TG_STAGE, TG_GRAPH) "
+                    f"SELECT ID, TR_PART_UID, TR_STAGE, TR_GRAPH FROM {RESULTS_TABLE} WHERE TR_GRAPH IS NOT NULL")
+        cur.execute(f"ALTER TABLE {RESULTS_TABLE} DROP COLUMN TR_GRAPH")
 
 
 def get_test_graph(row_id):
-    """The stored Load-Stroke graph of one TBL_TEST_RESULTS row: {"pull": [[x, load]],
-    "push": [...], "stroke", "positions", "limits"}, or None when the row has none."""
+    """The stored Load-Stroke graph of one TBL_TEST_RESULTS row (from TBL_TEST_GRAPHS):
+    {"pull": [[x, load]], "push": [...], "stroke", "positions", "limits"}, or None when
+    the row has none."""
     import json
     with cursor() as cur:
-        cur.execute(f"SELECT TR_GRAPH FROM {RESULTS_TABLE} WHERE ID = %s", (int(row_id),))
+        cur.execute(f"SELECT TG_GRAPH FROM {GRAPHS_TABLE} WHERE TG_RESULT_ID = %s", (int(row_id),))
         row = cur.fetchone()
     if not row or row[0] is None:
         return None

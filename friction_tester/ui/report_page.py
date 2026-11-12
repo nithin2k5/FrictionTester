@@ -165,7 +165,7 @@ class ReportPage(tk.Frame):
         body.pack(fill="x", padx=12, pady=8)
         grid = tk.Frame(body, bg=CARD_BG)
         grid.pack(side="left", anchor="n")
-        # The stored Load-Stroke graph of the selected row (TR_GRAPH), as the Test Console drew it
+        # The stored Load-Stroke graph of the selected row (TBL_TEST_GRAPHS), as the Test Console drew it
         self.plot = LoadStrokePlot(body)
         self.plot.canvas.config(height=220)
         self.plot.add_series("PULL", PULL_COLOR)

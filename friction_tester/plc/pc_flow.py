@@ -273,7 +273,7 @@ def evaluate_axis(strokes, cond, mcfg):
         "problems": incomplete + ng,
         "limits": [lo, hi],
         "graph": graph,
-        # the drawn Load-Stroke graph of the last stroke, stored as TR_GRAPH (Report page)
+        # the drawn Load-Stroke graph of the last stroke, stored in TBL_TEST_GRAPHS (Report page)
         "curve": dict(graph_curve(strokes[-1].get("pull"), strokes[-1].get("push"), cond.get("stroke"))
                       if strokes else {"pull": [], "push": []},
                       stroke=cond.get("stroke"), positions=positions, limits=[lo, hi]),
