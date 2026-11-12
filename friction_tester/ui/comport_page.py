@@ -20,6 +20,16 @@ from .theme import light as theme      # light industrial theme
 from ..config import save_settings
 from ..devices import loadcell, ni_daq, plc_xgb
 
+CABLE_OF = {"1": "Select", "2": "Shift"}      # device / sensor number -> the cable it measures
+
+
+def _with_cable(name):
+    """Label of a load cell or NI sensor row with its cable: 'L1 (Select)', 'LVDT 2 (Shift)'.
+    Display only - the settings keep the plain name."""
+    cable = CABLE_OF.get(name[-1:])
+    return f"{name} ({cable})" if cable else name
+
+
 # Shared column widths so every card's rows line up with the others.
 COLS = (("Device", 145), ("COM Port", 130), ("Baud Rate", 105), ("ID", 84), ("", 268), ("Status", 0))
 
@@ -385,7 +395,7 @@ class ComPortPage(tk.Frame):
             return f
 
         w["port"], w["baud"], w["id"], _a, w["status"] = self._row(
-            body, COLS, f"L{lc.number}", [
+            body, COLS, _with_cable(f"L{lc.number}"), [
                 lambda p: self._combo(p, [], cfg["port"]),
                 lambda p: self._combo(p, loadcell.BAUD_RATES, cfg["baudrate"], width=9),
                 lambda p: self._entry(p, _id_text(cfg.get("id", "auto")), width=5, digits_only=True,
@@ -531,7 +541,7 @@ class ComPortPage(tk.Frame):
         self.daq_dev_status.set("idle", "Not tested")
 
         # One row per sensor
-        cols = (("Sensor", 100), ("Channel", 70), ("Pins", 112), ("Range", 78), ("Scale /V", 66),
+        cols = (("Sensor", 150), ("Channel", 70), ("Pins", 112), ("Range", 78), ("Scale /V", 66),
                 ("Offset V", 66), ("Unit", 52), ("", 64), ("Reading", 0))
         self._table_header(body, cols)
         terminal = cfg["terminal_config"]
@@ -541,7 +551,7 @@ class ComPortPage(tk.Frame):
             row.pack(fill="x", pady=2)
             self._cols(row, cols)
             w = {"name": s["name"]}
-            self._label(row, s["name"], bold=True, anchor="w").grid(row=0, column=0, sticky="w", padx=(8, 0), pady=5)
+            self._label(row, _with_cable(s["name"]), bold=True, anchor="w").grid(row=0, column=0, sticky="w", padx=(8, 0), pady=5)
             w["channel"] = self._combo(row, ni_daq.channels_for(terminal), s["channel"], width=4)
             w["channel"].bind("<<ComboboxSelected>>", lambda _e, n=i: self._update_pins(n))
             w["pins"] = self._label(row, "", fg=T.L_PRIMARY, anchor="w")

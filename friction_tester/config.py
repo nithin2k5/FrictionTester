@@ -9,10 +9,10 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # settings.json layout version. 2 = machine profile "PRINTING PROGRAM OLD"
 # (plc.pdf, PC word interface) is this machine's integration.
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
-# 7 = NI card load cells scaled 5 kgf/V (amplifier: +10 V = +50 kgf, -10 V = -50 kgf).
+# 7 = NI card load cells scaled 10 kgf/V (measured on the machine against the serial indicator).
 SETTINGS_VERSION = 7
 
-LOADCELL_KGF_PER_V = 5.0       # load cell amplifiers on the NI card: +/-10 V = +/-50 kgf
+LOADCELL_KGF_PER_V = 10.0      # indicator analogue output on the NI card: ~0.197 V at 1.97 kgf
 
 DEFAULT_SETTINGS = {
     "settings_version": SETTINGS_VERSION,
@@ -339,7 +339,7 @@ def migrate(loaded):
                 scaled.append(sen["name"])
         if scaled:
             notes.append(f"daq {', '.join(scaled)}: scale 1 -> {LOADCELL_KGF_PER_V:g} kgf/V "
-                         "(amplifier +/-10 V = +/-50 kgf)")
+                         "(indicator analogue output, +/-10 V = +/-100 kgf)")
         loaded["settings_version"] = 7
     if notes:
         loaded["migrated"] = notes

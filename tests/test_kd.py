@@ -287,11 +287,11 @@ def test_run_blocker_names_the_kd_settings():
     assert "integration.shared" in live_start_blocker({}, False)          # shared_cycle mode unchanged
 
 
-def test_migration_scales_the_ni_load_cells_5_kgf_per_volt():
+def test_migration_scales_the_ni_load_cells_10_kgf_per_volt():
     from friction_tester.config import migrate
     old = {"settings_version": 6, "daq": {"sensors": [
         {"name": "Loadcell 1", "scale": 1.0}, {"name": "Loadcell 2", "scale": 4.9},
         {"name": "LVDT 1", "scale": 1.0}]}}
     new = migrate(old)
-    assert [s["scale"] for s in new["daq"]["sensors"]] == [5.0, 4.9, 1.0]   # a set scale and the LVDT are kept
+    assert [s["scale"] for s in new["daq"]["sensors"]] == [10.0, 4.9, 1.0]   # a set scale and the LVDT are kept
     assert new["settings_version"] == 7 and "Loadcell 1" in new["migrated"][0]
