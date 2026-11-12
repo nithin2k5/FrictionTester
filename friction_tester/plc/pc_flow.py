@@ -110,29 +110,22 @@ def lvdt_follows(readings, expected):
     return bool(readings) and max(readings) - min(readings) >= 0.5 * expected
 
 
-def stroke_points(pull, push, stroke, speed):
+def stroke_points(pull, push, stroke):
     """Valid samples [(t, load, lvdt), ...] of one PULL / PUSH -> ({"pull": [(x, load)],
-    "push": [...]}, source) on the centred stroke axis. Source "lvdt" when the LVDT was
-    read and followed the stroke; otherwise "speed x time" (the commanded stroke: PULL
-    -stroke/2 -> +stroke/2, PUSH back), with the reason when an LVDT reading was
-    rejected; None when neither is available."""
-    half = stroke / 2
+    "push": [...]}, source, problem) on the centred stroke axis. The LVDT is the only
+    stroke source: source "lvdt" and problem None when it was read and followed the
+    stroke; otherwise no points, source None and the reason (no LVDT reading, or the
+    reading did not follow the axis: not wired, wrong NI channel, not scaled to mm)."""
     lv = {"pull": [s for s in pull if s[2] is not None], "push": [s for s in push if s[2] is not None]}
-    source = "speed x time"
-    if lv["pull"] or lv["push"]:
-        moved = [s[2] for s in (lv["pull"] or lv["push"])]
-        if lvdt_follows(moved, stroke) or not speed:
-            xs = centre_lvdt([s[2] for s in lv["pull"]], [s[2] for s in lv["push"]], half)
-            return {d: list(zip(x, (s[1] for s in lv[d]))) for d, x in zip(("pull", "push"), xs)}, "lvdt"
-        source = (f"speed x time - the LVDT reading moved only {max(moved) - min(moved):.2f} of "
-                  f"{stroke:g} mm")
-    if not speed:
-        return {"pull": [], "push": []}, None
-    out = {}
-    for d, samples in (("pull", pull), ("push", push)):
-        moved = [min((s[0] - samples[0][0]) * speed, stroke) for s in samples]
-        out[d] = [(m - half if d == "pull" else half - m, s[1]) for m, s in zip(moved, samples)]
-    return out, source
+    none = {"pull": [], "push": []}
+    if not (lv["pull"] or lv["push"]):
+        return none, None, "no LVDT reading"
+    moved = [s[2] for s in (lv["pull"] or lv["push"])]
+    if not lvdt_follows(moved, stroke):
+        return none, None, (f"the LVDT reading moved only {max(moved) - min(moved):.2f} of "
+                            f"{stroke:g} mm")
+    xs = centre_lvdt([s[2] for s in lv["pull"]], [s[2] for s in lv["push"]], stroke / 2)
+    return {d: list(zip(x, (s[1] for s in lv[d]))) for d, x in zip(("pull", "push"), xs)}, "lvdt", None
 
 
 def evaluate_axis(strokes, cond, mcfg):
@@ -145,8 +138,8 @@ def evaluate_axis(strokes, cond, mcfg):
                                 Position 1-3, or at -(stroke/2 - 2), 0, +(stroke/2 - 2) when
                                 the model has none (capture_positions), linear interpolation
                                 on the centred
-                                stroke axis of the graph (stroke_points: LVDT, or
-                                speed x time when no LVDT is read)
+                                stroke axis of the graph (stroke_points: the LVDT; no
+                                LVDT stroke = INCOMPLETE)
       force_sign:   "absolute" (compare |load|) or "signed" (compare load as delivered)
       limit_bounds: "inclusive" (min <= v <= max) or "exclusive" (min < v < max)
       min_samples:  valid samples needed per stroke direction
@@ -194,15 +187,15 @@ def evaluate_axis(strokes, cond, mcfg):
                 incomplete.append("judge = positions but the model has no Position 1-3 and the Stroke "
                                   f"is under {2 * CAPTURE_MARGIN:g} mm")
         last = strokes[-1] if strokes else {}
-        points = {"pull": [], "push": []}
+        points, no_stroke = {"pull": [], "push": []}, None
         if positions:
-            points, stroke_source = stroke_points(valid(last.get("pull")), valid(last.get("push")),
-                                                  cond["stroke"], cond.get("speed"))
+            points, stroke_source, no_stroke = stroke_points(valid(last.get("pull")), valid(last.get("push")),
+                                                             cond["stroke"])
         for d in values:
             pts = points[d]
             if positions and len(pts) < min_n:
                 incomplete.append(f"{d.upper()}: no stroke data for positional sampling"
-                                  + ("" if stroke_source else " (no LVDT reading and no Speed condition)"))
+                                  + (f" ({no_stroke})" if no_stroke else ""))
             vals = []
             for p in positions:
                 v = _interp(pts, p) if len(pts) >= 2 else None

@@ -616,19 +616,19 @@ def test_evaluation_rules_are_explicit():
     assert out["verdict"] == "INCOMPLETE" and "13 mm not covered" in out["problems"][0]
     none = evaluate_axis(pos, COND, dict(RULES, judge="positions"))
     assert none["verdict"] == "INCOMPLETE" and "Stroke condition is empty" in none["problems"][0]
-    # no LVDT: the commanded stroke (speed x time), PULL -11 -> +11 and PUSH back
+    # no LVDT: INCOMPLETE, with or without a Speed condition (no speed x time stroke)
     timed = [{"pull": [(10.0, 2.0, None), (10.22, 4.0, None), (10.44, 6.0, None)],
               "push": [(11.0, 3.0, None), (11.22, 5.0, None), (11.44, 7.0, None)]}]
     cmd = evaluate_axis(timed, dict(COND, stroke=22.0, speed=50.0), dict(RULES, judge="positions"))
-    assert cmd["stroke_source"] == "speed x time" and cmd["positions"] == [-9.0, 0.0, 9.0]
-    assert [round(v, 3) for v in cmd["pull"]] == [2.364, 4.0, 5.636]
-    assert [round(v, 3) for v in cmd["push"]] == [6.636, 5.0, 3.364]
+    assert cmd["verdict"] == "INCOMPLETE" and cmd["stroke_source"] is None
+    assert cmd["positions"] == [-9.0, 0.0, 9.0] and cmd["pull"] == [None, None, None]
+    assert "no stroke data for positional sampling (no LVDT reading)" in cmd["problems"][0]
     assert evaluate_axis(timed, dict(COND, stroke=22.0), dict(RULES, judge="positions"))["verdict"] == "INCOMPLETE"
-    # an LVDT that is read but does not follow the axis (not wired / not scaled): speed x time
+    # an LVDT that is read but does not follow the axis (not wired / not scaled): INCOMPLETE
     flat = [{d: [(t, v, 4.97) for t, v, _s in s] for d, s in timed[0].items()}]
     stuck = evaluate_axis(flat, dict(COND, stroke=22.0, speed=50.0), dict(RULES, judge="positions"))
-    assert stuck["pull"] == cmd["pull"] and stuck["verdict"] == "OK"
-    assert "LVDT reading moved only 0.00 of 22 mm" in stuck["stroke_source"]
+    assert stuck["verdict"] == "INCOMPLETE" and stuck["stroke_source"] is None
+    assert "LVDT reading moved only 0.00 of 22 mm" in stuck["problems"][0]
 
 
 # ------------------------------------------------------------------ result saving

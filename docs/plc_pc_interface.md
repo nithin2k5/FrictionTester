@@ -234,8 +234,8 @@ LVDT row, or none), calibration (scale, offset, unit, verified flag), and the ev
 unset by default**: `judge` (`peak` | `strokes` | `positions`: the load of the last stroke at the model's Position 1–3 — or
 at −(Stroke/2 − 2), 0 and +(Stroke/2 − 2) when the model has none — on the centred stroke axis of the
 graph, linear interpolation; the stroke is the LVDT
-re-zeroed so the PULL start is −Stroke/2, or speed × time when no LVDT is read or it does not follow
-the stroke), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
+re-zeroed so the PULL start is −Stroke/2; when no LVDT is read or it does not follow the stroke the
+result is INCOMPLETE — there is no speed × time substitute), `force_sign` (`absolute` | `signed`), `limit_bounds` (`inclusive` | `exclusive`),
 `min_samples`. Samples carry timestamp, calibrated and raw force, stroke and raw stroke; a failed read
 is recorded as invalid (no substitute sensor). Positions and repetition count are separate settings.
 
