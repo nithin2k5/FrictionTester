@@ -310,7 +310,7 @@ class CablePanel(tk.Frame):
         self.plot.set_stroke(self._condition("stroke"))
 
     LVDT_MISSING = 10      # samples without an LVDT stroke before the graph reports it
-    GRAPH_PER_MM = 1.5     # graph points per mm of stroke: each is the mean of its samples
+    from ..plc.pc_flow import GRAPH_PER_MM   # graph points per mm of stroke: each the mean of its samples
 
     def draw_capture(self, cap):
         """Add a measuring stroke's new graph points (Capture.graph: the NI card load when

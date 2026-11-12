@@ -16,6 +16,8 @@ from tkinter import filedialog, messagebox, ttk
 from . import theme as T
 from .theme import light as theme      # light industrial theme
 from .. import db
+from .plot import LoadStrokePlot
+from .test_console import PULL_COLOR, PUSH_COLOR
 
 CARD_BG = theme.PANEL
 HEAD_BG = T.L_SURFACE_2
@@ -157,10 +159,19 @@ class ReportPage(tk.Frame):
     def _build_detail(self):
         card, head = self._card("Selected cycle")
         card.pack(fill="x", pady=(10, 0))
-        self.lbl_detail = self._label(head, "Click a row to see its readings (raw PLC counts)", fg=theme.MUTED, size=9)
+        self.lbl_detail = self._label(head, "Click a row to see its readings and graph", fg=theme.MUTED, size=9)
         self.lbl_detail.pack(side="left", padx=4)
-        grid = tk.Frame(card, bg=CARD_BG)
-        grid.pack(fill="x", padx=12, pady=8)
+        body = tk.Frame(card, bg=CARD_BG)
+        body.pack(fill="x", padx=12, pady=8)
+        grid = tk.Frame(body, bg=CARD_BG)
+        grid.pack(side="left", anchor="n")
+        # The stored Load-Stroke graph of the selected row (TR_GRAPH), as the Test Console drew it
+        self.plot = LoadStrokePlot(body)
+        self.plot.canvas.config(height=220)
+        self.plot.add_series("PULL", PULL_COLOR)
+        self.plot.add_series("PUSH", PUSH_COLOR)
+        self.plot.pack(side="left", fill="both", expand=True, padx=(16, 0))
+        self._graph_for = None            # ID of the row whose graph was last requested
         self.cells = {}
         heads = ["", "FWD 1", "FWD 2", "FWD 3", "RET 1", "RET 2", "RET 3", "Final", "Limit"]
         for c, h in enumerate(heads):
@@ -246,7 +257,10 @@ class ReportPage(tk.Frame):
         self.status.config(text=f"{len(parts)} part(s), {len(rows)} PLC cycle row(s)", fg=theme.PASS)
         for lbl in self.cells.values():
             lbl.config(text="—")
-        self.lbl_detail.config(text="Click a row to see its readings (raw PLC counts)")
+        self.lbl_detail.config(text="Click a row to see its readings and graph")
+        self._graph_for = None
+        self.plot.clear()
+        self.plot.set_note("")
 
     def _show_detail(self):
         sel = self.tree.selection()
@@ -261,7 +275,50 @@ class ReportPage(tk.Frame):
             else:
                 lbl.config(text=_fmt(v), fg="#0b3a75")
         self.lbl_detail.config(text=f"{_fmt(r.get('TR_DATETIME'))} · {r.get('TR_MODEL')} · {r.get('TR_STAGE')} · "
-                                    f"{r.get('TR_LABEL')} · source {r.get('TR_SOURCE')} · raw PLC counts")
+                                    f"{r.get('TR_LABEL')} · source {r.get('TR_SOURCE')}")
+        self._load_graph(r["ID"])
+
+    def _load_graph(self, row_id):
+        """Fetch the row's stored graph on a worker thread and draw it (the newest click wins)."""
+        self._graph_for = row_id
+        self.plot.clear()
+        self.plot.set_note("Loading graph…")
+        result = {}
+
+        def worker():
+            try:
+                result["graph"], result["error"] = db.get_test_graph(row_id), None
+            except Exception as exc:
+                result["graph"], result["error"] = None, exc
+
+        def collect():
+            if not self._alive or self._graph_for != row_id:
+                return
+            if "graph" not in result:
+                self.after(100, collect)
+                return
+            if result["error"] is not None:
+                self.plot.set_note(f"Graph not loaded: {result['error']}")
+            else:
+                self.show_graph(result["graph"])
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(100, collect)
+
+    def show_graph(self, graph):
+        """Draw a stored graph ({"pull": [[x, load]], "push": [...], "stroke": ...}) or say
+        why there is none."""
+        self.plot.set_stroke((graph or {}).get("stroke"))
+        self.plot.clear()
+        pull, push = ((graph or {}).get(d) or [] for d in ("pull", "push"))
+        if not (pull or push):
+            self.plot.set_note("No graph stored for this cycle (saved before graphs were stored, "
+                               "or no LVDT stroke was read)")
+            return
+        self.plot.set_note("")
+        for name, pts in (("PULL", pull), ("PUSH", push)):
+            self.plot.set_data(name, [p[0] for p in pts], [p[1] for p in pts])
+        self.plot.extend_to_data()
 
     def export_csv(self):
         if not self.rows:
@@ -272,7 +329,7 @@ class ReportPage(tk.Frame):
                                             defaultextension=".csv", filetypes=[("CSV", "*.csv")])
         if not path:
             return
-        cols = ["ID"] + [c for c in db.RESULT_COLUMNS if c != "TR_DETAIL"]
+        cols = ["ID"] + [c for c in db.RESULT_COLUMNS if c not in db.BULK_COLUMNS]
         try:
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f)

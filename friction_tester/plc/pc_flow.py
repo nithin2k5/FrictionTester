@@ -21,6 +21,7 @@ with STOP while the machine is idle.
 """
 
 import datetime
+import math
 import queue
 import threading
 import time
@@ -102,6 +103,43 @@ def centre_lvdt(pull, push, half):
     else:
         return [], []
     return tuple([round(start + sign * (v - ref), 3) for v in raw] for raw in (pull, push))
+
+
+GRAPH_PER_MM = 1.5       # graph points per mm of stroke: each is the mean of its samples
+
+
+def bin_samples(samples, per_mm=GRAPH_PER_MM):
+    """(lvdt, load) samples -> [(lvdt, load)]: one point per 1/per_mm mm bin of the LVDT
+    reading, in the order the bins were first reached, the mean of the bin's samples
+    (the same smoothing the Test Console graph draws)."""
+    bins, out = {}, []
+    for stroke, load in samples:
+        key = math.floor(stroke * per_mm)
+        if key not in bins:
+            bins[key] = len(out)
+            out.append([stroke, load, 1])
+        else:
+            p = out[bins[key]]
+            p[2] += 1
+            p[0] += (stroke - p[0]) / p[2]
+            p[1] += (load - p[1]) / p[2]
+    return [(s, l) for s, l, _n in out]
+
+
+def graph_curve(pull, push, stroke, per_mm=GRAPH_PER_MM):
+    """The Load-Stroke graph of one PULL / PUSH as the Test Console draws it, for storing
+    with the result: samples [(t, load, lvdt), ...] -> {"pull": [[x, load]], "push": [...]}
+    on the centred stroke axis (centre_lvdt), GRAPH_PER_MM averaged points per mm.
+    Without a Stroke condition the LVDT readings are kept as read; samples without an
+    LVDT reading are left out."""
+    raw = {d: bin_samples([(s[2], s[1]) for s in samples or [] if s[1] is not None and s[2] is not None], per_mm)
+           for d, samples in (("pull", pull), ("push", push))}
+    if stroke:
+        xs = centre_lvdt([p[0] for p in raw["pull"]], [p[0] for p in raw["push"]], stroke / 2)
+    else:
+        xs = tuple([p[0] for p in raw[d]] for d in ("pull", "push"))
+    return {d: [[round(x, 3), round(p[1], 4)] for x, p in zip(x_d, raw[d])]
+            for d, x_d in zip(("pull", "push"), xs)}
 
 
 def lvdt_follows(readings, expected):
@@ -235,6 +273,10 @@ def evaluate_axis(strokes, cond, mcfg):
         "problems": incomplete + ng,
         "limits": [lo, hi],
         "graph": graph,
+        # the drawn Load-Stroke graph of the last stroke, stored as TR_GRAPH (Report page)
+        "curve": dict(graph_curve(strokes[-1].get("pull"), strokes[-1].get("push"), cond.get("stroke"))
+                      if strokes else {"pull": [], "push": []},
+                      stroke=cond.get("stroke"), positions=positions, limits=[lo, hi]),
     }
 
 

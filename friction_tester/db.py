@@ -211,6 +211,7 @@ def init_database():
         cur.execute(SCHEMA)
         _migrate(cur)
         cur.execute(RESULTS_SCHEMA)
+        _migrate_results(cur)
         cur.execute(ADMIN_SCHEMA)
         cur.execute(LOGIN_HISTORY_SCHEMA)
 
@@ -232,8 +233,10 @@ RESULT_COLUMNS = (
      "TR_STAGE", "TR_LABEL", "TR_STAGE_RESULT"]
     + _CH_COLS
     + ["TR_CH1_FINAL", "TR_CH2_FINAL", "TR_CH1_LIMIT_NG", "TR_CH2_LIMIT_NG",
-       "TR_LOT_VALUE", "TR_LOT_RESULT", "TR_SOURCE", "TR_DETAIL"]
+       "TR_LOT_VALUE", "TR_LOT_RESULT", "TR_SOURCE", "TR_DETAIL", "TR_GRAPH"]
 )
+# Large JSON columns: not read by the result list, fetched per row when needed
+BULK_COLUMNS = ("TR_DETAIL", "TR_GRAPH")
 
 RESULTS_SCHEMA = f"""
     CREATE TABLE IF NOT EXISTS {RESULTS_TABLE} (
@@ -255,6 +258,7 @@ RESULTS_SCHEMA = f"""
         TR_LOT_RESULT VARCHAR(10),
         TR_SOURCE VARCHAR(50),
         TR_DETAIL JSON,
+        TR_GRAPH JSON,
         TR_CREATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         KEY idx_tr_part (TR_PART_UID),
         KEY idx_tr_lot (TR_LOT_VALUE),
@@ -293,10 +297,13 @@ def _pc_result_rows(record, part_uid, source):
         for d, key in (("FWD", "pull"), ("RET", "push")):
             for i, v in enumerate((res.get(key) or [])[:3]):
                 row[f"TR_CH1_{d}_{i + 1}"] = v
+        curve = res.get("curve")
+        row["TR_GRAPH"] = json.dumps(curve, default=str) if curve else None
         row["TR_DETAIL"] = json.dumps({
             "profile": record.get("profile"), "part_id": record.get("part_id"), "started": record.get("started"),
             "verdict_basis": record.get("verdict_basis"), "counted": record.get("counted"),
-            "reasons": record.get("reasons"), "result": res, "snapshot": record.get("snapshot"),
+            "reasons": record.get("reasons"), "result": {k: v for k, v in res.items() if k != "curve"},
+            "snapshot": record.get("snapshot"),
             "evidence": (record.get("evidence") or {}).get(st["stage"]),
             "acquisition": (record.get("acquisition") or {}).get(st["stage"])}, default=str)
         rows.append(row)
@@ -342,6 +349,7 @@ def result_rows(record, part_uid, source):
             "TR_LOT_VALUE": record.get("label_select") or record.get("label_shift"),
             "TR_LOT_RESULT": record.get("verdict"),
             "TR_SOURCE": source,
+            "TR_GRAPH": None,
         }
         for ch in (1, 2):
             for d, key in (("FWD", "forward"), ("RET", "return")):
@@ -377,6 +385,29 @@ def insert_test_results(rows):
             return 0
         cur.executemany(sql, [[r.get(c) for c in RESULT_COLUMNS] for r in rows])
         return cur.rowcount
+
+
+def _migrate_results(cur):
+    """Add TR_GRAPH to a TBL_TEST_RESULTS made by an earlier version (its rows keep no graph)."""
+    cur.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s", (DATABASE, RESULTS_TABLE))
+    if "TR_GRAPH" not in {r[0].upper() for r in cur.fetchall()}:
+        cur.execute(f"ALTER TABLE {RESULTS_TABLE} ADD COLUMN TR_GRAPH JSON AFTER TR_DETAIL")
+
+
+def get_test_graph(row_id):
+    """The stored Load-Stroke graph of one TBL_TEST_RESULTS row: {"pull": [[x, load]],
+    "push": [...], "stroke", "positions", "limits"}, or None when the row has none."""
+    import json
+    with cursor() as cur:
+        cur.execute(f"SELECT TR_GRAPH FROM {RESULTS_TABLE} WHERE ID = %s", (int(row_id),))
+        row = cur.fetchone()
+    if not row or row[0] is None:
+        return None
+    graph = row[0]
+    if isinstance(graph, (bytes, bytearray)):
+        graph = graph.decode("utf-8")
+    return json.loads(graph) if isinstance(graph, str) else graph
 
 
 def _migrate(cur):
@@ -468,7 +499,7 @@ def list_test_results(date_from=None, date_to=None, model="", text="", lot_resul
     if lot_result in ("OK", "NG"):
         where.append("TR_LOT_RESULT = %s")
         args.append(lot_result)
-    sql = (f"SELECT ID, {', '.join(c for c in RESULT_COLUMNS if c != 'TR_DETAIL')} FROM {RESULTS_TABLE}"
+    sql = (f"SELECT ID, {', '.join(c for c in RESULT_COLUMNS if c not in BULK_COLUMNS)} FROM {RESULTS_TABLE}"
            + (" WHERE " + " AND ".join(where) if where else "")
            + " ORDER BY TR_DATETIME DESC, ID DESC LIMIT %s")
     args.append(int(limit))

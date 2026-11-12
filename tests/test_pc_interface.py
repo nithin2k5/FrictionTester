@@ -1240,3 +1240,51 @@ def test_graph_falls_back_to_the_result_load_when_the_ni_card_fails():
     assert g["load"] == 0.5 and "note" not in g                     # NI card fine: no note
     assert g["stroke"] is None and g["lvdt"] == "no reading for 'LVDT 1'"   # why there is no stroke
     assert "Select a DAQ device" in cap.lvdt_note                   # the failed card: no LVDT either
+
+
+def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
+    """evaluate_axis keeps the Load-Stroke graph as drawn (centred, 1.5 averaged points
+    per mm); it is saved as TR_GRAPH and the Report page draws it for the selected row."""
+    import json
+    from friction_tester import db
+    from friction_tester.plc.pc_flow import graph_curve
+    # LVDT 40 -> 62 mm over a 22 mm PULL, 100 samples per mm, then back for the PUSH
+    pull = [(i * 0.01, 0.40, 40.0 + i * 0.01) for i in range(2200)]
+    push = [(i * 0.01, -0.20, 62.0 - i * 0.01) for i in range(2200)]
+    curve = graph_curve(pull, push, 22.0)
+    assert 32 <= len(curve["pull"]) <= 35 and 32 <= len(curve["push"]) <= 35
+    assert abs(curve["pull"][0][0] + 11) < 1 and abs(curve["pull"][-1][0] - 11) < 1
+    assert abs(curve["push"][0][0] - 11) < 1 and all(p[1] == -0.2 for p in curve["push"])
+    assert graph_curve([(0, 0.4, None)] * 5, [], 22.0) == {"pull": [], "push": []}   # no LVDT, no graph
+
+    cond = dict(COND, load_min=0.0, load_max=1.0, stroke=22.0)
+    res = evaluate_axis([{"pull": pull, "push": push}], cond, RULES)
+    assert res["curve"]["stroke"] == 22.0 and res["curve"]["pull"] == curve["pull"]
+    record = {"profile": "printing_program_old_pc_words", "time": "2026-11-12T10:00:00", "model": "M",
+              "type": "AT", "verdict": res["verdict"], "label_select": "L1",
+              "stages": [{"stage": "select", "verdict": res["verdict"], "result": json.loads(json.dumps(res))}]}
+    row = db.result_rows(record, "uid", "test")[0]
+    stored = json.loads(row["TR_GRAPH"])
+    assert stored["pull"] == curve["pull"] and stored["push"] == curve["push"]
+    assert "curve" not in json.loads(row["TR_DETAIL"])["result"]          # not stored twice
+
+    import tkinter as tk
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        from friction_tester.ui import report_page
+        page = report_page.ReportPage.__new__(report_page.ReportPage)
+        tk.Frame.__init__(page, root)
+        page._alive, page.rows, page._iid_rows = True, [], {}
+        page.status = tk.Label(page)
+        page._build_detail()
+        page.show_graph(stored)
+        assert page.plot.series["PULL"]["x"] == [p[0] for p in curve["pull"]]
+        assert page.plot.series["PUSH"]["y"] == [p[1] for p in curve["push"]] and page.plot.note == ""
+        page.show_graph(None)
+        assert page.plot.series["PULL"]["x"] == [] and "No graph stored" in page.plot.note
+    finally:
+        root.destroy()
