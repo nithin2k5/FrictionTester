@@ -29,9 +29,9 @@ def _nice_step(span, target=10):
 class LoadStrokePlot(tk.Frame):
     MARGIN_L, MARGIN_R, MARGIN_T, MARGIN_B = 62, 14, 12, 40
     DEFAULT_XLIM = (-30.0, 30.0)
-    X_STEP, Y_STEP = 2.0, 0.2          # divisions of the LabVIEW graph: 2 mm, 0.20 kgf
+    X_STEP, Y_STEP = 2.0, 2.0          # divisions of the graph: 2 mm, 2 kgf
 
-    def __init__(self, master, xlim=DEFAULT_XLIM, ylim=(-1.8, 1.8),
+    def __init__(self, master, xlim=DEFAULT_XLIM, ylim=(-10.0, 10.0),
                  xlabel="Stroke [mm]", ylabel="Load [kgf]"):
         super().__init__(master, bg=theme.PANEL)
         self.start_x = None            # x of the stroke start line (set_stroke)
@@ -80,7 +80,7 @@ class LoadStrokePlot(tk.Frame):
 
     # ---------------------------------------------------------------- view
     def _snap_load(self, v, how=round):
-        """`v` moved onto a 0.20 kgf division (how = round / math.floor / math.ceil), so the
+        """`v` moved onto a 2 kgf division (how = round / math.floor / math.ceil), so the
         load axis always starts and ends on a division."""
         eps = {math.floor: 1e-9, math.ceil: -1e-9}.get(how, 0.0)
         return round(how(v / self.Y_STEP + eps) * self.Y_STEP, 6)
@@ -127,7 +127,7 @@ class LoadStrokePlot(tk.Frame):
             self.xlim[0], grown = lo - pad, True
         if hi > self.xlim[1]:
             self.xlim[1], grown = hi + pad, True
-        if min(ys) < self.ylim[0]:           # the load axis grows by whole 0.20 divisions
+        if min(ys) < self.ylim[0]:           # the load axis grows by whole 2 kgf divisions
             self.ylim[0], grown = self._snap_load(min(ys), math.floor), True
         if max(ys) > self.ylim[1]:
             self.ylim[1], grown = self._snap_load(max(ys), math.ceil), True
@@ -143,7 +143,7 @@ class LoadStrokePlot(tk.Frame):
         lo, hi = min(xs), max(xs)
         span = hi - lo or max(abs(hi), 1.0)
         self.xlim = [lo - span * 0.08, hi + span * 0.08]
-        # Load axis: out to the 0.20 kgf divisions around the traces, never a finer scale
+        # Load axis: out to the 2 kgf divisions around the traces, never a finer scale
         lo, hi = self._snap_load(min(ys), math.floor), self._snap_load(max(ys), math.ceil)
         if hi - lo < self.Y_STEP / 2:        # a flat trace lying on a division
             lo, hi = round(lo - self.Y_STEP, 6), round(hi + self.Y_STEP, 6)
@@ -168,7 +168,7 @@ class LoadStrokePlot(tk.Frame):
 
     # -------------------------------------------------------------- drawing
     def _axis(self, lim, fixed, decimals, target, finer=True):
-        """(division, label format) of an axis: the LabVIEW division (2 mm / 0.20 kgf), a
+        """(division, label format) of an axis: the fixed division (2 mm / 2 kgf), a
         coarser 1/2/5 step once zoomed far out, a finer one - with enough decimals to tell
         the divisions apart - when zoomed far in. finer=False (the load axis) never goes
         below the fixed division and only coarsens in whole multiples of it."""
@@ -202,7 +202,7 @@ class LoadStrokePlot(tk.Frame):
         self._margin_l = max(self.MARGIN_L, 32 + 6 * widest)
         l, r, t, b = self._margin_l, w - self.MARGIN_R, self.MARGIN_T, h - self.MARGIN_B
 
-        # Grid and tick labels: 2 mm / 0.20 kgf divisions like the LabVIEW graph (a coarser
+        # Grid and tick labels: 2 mm / 2 kgf divisions (a coarser
         # 1/2/5 step once the view is zoomed far out), plus a label at each end of the axis.
         for lim, horizontal, gap, step, fmt in axes:
             span = lim[1] - lim[0]
