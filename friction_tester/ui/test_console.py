@@ -843,8 +843,7 @@ class TestConsolePage(tk.Frame):
                     self._count_part(rec)
                 self.pc_log.log("SAVED", rec["part_id"], verdict=rec["verdict"], counted=rec.get("counted"))
                 if rec["verdict"] in ("OK", "NG"):
-                    self._set_status(f"Part {rec['verdict']} saved", theme.PASS if rec["verdict"] == "OK"
-                                     else theme.FAIL, 4)
+                    self._prepare_next_part(rec)
             else:
                 self.pc_log.log("SAVE-FAIL", sev[1]["part_id"], error=sev[2])
                 self._set_status(f"Part {sev[1]['part_id']} NOT SAVED ({sev[2]}) - retrying; RUN is blocked "
@@ -924,6 +923,24 @@ class TestConsolePage(tk.Frame):
         if self.store.pending():
             self.store.retry()
         self.after(15000, self._retry_saves)
+
+    def _prepare_next_part(self, record):
+        """Both cables of an OK / NG part are logged (database confirmed): clear the results,
+        graphs and labels so the console is ready for the next part of the same model. The
+        verdict stays in the status line and the counters; INCOMPLETE / ABORTED parts are
+        not cleared, so their reasons stay on screen."""
+        if self._flow != "idle" or (self.ctl is not None and self.ctl.part is not None):
+            return                               # a new part already started: leave its screen alone
+        if self.sampler is not None:
+            for key, _t, _s in self.SIDES:
+                self.sampler.captures.pop(key, None)
+        for panel in self.panels:
+            panel.reset_results()
+        for e in self.scan_entries.values():
+            e.delete(0, "end")
+        model = self.settings["test"]["select"].get("model") or "the model"
+        self._set_status(f"Part {record['verdict']} saved - ready for the next {model} part: press RUN",
+                         theme.PASS if record["verdict"] == "OK" else theme.FAIL, 8)
 
     def _pc_part_done(self, record):
         """A finalized part: one CSV line, then the database (counters follow the confirmed save)."""

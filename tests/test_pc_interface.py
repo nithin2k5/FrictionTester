@@ -1383,3 +1383,50 @@ def _check_report_page(stored, curve, row):
     finally:
         (report_page.db.init_database, report_page.db.list_test_results, report_page.db.get_test_record) = saved
         root.destroy()
+
+
+def test_console_clears_after_both_cables_are_logged():
+    """An OK / NG part saved to the database: results, graphs and labels are cleared for the
+    next part of the same model; a part already running is left alone (INCOMPLETE / ABORTED parts
+    never get here: only OK / NG saves call _prepare_next_part)."""
+    import copy
+    import tkinter as tk
+    from types import SimpleNamespace
+    from friction_tester.config import DEFAULT_SETTINGS
+    from friction_tester.ui import test_console as tc
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    root.withdraw()
+    try:
+        settings = copy.deepcopy(DEFAULT_SETTINGS)
+        settings["test"]["select"]["model"] = "0705CAJ00511N"
+        page = tc.TestConsolePage.__new__(tc.TestConsolePage)
+        tk.Frame.__init__(page, root)
+        page.settings, page._flow, page.status = settings, "idle", tk.Label(page)
+        page.ctl = SimpleNamespace(part=None)
+        page.sampler = SimpleNamespace(captures={"select": object(), "shift": object()})
+        page.panels = [tc.CablePanel(page, title, copy.deepcopy(settings["test"][key]))
+                       for key, title, _s in page.SIDES]
+        page.scan_entries = {"select": tk.Entry(page)}
+        page.scan_entries["select"].insert(0, "LBL-1")
+
+        def filled():
+            for p in page.panels:
+                p.res["max"].config(text="0.45")
+                p.judge.config(text="OK")
+                p.plot.set_data("PULL", [-11, 0, 11], [0.3, 0.4, 0.35])
+        filled()
+        page.ctl.part = {"id": "P2"}                                   # a new part already running
+        page._prepare_next_part({"verdict": "OK"})
+        assert page.panels[0].res["max"]["text"] == "0.45" and page.sampler.captures
+        page.ctl.part = None
+        page._prepare_next_part({"verdict": "OK"})
+        for p in page.panels:
+            assert p.res["max"]["text"] == tc.NO_DATA and p.plot.series["PULL"]["x"] == []
+            assert p.judge["text"] != "OK"
+        assert not page.sampler.captures and page.scan_entries["select"].get() == ""
+        assert "ready for the next 0705CAJ00511N part" in page.status["text"]
+    finally:
+        root.destroy()
