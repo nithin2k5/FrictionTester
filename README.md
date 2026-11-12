@@ -1,7 +1,7 @@
 # FrictionTester
 
 Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell indicators
-(RS232) and an NI USB-6210 DAQ.
+(RS232) and an NI USB-6210 DAQ. OK parts get a label from the Windows printer `FTM_PRINTER`.
 
 ## Setup
 
@@ -24,6 +24,8 @@ Tkinter desktop app for a friction tester driven by a PLC (RS232), two loadcell 
    python init_db.py --admin E1001 "Kumar"    # also add / reset a sign-in user (password prompted)
    ```
    Safe to re-run: existing data is kept and older tables are migrated.
+6. Label printer: install it in Windows under the name `FTM_PRINTER` and put the `.prn` label files
+   in `prn_templates/` (see [Label printing](#label-printing)).
 
 ## PLC profile: plc kd.pdf (client's updated reference)
 
@@ -69,6 +71,9 @@ MT needs `mt_parallel_verified`; results stay INCOMPLETE until `measurement.judg
 - **Results**: OK / NG are counted; INCOMPLETE / ABORTED are saved with reasons and not counted. Parts are
   saved idempotently with a backlog file; counters change on the confirmed save; RUN waits while a
   part is unsaved.
+- **Next part**: once an OK / NG part is confirmed saved, the panels, graphs and scan boxes clear
+  and the status asks for the next part of the same model; INCOMPLETE / ABORTED parts stay on
+  screen so their reasons can be read.
 - **Labels**: `test.label_rule` = `contains_part_number` (default), `regex` per field, or `none`.
 - Log: `<Saved to>/plc_events_YYYYMMDD.log`.
 
@@ -138,7 +143,9 @@ cable is NG (CH2 unused); `TR_DETAIL` holds the judgement, problems and sample c
 
 **Report** in the sidebar shows `TBL_TEST_RESULTS`: filter by date range, model, label / lot and
 lot result (OK / NG), see the part summary (parts, OK, NG, yield, PLC cycles), click a row for its
-channel readings, and **EXPORT CSV** to save the filtered rows.
+readings against the LOAD limits, the reason it was NG / INCOMPLETE and a small preview of its
+stored Load-Stroke graph (click the preview to enlarge it), and **EXPORT CSV** to save the filtered
+rows.
 
 ### Loading a model
 
@@ -189,6 +196,22 @@ an address is set, the button only reports that in the status box.
 The automatic test sequence (recording PULL/PUSH) is not implemented yet;
 `CablePanel.show_results()`, `set_live()` and `plot` are where it will report.
 
+### Label printing
+
+When a part is judged **OK**, the PRN Template of the loaded model (Model Settings) is sent as a RAW
+print job to the Windows printer in `test.printer_name` (default **`FTM_PRINTER`**); NG, INCOMPLETE
+and ABORTED parts print nothing. The code is in `friction_tester/label_printer.py` (Windows spooler
+through `ctypes`, no extra package).
+
+- The `.prn` file must already be in the printer's language (ZPL, TSPL, EPL…); it is sent byte for
+  byte after these placeholders are filled in, if present: `{MODEL}` `{TYPE}` `{PART_NUMBER}`
+  `{CUSTOMER}` `{ALC_CODE}` `{LABEL}` `{LABEL_SELECT}` `{LABEL_SHIFT}` `{VERDICT}` `{DATE}` `{TIME}`
+  `{DATETIME}` `{YYYYMMDD}` `{HHMMSS}`.
+- The template is taken when the model is loaded with **Model Change** — after setting or changing a
+  model's template, load the model again.
+- Printing runs on a worker thread. A failure (printer missing or offline, file not found) or a model
+  without a template is shown in the status line; each print is logged as `LABEL` in the event log.
+
 ## Admin
 
 Opening **Admin**, **Model Settings** or **COM Setting** shows a sign-in screen first (every time;
@@ -198,7 +221,8 @@ The Admin page (as in the FeederCable tester) manages the operator accounts in `
 Employee ID, Name, Password, Designation, Department, with Save / Update, Delete and Clear. Passwords
 are stored only as salted PBKDF2 hashes; when editing a user, leave Password empty to keep it. Every
 sign-in attempt (page, employee, result, reason) is recorded in `TBL_LOGIN_HISTORY` and shown on the
-Admin page. A built-in recovery account (hash in `friction_tester/auth.py`) always works, so the
+Admin page. A user can also be added, or a forgotten password reset, from the PC with
+`python init_db.py --admin E1001 "Name"`. A built-in recovery account (hash in `friction_tester/auth.py`) always works, so the
 machine is never locked out when there are no users yet or the database is down.
 
 ## Model Settings
@@ -214,7 +238,7 @@ server). The connection (host, port, user, password, database) is set at the top
 | `MM_PART_NUMBER` | Part Number |
 | `MM_CUSTOMER_NAME` | Customer Name |
 | `MM_ALC_CODE` | ALC Code |
-| `MM_PRN_TEMPLATE` | PRN Template — chosen from the `.prn` files in `prn_templates/` |
+| `MM_PRN_TEMPLATE` | PRN Template — chosen from the `.prn` files in `prn_templates/`; printed for every OK part ([Label printing](#label-printing)) |
 | `MM_SELECT_SPEED`, `MM_SHIFT_SPEED` | SELECT CABLE / SHIFT CABLE test condition — Speed, mm/Sec |
 | `MM_SELECT_DELAY_TIME`, `MM_SHIFT_DELAY_TIME` | Delay Time, Sec |
 | `MM_SELECT_STROKE`, `MM_SHIFT_STROKE` | Stroke, mm |
