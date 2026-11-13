@@ -57,6 +57,7 @@ def classify_link_error(exc):
     return "error"
 
 ORIGIN = 1_000_000            # D02000 / D02100 initial value [p1]
+RESULT_HOLD_S = 2.0           # s the SHIFT result stays on screen before the part is logged and reset
 STOP_TEXT = ("Application sequence cancelled. Machine stop NOT confirmed - this PLC program has no PC stop "
              "command and no verified abort procedure; a stroke that has started finishes by itself. Use the "
              "machine's emergency stop to stop motion.")
@@ -824,7 +825,9 @@ class PcController:
                 cancelled.append(r.op.name)
             r.close_capture()
         self.routines.clear()
-        if self.part is not None:
+        if self.part is not None and "pending" in self.part:
+            self._finalize(*self.part["pending"][:2])     # measured and judged: log it now, not ABORTED
+        elif self.part is not None:
             self._finalize("ABORTED", ["stopped by the operator"] + [f"{n} cancelled" for n in cancelled])
         self._set_flow("idle")
         if cancelled:
@@ -882,6 +885,9 @@ class PcController:
     def _cmd_run(self, info, now):
         if self.flow == "at_scan_shift" and self.skip_scan and self.part:
             self._start_stage(["shift"], "at_run_shift", now)
+            return
+        if self.part is not None and "pending" in self.part:
+            self._msg("RUN refused: the last part is being logged - press RUN again in a moment", "busy")
             return
         if self.part is not None or any(op.kind != "home" for op in self.manual.values()):
             self._msg("RUN refused: a part or operation is already active - press STOP to cancel it", "busy")
@@ -1042,7 +1048,11 @@ class PcController:
             self._latch(f"part timeout ({limit:g} s)")
         if self.routines or self.flow not in ("at_run_select", "at_run_shift", "mt_run"):
             return
-        if part["failed"]:
+        if "pending" in part:              # SHIFT done: the result stays on screen for the hold
+            if now >= part["pending"][2]:
+                self._finalize(*part["pending"][:2])
+            return
+        if part["failed"] and self.flow == "at_run_select":
             self._finalize("INCOMPLETE", [f"{pp.AXIS_NAME[a]}: {m}" for a, m in part["failed"].items()])
             return
         if self.flow == "at_run_select":
@@ -1054,13 +1064,27 @@ class PcController:
             nxt = "press RUN for the SHIFT routine" if self.skip_scan else "scan the SHIFT label"
             self._msg(f"SELECT {res['verdict']} - {nxt}", "pass" if res["ok"] else "fail")
             return
-        verdicts = [part["results"][c]["verdict"] for c in ("select", "shift")]
-        if "INCOMPLETE" in verdicts:
-            reasons = [f"{pp.AXIS_NAME[c]}: {p}" for c in ("select", "shift")
-                       for p in part["results"][c]["problems"] if part["results"][c]["verdict"] == "INCOMPLETE"]
-            self._finalize("INCOMPLETE", reasons)
+        if part["failed"]:
+            verdict, reasons = "INCOMPLETE", [f"{pp.AXIS_NAME[a]}: {m}" for a, m in part["failed"].items()]
         else:
-            self._finalize("OK" if verdicts == ["OK", "OK"] else "NG", [])
+            verdicts = [part["results"][c]["verdict"] for c in ("select", "shift")]
+            if "INCOMPLETE" in verdicts:
+                verdict = "INCOMPLETE"
+                reasons = [f"{pp.AXIS_NAME[c]}: {p}" for c in ("select", "shift")
+                           for p in part["results"][c]["problems"]
+                           if part["results"][c]["verdict"] == "INCOMPLETE"]
+            else:
+                verdict, reasons = ("OK" if verdicts == ["OK", "OK"] else "NG"), []
+        # After SHIFT the part is held RESULT_HOLD_S (machine_profile.result_hold_s) before it is
+        # logged and the console reset, so the operator sees the SHIFT result first.
+        hold = float(self.cfg.get("result_hold_s", RESULT_HOLD_S) or 0.0)
+        if hold <= 0:
+            self._finalize(verdict, reasons)
+            return
+        part["pending"] = (verdict, reasons, now + hold)
+        self.log.log("HOLD", f"part {verdict} - logged in {hold:g} s", part=part["id"])
+        self._msg(f"Part {verdict} - logging and resetting for the next test in {hold:g} s",
+                  "pass" if verdict == "OK" else "fail")
 
     def _finalize(self, verdict, reasons):
         """End the active part exactly once."""

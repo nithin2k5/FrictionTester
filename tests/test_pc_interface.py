@@ -267,6 +267,43 @@ def test_at_part_order_and_one_result():
     assert r.requests_clear()
 
 
+def test_part_is_logged_two_seconds_after_shift():
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "SEL-1")
+    r.until(lambda: r.ctl.flow == "at_scan_shift")
+    r.ctl.submit("scan", "shift", "SHF-1")
+    r.until(lambda: r.ctl.part is not None and "pending" in r.ctl.part)
+    held = r.clock.t
+    assert not r.parts() and "in 2 s" in r.messages()[-1]          # SHIFT result shown, not logged yet
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    assert "being logged" in r.messages()[-1] and not r.parts()
+    r.until(lambda: r.parts())
+    assert 2.0 <= r.clock.t - held < 2.2 and r.ctl.flow == "idle"
+    assert r.parts()[0]["verdict"] == "OK" and r.parts()[0]["counted"]
+
+
+def test_stop_during_the_hold_logs_the_part_not_aborted():
+    r = Rig()
+    r.confirm_params()
+    r.run_part("MT", ("MT-1",))                                      # waits for idle: logged after the hold
+    assert r.parts()[0]["verdict"] == "OK"
+    r.ctl.submit("run", dict(INFO, type="MT"))
+    r.step()
+    r.ctl.submit("scan", "select", "MT-2")
+    r.until(lambda: r.ctl.part is not None and "pending" in r.ctl.part)
+    r.ctl.submit("stop")
+    r.step()
+    assert len(r.parts()) == 2 and r.parts()[1]["verdict"] == "OK" and r.parts()[1]["counted"]
+    nohold = Rig(cfg={"result_hold_s": 0})
+    nohold.confirm_params()
+    nohold.run_part("MT", ("MT-3",))
+    assert nohold.parts()[0]["verdict"] == "OK"
+
+
 def test_mt_shared_words_without_lost_bits_and_mt_gate():
     r = Rig()
     r.confirm_params()
