@@ -948,6 +948,9 @@ class PcController:
     def _start_stage(self, axes, run_state, now):
         info = self.part["info"]
         self._set_flow(run_state)
+        prepare = getattr(self.sampler, "prepare", None)
+        if prepare:                     # open the NI card now, not inside the first PULL stroke
+            prepare()
         for axis in axes:
             tid = f"{self.part['id']}-{axis}"
             self.routines[axis] = CableRoutine(axis, tid, info["conditions"][axis], info["measurement"],

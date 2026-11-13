@@ -983,6 +983,68 @@ def test_sampler_keeps_the_capture_for_the_graph():
     assert s.captures["select"] is cap and cap.samples[0][1:3] == (0.5, 5.0)
 
 
+class _SlowOpenDaq(FakeDaq):
+    """The first DAQmx task of a process takes seconds to create."""
+
+    def __init__(self, volts, open_s):
+        super().__init__(volts)
+        self.open_s = open_s
+
+    def connect(self, cfg):
+        time.sleep(self.open_s)
+        super().connect(cfg)
+
+
+def test_a_slow_ni_card_open_does_not_cost_the_stroke_its_samples():
+    """Field log: the first PULL after startup had 0 valid samples - the capture loop
+    opened the NI card itself and the serial load waited behind it for the whole stroke."""
+    from friction_tester.plc.pc_measure import Sampler
+    s = Sampler([_Lc(), _Lc()], _SlowOpenDaq({"ai2": 2.0}, open_s=0.6), _sampler_settings("serial"),
+                period=0.005)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.3)                                                # the stroke ends before the card opens
+    t0 = time.monotonic()
+    samples = s.stop(cap)
+    assert time.monotonic() - t0 < 0.5                             # the capture thread was not stuck
+    assert len(samples) >= 10 and all(x[1] == 0.5 for x in samples)  # serial load sampled throughout
+    assert all(x[2] is None for x in samples)                      # no LVDT yet - not invented
+    assert "still opening" in cap.lvdt_note
+    time.sleep(0.5)                                                # the reader thread finishes and ends
+
+
+def test_prepare_opens_the_ni_card_before_the_first_stroke():
+    from friction_tester.plc.pc_measure import Sampler
+    daq = _SlowOpenDaq({"ai2": 2.0}, open_s=0.1)
+    s = Sampler([_Lc(), _Lc()], daq, _sampler_settings("serial"), period=0.005)
+    th = s.prepare()
+    assert s.prepare() is th                                       # one open at a time
+    th.join(1.0)
+    assert daq.is_open and s._prep_thread is None
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.04)
+    s.stop(cap)
+    assert cap.samples[0][1:3] == (0.5, 5.0)                       # LVDT from the first sample on
+    assert Sampler([_Lc(), _Lc()], None, _sampler_settings("serial")).prepare() is None
+
+
+def test_stop_records_a_capture_thread_that_is_still_blocked(monkeypatch):
+    from friction_tester.plc.pc_measure import Sampler
+
+    class Hang:
+        is_open = True
+
+        def read(self):
+            time.sleep(0.4)
+            return None, "ID001,+0000.50", 0.5
+
+    s = Sampler([Hang(), Hang()], None, _sampler_settings("serial", stroke={"select": "", "shift": ""}))
+    monkeypatch.setattr(Sampler, "STOP_JOIN_S", 0.05)
+    cap = s.start("select", "pull", "t", 1)
+    time.sleep(0.05)
+    assert s.stop(cap) == [] and "still blocked" in cap.last_error
+    time.sleep(0.4)
+
+
 def test_graph_draws_the_lvdt_stroke_and_restarts_per_stroke(monkeypatch):
     import tkinter as tk
     from friction_tester.ui import test_console

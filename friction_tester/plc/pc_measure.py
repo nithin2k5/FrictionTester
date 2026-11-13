@@ -46,6 +46,7 @@ class Sampler:
     DAQ_RETRY_S = 5.0
     BLOCK_S = 0.05                 # length of one NI card acquisition block
     MEAN_S = 0.01                  # newest part of a block averaged into one value
+    FIRST_BLOCK_S = 0.15           # how long a capture's first samples wait for the reader's first block
 
     def __init__(self, loadcells, daq, settings, period=0.02):
         self.loadcells = loadcells
@@ -63,6 +64,8 @@ class Sampler:
         self._ni_thread = None         # reader thread, alive while a capture uses the NI card
         self._ni_caps = []             # the captures it serves
         self._ni_live = None           # its latest block as {channel: mean volts} ({} = read failed)
+        self._prep_thread = None       # prepare(): opens the NI card ahead of the first stroke
+        self._ni_started = 0.0         # when the reader thread started
 
     @property
     def mcfg(self):
@@ -117,6 +120,28 @@ class Sampler:
         self._daq_cfg = cfg
         self.daq_error = None
         return True
+
+    def prepare(self):
+        """Open the NI card on a background thread before the first stroke. Creating the
+        first DAQmx task in a process takes seconds; done inside a stroke it would leave
+        the stroke without samples. Returns the thread (None when no card row is used)."""
+        if self.daq is None or not self._daq_names():
+            return None
+        with self._ni_guard:
+            if self._prep_thread is not None:
+                return self._prep_thread
+
+            def run():
+                try:
+                    with self._daq_lock:
+                        self._ensure_daq()      # failure is kept in daq_error, retried per stroke
+                finally:
+                    with self._ni_guard:
+                        self._prep_thread = None
+
+            self._prep_thread = threading.Thread(target=run, daemon=True)
+            self._prep_thread.start()
+            return self._prep_thread
 
     def _acquire(self):
         """One block from the NI card, {channel: [volts of every sample]} (caller holds
@@ -215,11 +240,27 @@ class Sampler:
         raw_load = stroke = raw_stroke = None
         name = (m.get("stroke") or {}).get(axis, "")
         block = None
+        pending = False                # the reader thread has no block yet (the card is still opening)
         force_daq = m.get("force_source", "serial") == "daq"
         graph_daq = m.get("graph_force") == "daq"
         if force_daq or graph_daq or name:
             block = self._ni_live      # the reader thread's latest block while a stroke is captured
-            if block is None:
+            if block is None and self._ni_thread is not None:
+                # Never open / read the card here while the reader thread does: a slow open
+                # would block this loop and the serial load with it (no samples at all).
+                # An open card delivers its first block within one BLOCK_S: the first samples
+                # wait for it, at most FIRST_BLOCK_S after the reader started (never longer).
+                deadline = self._ni_started + self.FIRST_BLOCK_S
+                while self._ni_live is None and self._ni_thread is not None and time.monotonic() < deadline:
+                    time.sleep(0.002)
+                block = self._ni_live
+                if block is None:
+                    block, pending = {}, True
+                    if force_daq:
+                        raise RuntimeError("NI card not ready yet (still opening)")
+                elif not block and force_daq:
+                    raise RuntimeError(f"NI card not open: {self.daq_error or 'no reading'}")
+            elif block is None:
                 with self._daq_lock:
                     try:
                         block = self._means(self._acquire())
@@ -236,6 +277,7 @@ class Sampler:
             if stroke is None:                 # why there is no LVDT stroke (the graph needs it)
                 graph["lvdt"] = ("no LVDT sensor row is selected (measurement.stroke)" if not name
                                  else "NI card: " + self.daq_error if self.daq_error
+                                 else "NI card: not ready yet (still opening)" if pending
                                  else f"no reading for '{name}'" if self._sensor(name)
                                  else f"no sensor row named '{name}'")
             graph["load"] = None
@@ -244,6 +286,7 @@ class Sampler:
                 graph["load"] = self._daq_value(row, block)[0]
                 if graph["load"] is None:      # why the NI card gave no graph load (shown on the graph)
                     graph["note"] = "NI card: " + (self.daq_error or (
+                        "not ready yet (still opening)" if pending else
                         f"no reading for '{row}'" if self._sensor(row) else f"no sensor row named '{row}'"))
         if force_daq:
             value, raw_load = self._daq_value((m.get("daq_force") or {}).get(axis, ""), block)
@@ -271,6 +314,7 @@ class Sampler:
             with self._ni_guard:
                 self._ni_caps.append(cap)
                 if self._ni_thread is None:
+                    self._ni_started = time.monotonic()
                     self._ni_thread = threading.Thread(target=self._ni_run, daemon=True)
                     self._ni_thread.start()
 
@@ -303,8 +347,13 @@ class Sampler:
         cap.thread.start()
         return cap
 
+    STOP_JOIN_S = 2.0
+
     def stop(self, cap):
         cap.stop_event.set()
         if cap.thread:
-            cap.thread.join(2.0)
+            cap.thread.join(self.STOP_JOIN_S)
+            if cap.thread.is_alive():  # a read is hanging: say so instead of a bare "0 samples"
+                cap.last_error = (f"capture thread still blocked in a sensor read {self.STOP_JOIN_S:g} s "
+                                  f"after the stroke ended ({len(cap.samples)} samples taken)")
         return list(cap.samples)

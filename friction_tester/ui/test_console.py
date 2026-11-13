@@ -701,6 +701,7 @@ class TestConsolePage(tk.Frame):
                                          else bool(mp.get("internal_bits_enabled"))) if mapping.verified
                                         else False))
         self.sampler = Sampler(self.loadcells, self.daq, self.settings)
+        self.sampler.prepare()             # background: the first DAQmx task takes seconds to open
         cfg = copy.deepcopy(mp)
         from .. import db
         from ..result_store import ResultStore
