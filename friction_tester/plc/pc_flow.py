@@ -889,6 +889,11 @@ class PcController:
         if self.part is not None and "pending" in self.part:
             self._msg("RUN refused: the last part is being logged - press RUN again in a moment", "busy")
             return
+        if self.part is not None and self.routines:
+            names = " + ".join(pp.AXIS_NAME[a] for a in self.routines)
+            self._msg(f"RUN ignored: the part is already active - the {names} test is still running, "
+                      "wait for it to finish (STOP cancels the part)", "busy")
+            return
         if self.part is not None or any(op.kind != "home" for op in self.manual.values()):
             self._msg("RUN refused: a part or operation is already active - press STOP to cancel it", "busy")
             return
@@ -953,6 +958,9 @@ class PcController:
 
     def _start_stage(self, axes, run_state, now):
         info = self.part["info"]
+        # The part timeout covers one stage: the wait between SELECT and SHIFT (operator scan
+        # or RUN) is not machine time and must not count against it.
+        self.part["t0"] = now
         self._set_flow(run_state)
         prepare = getattr(self.sampler, "prepare", None)
         if prepare:                     # open the NI card now, not inside the first PULL stroke

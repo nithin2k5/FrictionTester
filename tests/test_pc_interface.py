@@ -286,6 +286,26 @@ def test_part_is_logged_two_seconds_after_shift():
     assert r.parts()[0]["verdict"] == "OK" and r.parts()[0]["counted"]
 
 
+def test_waiting_before_shift_does_not_count_against_the_part_timeout():
+    """Field log: SELECT OK, the operator came back ~2 h later and pressed RUN - SHIFT was
+    failed with 'part timeout (600 s)' as soon as it started."""
+    r = Rig(timeouts={"part": 600.0})
+    r.confirm_params()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "SEL-1")
+    r.until(lambda: r.ctl.flow == "at_scan_shift")
+    r.clock.t += 700.0                                              # the part waits for the SHIFT scan
+    r.step()
+    r.ctl.submit("scan", "shift", "SHF-1")
+    r.step()
+    r.ctl.submit("run", dict(INFO, type="AT"))                     # RUN while SHIFT runs: wait, not STOP
+    r.step()
+    assert "still running, wait" in r.messages()[-1]
+    r.until(lambda: r.ctl.flow == "idle")
+    assert r.parts()[0]["verdict"] == "OK" and not r.ctl.fault
+
+
 def test_stop_during_the_hold_logs_the_part_not_aborted():
     r = Rig()
     r.confirm_params()
