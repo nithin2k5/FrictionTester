@@ -281,7 +281,7 @@ def test_migration_converts_old_mapping_and_resets_verified():
         "verified": True, "areas": {"D": {"table": "holding_registers", "base": 0}}}}}}
     new = migrate(old)
     m = new["test"]["machine_profile"]["mapping"]
-    assert new["settings_version"] == 7 and m["schema"] == "xgb_cnet_areas" and m["verified"] is False
+    assert new["settings_version"] == 8 and m["schema"] == "xgb_cnet_areas" and m["verified"] is False
     assert m["cnet_areas"]["word_read"]["plc_base"] == "D00000"
     assert any("Cnet-area schema" in n for n in new["migrated"])
 

@@ -214,7 +214,7 @@ def test_only_home_and_move_bits_are_writable():
 
 def test_settings_migrate_pc_interface_to_kd():
     new = migrate({"settings_version": 4, "test": {"integration": {"mode": "pc_interface"}}})
-    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 7
+    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 8
     other = migrate({"settings_version": 4, "test": {"integration": {"mode": "shared_cycle"}}})
     assert other["test"]["integration"]["mode"] == "shared_cycle"
 
@@ -293,5 +293,16 @@ def test_migration_scales_the_ni_load_cells_10_kgf_per_volt():
         {"name": "Loadcell 1", "scale": 1.0}, {"name": "Loadcell 2", "scale": 4.9},
         {"name": "LVDT 1", "scale": 1.0}]}}
     new = migrate(old)
-    assert [s["scale"] for s in new["daq"]["sensors"]] == [10.0, 4.9, 1.0]   # a set scale and the LVDT are kept
-    assert new["settings_version"] == 7 and "Loadcell 1" in new["migrated"][0]
+    assert [s["scale"] for s in new["daq"]["sensors"]] == [10.0, 4.9, 10.0]   # a set scale is kept
+    assert new["settings_version"] == 8 and "Loadcell 1" in new["migrated"][0] and "LVDT 1" in new["migrated"][1]
+
+
+def test_migration_scales_the_lvdts_10_mm_per_volt():
+    from friction_tester.config import load_settings, migrate
+    old = {"settings_version": 7, "daq": {"sensors": [
+        {"name": "Loadcell 1", "scale": 1.0}, {"name": "LVDT 1", "scale": 1.0}, {"name": "LVDT 2", "scale": 12.5}]}}
+    new = migrate(old)
+    assert [s["scale"] for s in new["daq"]["sensors"]] == [1.0, 10.0, 12.5]   # loadcell and a set LVDT scale kept
+    assert new["settings_version"] == 8 and new["migrated"] == ["daq LVDT 1: scale 1 -> 10 mm/V (LVDT 10 V over 100 mm)"]
+    fresh = {s["name"]: s["scale"] for s in load_settings(path="does-not-exist.json")["daq"]["sensors"]}
+    assert fresh["LVDT 1"] == fresh["LVDT 2"] == 10.0

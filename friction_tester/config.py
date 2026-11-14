@@ -10,9 +10,10 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # (plc.pdf, PC word interface) is this machine's integration.
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
 # 7 = NI card load cells scaled 10 kgf/V (measured on the machine against the serial indicator).
-SETTINGS_VERSION = 7
+SETTINGS_VERSION = 8
 
 LOADCELL_KGF_PER_V = 10.0      # indicator analogue output on the NI card: ~0.197 V at 1.97 kgf
+LVDT_MM_PER_V = 10.0           # LVDT output on the NI card: 10 V over 100 mm
 
 DEFAULT_SETTINGS = {
     "settings_version": SETTINGS_VERSION,
@@ -234,8 +235,8 @@ DEFAULT_SETTINGS = {
         "sensors": [
             {"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset_v": 0.0, "unit": "kgf"},
             {"name": "Loadcell 2", "channel": "ai1", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset_v": 0.0, "unit": "kgf"},
-            {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "mm"},
-            {"name": "LVDT 2", "channel": "ai3", "range": "±10 V", "scale": 1.0, "offset_v": 0.0, "unit": "mm"},
+            {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": LVDT_MM_PER_V, "offset_v": 0.0, "unit": "mm"},
+            {"name": "LVDT 2", "channel": "ai3", "range": "±10 V", "scale": LVDT_MM_PER_V, "offset_v": 0.0, "unit": "mm"},
         ],
     },
 }
@@ -347,6 +348,18 @@ def migrate(loaded):
             notes.append(f"daq {', '.join(scaled)}: scale 1 -> {LOADCELL_KGF_PER_V:g} kgf/V "
                          "(indicator analogue output, +/-10 V = +/-100 kgf)")
         loaded["settings_version"] = 7
+        version = 7
+    if version < 8:
+        scaled = []
+        for sen in (loaded.get("daq") or {}).get("sensors") or []:
+            # only a row still at the uncalibrated default (1 mm/V); a scale set on the machine is kept
+            if (isinstance(sen, dict) and str(sen.get("name", "")).startswith("LVDT")
+                    and sen.get("scale", 1.0) == 1.0):
+                sen["scale"] = LVDT_MM_PER_V
+                scaled.append(sen["name"])
+        if scaled:
+            notes.append(f"daq {', '.join(scaled)}: scale 1 -> {LVDT_MM_PER_V:g} mm/V (LVDT 10 V over 100 mm)")
+        loaded["settings_version"] = 8
     if notes:
         loaded["migrated"] = notes
     return loaded

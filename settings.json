@@ -1,5 +1,5 @@
 {
-  "settings_version": 7,
+  "settings_version": 8,
   "plc": {
     "port": "COM13",
     "baudrate": 115200,
@@ -277,7 +277,7 @@
         "name": "LVDT 1",
         "channel": "ai2",
         "range": "±10 V",
-        "scale": 1.0,
+        "scale": 10.0,
         "offset_v": 0.0,
         "unit": "mm"
       },
@@ -285,7 +285,7 @@
         "name": "LVDT 2",
         "channel": "ai3",
         "range": "±10 V",
-        "scale": 1.0,
+        "scale": 10.0,
         "offset_v": 0.0,
         "unit": "mm"
       }

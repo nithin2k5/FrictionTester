@@ -300,4 +300,6 @@ picks a channel and shows the screw-terminal pins it uses (Differential: `ai0` �
 (units per volt), offset (V) and unit. TEST reads that sensor; TEST ALL reads all four in one
 acquisition. Reading = (volts − offset) × scale, shown with the raw voltage.
 
-Defaults: Loadcell 1 = AI0/AI8, Loadcell 2 = AI1/AI9, LVDT 1 = AI2/AI10, LVDT 2 = AI3/AI11.
+Defaults: Loadcell 1 = AI0/AI8, Loadcell 2 = AI1/AI9 (scale 10 kgf/V), LVDT 1 = AI2/AI10, LVDT 2 = AI3/AI11
+(scale 10 mm/V: 10 V over 100 mm). A saved LVDT row still at the old default 1.0 is moved to 10 on load;
+a scale set by hand is kept.
