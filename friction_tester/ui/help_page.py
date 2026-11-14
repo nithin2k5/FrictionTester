@@ -132,7 +132,7 @@ CHAPTERS = [
         "Position 1 >= -30 and Position 3 <= +30 (checked on SAVE, with a pop-up).",
         "Position 1-3 must lie inside the stroke, between -Stroke/2 and +Stroke/2 - otherwise "
         "that value cannot be read and the result is INCMP.",
-        "Left empty, the positions are -(Stroke/2 - 2), 0 and +(Stroke/2 - 2).",
+        "Left empty, the positions are -(Stroke/2 x 90%), 0 and +(Stroke/2 x 90%) - e.g. Stroke 22 -> -9.9 / 0 / +9.9.",
         "LOAD min must not be above LOAD max.",
         "Type must be AT or MT.",
     ]),

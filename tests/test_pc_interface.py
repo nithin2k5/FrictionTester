@@ -684,15 +684,15 @@ def test_evaluation_rules_are_explicit():
     pos = [{"pull": [(0, 2.0, 0.0), (1, 4.0, 10.0), (2, 6.0, 20.0)],
             "push": [(0, 3.0, 0.0), (1, 3.0, 10.0), (2, 3.0, 20.0)]}]
     # judge = positions: the load at the model's Position 1-3 on the centred stroke axis (the
-    # LVDT's PULL start = -stroke/2); without positions -(stroke/2 - 2), 0, +(stroke/2 - 2)
+    # LVDT's PULL start = -stroke/2); without positions -(stroke/2 x 90 %), 0, +(stroke/2 x 90 %)
     given = evaluate_axis(pos, dict(COND, stroke=20.0, positions=[-6.0, 0.0, 8.0]), dict(RULES, judge="positions"))
     assert given["positions"] == [-6.0, 0.0, 8.0] and [round(v, 6) for v in given["pull"]] == [2.8, 4.0, 5.6]
     res = evaluate_axis(pos, dict(COND, stroke=20.0), dict(RULES, judge="positions"))
-    assert res["positions"] == [-8.0, 0.0, 8.0] and res["stroke_source"] == "lvdt"
-    assert [round(v, 6) for v in res["pull"]] == [2.4, 4.0, 5.6] and res["push"] == [3.0, 3.0, 3.0]
+    assert res["positions"] == [-9.0, 0.0, 9.0] and res["stroke_source"] == "lvdt"
+    assert [round(v, 6) for v in res["pull"]] == [2.2, 4.0, 5.8] and res["push"] == [3.0, 3.0, 3.0]
     assert res["verdict"] == "OK"
     out = evaluate_axis(pos, dict(COND, stroke=30.0), dict(RULES, judge="positions"))   # LVDT covers -15..+5
-    assert out["verdict"] == "INCOMPLETE" and "13 mm not covered" in out["problems"][0]
+    assert out["verdict"] == "INCOMPLETE" and "13.5 mm not covered" in out["problems"][0]
     none = evaluate_axis(pos, COND, dict(RULES, judge="positions"))
     assert none["verdict"] == "INCOMPLETE" and "Stroke condition is empty" in none["problems"][0]
     # no LVDT: INCOMPLETE, with or without a Speed condition (no speed x time stroke)
@@ -700,7 +700,7 @@ def test_evaluation_rules_are_explicit():
               "push": [(11.0, 3.0, None), (11.22, 5.0, None), (11.44, 7.0, None)]}]
     cmd = evaluate_axis(timed, dict(COND, stroke=22.0, speed=50.0), dict(RULES, judge="positions"))
     assert cmd["verdict"] == "INCOMPLETE" and cmd["stroke_source"] is None
-    assert cmd["positions"] == [-9.0, 0.0, 9.0] and cmd["pull"] == [None, None, None]
+    assert cmd["positions"] == [-9.9, 0.0, 9.9] and cmd["pull"] == [None, None, None]
     assert "no stroke data for positional sampling (no LVDT reading)" in cmd["problems"][0]
     assert evaluate_axis(timed, dict(COND, stroke=22.0), dict(RULES, judge="positions"))["verdict"] == "INCOMPLETE"
     # an LVDT that is read but does not follow the axis (not wired / not scaled): INCOMPLETE

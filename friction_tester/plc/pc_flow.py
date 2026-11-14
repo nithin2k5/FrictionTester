@@ -74,20 +74,20 @@ def _interp(points, pos):
     return None
 
 
-CAPTURE_MARGIN = 2.0     # mm: the outer capture points lie this far inside each stroke end
+CAPTURE_FRACTION = 0.9   # the outer capture points lie at 90 % of each half stroke
 
 
 def capture_positions(stroke, positions=None):
     """The stroke positions where PULL1-3 / PUSH1-3 are read, on the graph's axis (the
-    stroke runs -stroke/2 .. +stroke/2): the model's Position 1-3 (e.g. -8 / 0 / +8 for a
-    22 mm stroke), or -(stroke/2 - 2), 0, +(stroke/2 - 2) when the model has none.
+    stroke runs -stroke/2 .. +stroke/2): the model's Position 1-3 when it has them, or
+    -(stroke/2 x 90 %), 0, +(stroke/2 x 90 %) when it has none (22 mm -> -9.9 / 0 / +9.9).
     Empty when neither is available."""
     given = [p for p in positions or [] if p is not None]
     if given:
         return given
-    if not stroke or stroke / 2 <= CAPTURE_MARGIN:
+    if not stroke or stroke <= 0:
         return []
-    p = stroke / 2 - CAPTURE_MARGIN
+    p = round(stroke / 2 * CAPTURE_FRACTION, 3)
     return [-p, 0.0, p]
 
 
@@ -175,7 +175,7 @@ def evaluate_axis(strokes, cond, mcfg):
       judge:        "peak"      PULL / PUSH = largest-magnitude load of the last stroke
                     "strokes"   PULL1-3 / PUSH1-3 = peak of strokes 1-3 (repeated strokes)
                     "positions" PULL1-3 / PUSH1-3 = load of the last stroke at the model's
-                                Position 1-3, or at -(stroke/2 - 2), 0, +(stroke/2 - 2) when
+                                Position 1-3, or at -(stroke/2 x 90 %), 0, +(stroke/2 x 90 %) when
                                 the model has none (capture_positions), linear interpolation
                                 on the centred
                                 stroke axis of the graph (stroke_points: the LVDT; no
@@ -225,7 +225,7 @@ def evaluate_axis(strokes, cond, mcfg):
             positions = capture_positions(cond["stroke"], cond.get("positions"))
             if not positions:
                 incomplete.append("judge = positions but the model has no Position 1-3 and the Stroke "
-                                  f"is under {2 * CAPTURE_MARGIN:g} mm")
+                                  "is not above 0 mm")
         last = strokes[-1] if strokes else {}
         points, no_stroke = {"pull": [], "push": []}, None
         if positions:
