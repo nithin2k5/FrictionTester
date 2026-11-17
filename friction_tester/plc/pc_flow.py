@@ -106,6 +106,18 @@ def centre_lvdt(pull, push, half):
     return tuple([round(start + sign * (v - ref), 3) for v in raw] for raw in (pull, push))
 
 
+def within_stroke(xs, ys, half):
+    """Graph points (xs, ys) inside the stroke, -half..+half on the centred axis.
+
+    The PLC moves the PULL target D00490 (1 mm) past the Stroke while M0700F is OFF
+    (PULL target = start + Stroke x 100 + D00490), so a 30 mm Stroke physically runs
+    -15 -> +16. The graph shows the Stroke alone: points past either end are left out,
+    and every point that stays is at its real position. Judging (stroke_points) is not
+    cut - it reads the full trace. Returns (xs, ys)."""
+    keep = [i for i, x in enumerate(xs) if -half - 1e-6 <= x <= half + 1e-6]
+    return [xs[i] for i in keep], [ys[i] for i in keep]
+
+
 GRAPH_PER_MM = 1.5       # graph points per mm of stroke: each is the mean of its samples
 
 
@@ -130,17 +142,19 @@ def bin_samples(samples, per_mm=GRAPH_PER_MM):
 def graph_curve(pull, push, stroke, per_mm=GRAPH_PER_MM):
     """The Load-Stroke graph of one PULL / PUSH as the Test Console draws it, for storing
     with the result: samples [(t, load, lvdt), ...] -> {"pull": [[x, load]], "push": [...]}
-    on the centred stroke axis (centre_lvdt), GRAPH_PER_MM averaged points per mm.
-    Without a Stroke condition the LVDT readings are kept as read; samples without an
-    LVDT reading are left out."""
+    on the centred stroke axis (centre_lvdt), GRAPH_PER_MM averaged points per mm, cut
+    to the Stroke (within_stroke). Without a Stroke condition the LVDT readings are kept
+    as read; samples without an LVDT reading are left out."""
     raw = {d: bin_samples([(s[2], s[1]) for s in samples or [] if s[1] is not None and s[2] is not None], per_mm)
            for d, samples in (("pull", pull), ("push", push))}
+    out = {}
     if stroke:
         xs = centre_lvdt([p[0] for p in raw["pull"]], [p[0] for p in raw["push"]], stroke / 2)
+        for d, x_d in zip(("pull", "push"), xs):
+            out[d] = within_stroke(x_d, [p[1] for p in raw[d]], stroke / 2)
     else:
-        xs = tuple([p[0] for p in raw[d]] for d in ("pull", "push"))
-    return {d: [[round(x, 3), round(p[1], 4)] for x, p in zip(x_d, raw[d])]
-            for d, x_d in zip(("pull", "push"), xs)}
+        out = {d: ([p[0] for p in raw[d]], [p[1] for p in raw[d]]) for d in ("pull", "push")}
+    return {d: [[round(x, 3), round(y, 4)] for x, y in zip(*out[d])] for d in ("pull", "push")}
 
 
 def lvdt_follows(readings, expected):

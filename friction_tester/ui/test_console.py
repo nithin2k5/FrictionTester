@@ -124,6 +124,7 @@ class CablePanel(tk.Frame):
         self._gerr = None          # test id the LVDT error popup was last shown for (once a test)
         self._gspeed = self._glen = None   # Speed / Stroke conditions of the stroke on the graph
         self._graw = {"PULL": [], "PUSH": []}   # LVDT readings of the traces on the graph
+        self._gload = {"PULL": [], "PUSH": []}   # their loads (the series shows only the Stroke)
         self._gtimes = {"PULL": [], "PUSH": []}  # and their times since the capture began
         self._gbins = {"PULL": {}, "PUSH": {}}   # stroke bin -> [point index, samples] (GRAPH_PER_MM)
         self._scale_graph()
@@ -332,17 +333,18 @@ class CablePanel(tk.Frame):
                 self.plot.clear()
                 self._gstroke = cap.stroke_no
                 self._graw = {"PULL": [], "PUSH": []}
+                self._gload = {"PULL": [], "PUSH": []}
                 self._gtimes = {"PULL": [], "PUSH": []}
                 self._gbins = {"PULL": {}, "PUSH": {}}
                 self.plot.set_xlabel("Stroke [mm]")
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
-                self._graw[name], self._gtimes[name], self._gbins[name] = [], [], {}
+                self._graw[name], self._gload[name], self._gtimes[name], self._gbins[name] = [], [], [], {}
             self._gcap, self._gn, self._gt0, self._gmiss = cap, 0, None, 0
             self._gspeed, self._glen = self._condition("speed"), self._condition("stroke")
         new = cap.graph[self._gn:]
         self._gn += len(new)
-        series = self.plot.series[name]
+        loads = self._gload[name]
         drawn = False
         for t, load, stroke in new:
             if load is None:
@@ -359,14 +361,12 @@ class CablePanel(tk.Frame):
             if n == 0:                       # a new bin: the next point of the trace
                 raw.append(stroke)
                 times.append(t - self._gt0)
-                series["x"].append(stroke)
-                series["y"].append(load)
+                loads.append(load)
             else:                            # running mean of the bin's samples
                 raw[i] += (stroke - raw[i]) / (n + 1)
-                series["y"][i] += (load - series["y"][i]) / (n + 1)
-                series["x"][i] = raw[i]
+                loads[i] += (load - loads[i]) / (n + 1)
                 times[i] = t - self._gt0
-        if drawn and self._glen:
+        if drawn:
             self._centre_stroke()
         ended = (cap.stop_event.is_set() and not (cap.thread and cap.thread.is_alive())
                  and self._gn == len(cap.graph))
@@ -387,10 +387,21 @@ class CablePanel(tk.Frame):
     def _centre_stroke(self):
         """LVDT readings -> the graph's stroke axis: the PULL start is -stroke/2 and the
         pull direction is positive, whatever the LVDT's zero and polarity. A PUSH drawn
-        without its PULL starts at +stroke/2 and runs negative."""
-        from ..plc.pc_flow import centre_lvdt
-        xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], self._glen / 2)
-        self.plot.series["PULL"]["x"], self.plot.series["PUSH"]["x"] = xs
+        without its PULL starts at +stroke/2 and runs negative. Only the Stroke is shown
+        (within_stroke): the PLC's extra 1 mm (D00490) past +stroke/2 is left off the graph.
+        Without a Stroke condition the readings are drawn as read."""
+        from ..plc.pc_flow import centre_lvdt, within_stroke
+        names = ("PULL", "PUSH")
+        if self._glen:
+            half = self._glen / 2
+            xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], half)
+            for name, x in zip(names, xs):
+                self.plot.series[name]["x"], self.plot.series[name]["y"] = within_stroke(
+                    x, self._gload[name], half)
+        else:
+            for name in names:
+                self.plot.series[name]["x"] = list(self._graw[name])
+                self.plot.series[name]["y"] = list(self._gload[name])
 
     def _lvdt_stuck(self, name):
         """Why a finished trace's LVDT readings cannot be the stroke (the LVDT did not

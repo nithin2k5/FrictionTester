@@ -1264,6 +1264,7 @@ def test_graph_has_three_averaged_points_per_2_mm_of_stroke():
         assert abs(xs[0] - 40.33) < 0.01 and abs(xs[1] - xs[0] - 2 / 3) < 0.01
         pull.graph += [(10.2 + i * 0.001, 0.50, 42.0) for i in range(50)]   # dwell at the stroke end
         panel.draw_capture(pull)
+        xs, ys = panel.plot.series["PULL"]["x"], panel.plot.series["PULL"]["y"]
         assert len(xs) == 4 and ys[-1] == 0.50                       # one point, not a blob
     finally:
         root.destroy()
@@ -1380,6 +1381,24 @@ def test_graph_falls_back_to_the_result_load_when_the_ni_card_fails():
     assert g["load"] == 0.5 and "note" not in g                     # NI card fine: no note
     assert g["stroke"] is None and g["lvdt"] == "no reading for 'LVDT 1'"   # why there is no stroke
     assert "Select a DAQ device" in cap.lvdt_note                   # the failed card: no LVDT either
+
+
+def test_graph_is_cut_to_the_stroke_not_the_plcs_extra_millimetre():
+    """The PLC's PULL target is Stroke + D00490 (1 mm): a 30 mm Stroke runs -15 -> +16.
+    The graph keeps -15..+15 only, every point at its real position; judging is not cut."""
+    from friction_tester.plc.pc_flow import graph_curve, within_stroke
+    # LVDT 40 -> 71 mm: 31 mm of PULL, 100 samples per mm, then back for the PUSH
+    pull = [(i * 0.01, 0.40, 40.0 + i * 0.01) for i in range(3101)]
+    push = [(i * 0.01, -0.20, 71.0 - i * 0.01) for i in range(3101)]
+    curve = graph_curve(pull, push, 30.0)
+    for d in ("pull", "push"):
+        xs = [p[0] for p in curve[d]]
+        assert xs and min(xs) >= -15.0 and max(xs) <= 15.0
+        assert max(xs) > 14.0 and min(xs) < -14.0             # the stroke itself is all there
+    # a point keeps its real position: LVDT 50 mm is 10 mm into the PULL -> -5 on the axis
+    near = min(curve["pull"], key=lambda p: abs(p[0] + 5.0))
+    assert abs(near[0] + 5.0) < 0.5
+    assert within_stroke([-15.0, 0.0, 15.0, 15.4, 16.0], [1, 2, 3, 4, 5], 15.0) == ([-15.0, 0.0, 15.0], [1, 2, 3])
 
 
 def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
