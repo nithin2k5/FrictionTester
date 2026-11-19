@@ -15,6 +15,7 @@ from .model_page import ModelSettingsPage
 from .report_page import ReportPage
 from .admin_page import AdminPage
 from .test_console import TestConsolePage
+from .vision_page import VisionPage
 
 NAV_IDLE = (theme.NAV_TILE, theme.NAV_FG, theme.NAV_TILE)          # bg, fg, edge
 NAV_ACTIVE = (theme.L_BG, theme.L_PRIMARY, theme.L_PRIMARY)         # the open page: a tab of the work area
@@ -25,6 +26,7 @@ class App:
     PAGES = [
         ("🏠", "Test Console", "test_console", "FRICTION TEST MACHINE"),
         ("⚙", "Model\nSettings", "model_settings", "Model Settings"),
+        ("👁", "Vision", "vision", "Vision Inspection"),
         ("📋", "Report", "report", "Test Results"),
         ("👤", "Admin", "admin", "Admin"),
         ("🔧", "COM Setting", "comport_settings", "COM Settings"),
@@ -240,7 +242,7 @@ class App:
             text.config(bg=bg, fg=fg)
 
     # Pages that need a sign-in every time they are opened.
-    LOGIN_PAGES = {"admin", "model_settings", "comport_settings"}
+    LOGIN_PAGES = {"admin", "model_settings", "comport_settings", "vision"}
 
     def confirm_leave(self, check_test=True):
         """Before leaving a page: ask first if a test is running (leaving stops it) or
@@ -300,6 +302,9 @@ class App:
             self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "model_settings":
             self.page = ModelSettingsPage(self.content, self.settings)
+            self.page.pack(fill="both", expand=True, padx=16, pady=12)
+        elif page_name == "vision":
+            self.page = VisionPage(self.content)
             self.page.pack(fill="both", expand=True, padx=16, pady=12)
         elif page_name == "help":
             self.page = HelpPage(self.content)

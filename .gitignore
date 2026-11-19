@@ -19,3 +19,8 @@ data/
 
 # Manual jog GUI event logs
 logs/
+
+# Vision: camera choice, settings and taught models (per machine)
+camera_cfg.ini
+vision_config.json
+vision_models/
