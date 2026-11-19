@@ -86,12 +86,8 @@ class CablePanel(tk.Frame):
         # Title row with Screen Save
         top = tk.Frame(self, bg=theme.PANEL)
         top.pack(fill="x", padx=10, pady=(6, 2))
-        # OK / NG judgement, left of the title
-        self.judge = tk.Label(top, text="– – –", bg=FIELD_BG, fg=T.L_TEXT_3, font=_font(13, True),
-                              relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER, width=5)
-        self.judge.pack(side="left")
         self.max_lbl = tk.Label(top, text="Max", bg=theme.PANEL, fg=T.L_TEXT, font=_font(9, True))
-        self.max_lbl.pack(side="left", padx=(8, 3))
+        self.max_lbl.pack(side="left", padx=(0, 3))
         self.res = {"max": self._value(top, NO_DATA)}
         self.res["max"].pack(side="left")
         self.max_unit = tk.Label(top, text="kgf", bg=theme.PANEL, fg=T.L_TEXT, font=_font(8))
@@ -110,7 +106,15 @@ class CablePanel(tk.Frame):
                                    anchor="w", justify="left")
         self.source_lbl.pack(fill="x", padx=10)
 
-        self._build_tables().pack(fill="x", padx=8, pady=4)
+        # TEST CONDITION / TEST RESULTS kept compact on the left; the OK / NG judgement
+        # fills the rest of the row to their right, as tall as the tables.
+        row = tk.Frame(self, bg=theme.PANEL)
+        row.pack(fill="x", padx=8, pady=4)
+        self._build_tables(row).pack(side="left", anchor="n")
+        self.judge = tk.Label(row, text="– – –", bg=FIELD_BG, fg=T.L_TEXT_3, font=_font(30, True),
+                              relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER,
+                              width=5)
+        self.judge.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(20, 1))
 
         self.plot = LoadStrokePlot(self)
         self.plot.add_series("PULL", PULL_COLOR)
@@ -178,18 +182,18 @@ class CablePanel(tk.Frame):
         if not any(s["x"] for s in self.plot.series.values()):
             self._scale_graph()              # empty graph: rescale to the new stroke
 
-    def _build_tables(self):
+    def _build_tables(self, parent):
         """TEST CONDITION and TEST RESULTS in one grid, so their rows line up.
 
         Columns:  0 label | 1 entry | 2 unit | 3 pos no. | 4 entry | 5 unit | 6 divider |
                   7 PULLn | 8 value | 9 kgf | 10 PUSHn | 11 value | 12 kgf
         Rows:     0 captions | 1 Speed / PULL1 | 2 Delay / PULL2 | 3 Stroke / PULL3 | 4 LOAD / Mean
         """
-        f = tk.Frame(self, bg=theme.PANEL)
+        f = tk.Frame(parent, bg=theme.PANEL)
         cfg = self.cfg
         self.ent = {}
-        # Entry and value boxes stretch with their columns (weights set
-        # below), so the two tables fill the panel width with no gap.
+        # Entry and value boxes keep their natural width (the judgement box
+        # beside the tables takes the spare width).
         cell = {"padx": 2, "pady": 1, "sticky": "ew"}
 
         def text(col, row, t, bold=False, fg=T.L_TEXT, sticky="w", **kw):
@@ -242,7 +246,7 @@ class CablePanel(tk.Frame):
 
         # Same height for every data row, so the two tables share baselines
         for col in (1, 4, 8, 11):          # condition entries and result values
-            f.columnconfigure(col, weight=1, uniform="boxes")
+            f.columnconfigure(col, uniform="boxes")
         f.rowconfigure(0, minsize=20)
         for r in range(1, 5):
             f.rowconfigure(r, minsize=26, uniform="rows")
