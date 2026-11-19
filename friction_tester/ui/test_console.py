@@ -1425,8 +1425,44 @@ class TestConsolePage(tk.Frame):
             e.bind("<Return>", lambda _e, k=key: self.on_scan(k))
             self.scan_entries[key] = e
 
+        # ---- Cameras: live Camera 1 and Camera 2 (set up on the Vision page) -----
+        # Takes the panel's spare height; the two views share it, stacked or side by side,
+        # whichever gives the bigger picture at the current window size.
+        from .camera_view import CameraView
+        body = self._side_card(side, "Cameras", expand=True)
+        self.cameras = [CameraView(body, slot) for slot in (1, 2)]
+        self._camera_layout = None
+        body.bind("<Configure>", lambda e: self._layout_cameras(e.widget))
+
         self.after(50, self._draw_progress)
         return side
+
+    def _layout_cameras(self, body, caption=18, gap=4):
+        """Stack the two camera views or put them side by side: the one where a 4:3
+        picture comes out larger. Re-grids only when the choice changes."""
+        w, h = body.winfo_width(), body.winfo_height()
+        if w < 10 or h < 10:
+            return
+        stacked = min(w / 4, (h / 2 - caption - gap) / 3)
+        beside = min((w / 2 - gap) / 4, (h - caption) / 3)
+        layout = "stacked" if stacked >= beside else "beside"
+        if layout == self._camera_layout:
+            return
+        self._camera_layout = layout
+        for i in range(2):
+            body.rowconfigure(i, weight=0, uniform="")
+            body.columnconfigure(i, weight=0, uniform="")
+        for i, view in enumerate(self.cameras):
+            if layout == "stacked":
+                view.grid(row=i, column=0, sticky="nsew", pady=(0, gap) if i == 0 else 0, padx=0)
+                body.rowconfigure(i, weight=1, uniform="cam")
+            else:
+                view.grid(row=0, column=i, sticky="nsew", padx=(0, gap) if i == 0 else 0, pady=0)
+                body.columnconfigure(i, weight=1, uniform="cam")
+        if layout == "stacked":
+            body.columnconfigure(0, weight=1)
+        else:
+            body.rowconfigure(0, weight=1)
 
     def _draw_progress(self):
         """Complete / Target as a bar; full and green once the target is reached."""
@@ -1471,6 +1507,8 @@ class TestConsolePage(tk.Frame):
         self._alive = False
         self._stop_event.set()
         self._pending.clear()
+        for view in getattr(self, "cameras", []):
+            view.stop()
         threads = [t for t in (getattr(self, "_poll_thread", None),) if t]
         if self.ctl is not None:
             self.ctl.submit("stop")
