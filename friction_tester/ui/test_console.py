@@ -74,6 +74,40 @@ _ui = channel("UI")
 _status = channel("STATUS")
 
 
+class _FitLabel(tk.Label):
+    """A bold label whose text is drawn as large as fits its box (up to LARGEST pt),
+    refitted when the box is resized or the text changes - so OK / NG fill the
+    judgement box and a longer word (INCMP) shrinks instead of being cut off."""
+
+    LARGEST, SMALLEST = 30, 10
+
+    def __init__(self, master, **kw):
+        super().__init__(master, **kw)
+        self._size = None
+        self.bind("<Configure>", lambda _e: self._fit())
+
+    def configure(self, cnf=None, **kw):
+        result = super().configure(cnf, **kw)
+        if "text" in kw or (cnf and "text" in cnf):
+            self._fit()
+        return result
+
+    config = configure
+
+    def _fit(self):
+        import tkinter.font as tkfont
+        width, text = self.winfo_width(), self.cget("text")
+        if width <= 1:
+            return
+        size = self.LARGEST
+        while size > self.SMALLEST and \
+                tkfont.Font(family=theme.FONT, size=size, weight="bold").measure(text) > width - 12:
+            size -= 2
+        if size != self._size:
+            self._size = size
+            super().configure(font=_font(size, True))
+
+
 class CablePanel(tk.Frame):
     """One cable: conditions, results, graph and live readouts."""
 
@@ -106,15 +140,17 @@ class CablePanel(tk.Frame):
                                    anchor="w", justify="left")
         self.source_lbl.pack(fill="x", padx=10)
 
-        # TEST CONDITION / TEST RESULTS kept compact on the left; the OK / NG judgement
-        # fills the rest of the row to their right, as tall as the tables.
+        # TEST CONDITION / TEST RESULTS on the left, the OK / NG judgement on the right,
+        # as tall as the tables. The spare width is shared equally: half widens the
+        # tables' boxes, half is the judgement box.
         row = tk.Frame(self, bg=theme.PANEL)
         row.pack(fill="x", padx=8, pady=4)
-        self._build_tables(row).pack(side="left", anchor="n")
-        self.judge = tk.Label(row, text="– – –", bg=FIELD_BG, fg=T.L_TEXT_3, font=_font(30, True),
+        self._build_tables(row).grid(row=0, column=0, sticky="new")
+        self.judge = _FitLabel(row, text="– – –", bg=FIELD_BG, fg=T.L_TEXT_3, font=_font(30, True),
                               relief="flat", bd=0, highlightthickness=1, highlightbackground=T.L_BORDER,
-                              width=5)
-        self.judge.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(20, 1))
+                              width=1)       # sized by its grid column, not its text
+        self.judge.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=(20, 1))
+        row.columnconfigure((0, 1), weight=1)
 
         self.plot = LoadStrokePlot(self)
         self.plot.add_series("PULL", PULL_COLOR)
@@ -192,8 +228,8 @@ class CablePanel(tk.Frame):
         f = tk.Frame(parent, bg=theme.PANEL)
         cfg = self.cfg
         self.ent = {}
-        # Entry and value boxes keep their natural width (the judgement box
-        # beside the tables takes the spare width).
+        # Entry and value boxes stretch with their columns (weights set below)
+        # when the panel gives the tables more than their natural width.
         cell = {"padx": 2, "pady": 1, "sticky": "ew"}
 
         def text(col, row, t, bold=False, fg=T.L_TEXT, sticky="w", **kw):
@@ -246,7 +282,7 @@ class CablePanel(tk.Frame):
 
         # Same height for every data row, so the two tables share baselines
         for col in (1, 4, 8, 11):          # condition entries and result values
-            f.columnconfigure(col, uniform="boxes")
+            f.columnconfigure(col, weight=1, uniform="boxes")
         f.rowconfigure(0, minsize=20)
         for r in range(1, 5):
             f.rowconfigure(r, minsize=26, uniform="rows")
