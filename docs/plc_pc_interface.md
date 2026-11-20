@@ -74,9 +74,6 @@ request every 0.2 s, release / leaving the button stops it, the controller drops
 released when the link returns. Refused (nothing written) without the write gate, with a part or
 operation active, a fault latched, stale status, servo OFF, a drive alarm, an axis error or the soft
 limit of that direction reached. — implemented, simulated.
-**Jog direction vs limit** (machine, 2026-11-20): Jog Left moves to lower positions and lights
-M0801D / M0801F (M00124, "Right Limit" in the comment table); Jog Right lights M0801C / M0801E. The
-Manual view lamps and the app's limit check follow the machine (`pc_profile.JOG_LIMIT`).
 
 **No PC stop:** M0701C / M0701D "SH / SL Operation Stop" are named in the comment table but not used.
 

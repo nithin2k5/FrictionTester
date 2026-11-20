@@ -201,12 +201,6 @@ FIXTURE_COMMANDS = {
 
 JOG_OPS = ("jog_left_high", "jog_left_low", "jog_right_low", "jog_right_high")
 
-# The soft-limit bit each jog direction runs into (found on the machine, 2026-11-20): Jog Left
-# moves the axis towards lower positions and lights M0801D / M0801F ("Right Limit" in the
-# comment table, M00124 = CurPos <= D02016), Jog Right the other way to M0801C / M0801E
-# (M00123 = CurPos >= D02014). The comment table names the limits the other way round.
-JOG_LIMIT = {"left": "limit_right", "right": "limit_left"}
-
 # ---------------------------------------------------------------------------------------
 # Machine wiring (found on the machine, 2026-11-12): the servo drive the ladder calls SHIFT
 # (X axis) moves the SELECT cable, and the drive it calls SELECT (Y axis) moves the SHIFT

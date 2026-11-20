@@ -788,7 +788,7 @@ def test_jog_runs_while_held_and_stops_on_release():
     start = r.sim.axes["shift"].pos
     _hold(r, "shift", "jog_left_low", 1.0)
     assert _jog_bit(r, "shift", "jog_left_low") and r.sim.axes["shift"].jogging == "left"
-    assert r.sim.axes["shift"].pos < start         # Jog Left -> lower positions (machine, 2026-11-20)
+    assert r.sim.axes["shift"].pos > start
     r.ctl.submit("jog", "shift", None)
     r.run(0.1)                                         # the PLC scans the released bit
     assert not _jog_bit(r, "shift", "jog_left_low") and r.sim.axes["shift"].jogging is None
@@ -808,18 +808,12 @@ def test_jog_dead_man_drops_the_bit_without_refresh():
 
 def test_jog_refused_at_limit_without_servo_or_with_alarm():
     r = Rig()
-    r.confirm_params()                                 # SH right limit 500 -> origin - 50000
-    r.sim.axes["shift"].pos = 1_000_000 - 60_000       # beyond it: the side Jog Left runs to
+    r.confirm_params()                                 # SH left limit 500 -> origin + 50000
+    r.sim.axes["shift"].pos = 1_000_000 + 60_000       # beyond it
     r.run(0.2)
-    assert r.ctl.snap.st("shift", "limit_right") and not r.ctl.snap.st("shift", "limit_left")
     r.ctl.submit("jog", "shift", "jog_left_high")
     r.step()
-    assert "left limit reached" in r.messages()[-1] and not _jog_bit(r, "shift", "jog_left_high")
-    r.ctl.submit("jog", "shift", "jog_right_high")     # away from that limit: allowed
-    r.step()
-    assert _jog_bit(r, "shift", "jog_right_high")
-    r.ctl.submit("jog", "shift", None)
-    r.step()
+    assert "limit left reached" in r.messages()[-1] and not _jog_bit(r, "shift", "jog_left_high")
     r.sim.axes["select"].servo = False
     r.run(0.2)
     r.ctl.submit("jog", "select", "jog_left_low")

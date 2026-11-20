@@ -48,9 +48,8 @@ STATUS_LAMPS = [
     ("SERVO ON", "lamp:Servo", LAMP_GREEN_ON),
     ("ALARM", "not:Drive OK", LAMP_RED_ON),
     ("Origin O.K", "lamp:Origin", LAMP_GREEN_ON),
-    # Each lamp on the side the jog button of that name runs to (pc_profile.JOG_LIMIT).
-    ("Right (PULL) Limit", "st:" + pp.JOG_LIMIT["right"], LAMP_GREEN_ON),
-    ("Left (PUSH) Limit", "st:" + pp.JOG_LIMIT["left"], LAMP_GREEN_ON),
+    ("Right (PUSH) Limit", "st:limit_right", LAMP_GREEN_ON),
+    ("Left (PULL) Limit", "st:limit_left", LAMP_GREEN_ON),
 ]
 # (glyph, PC jog op) - PRINTING PROGRAM OLD M07014-M0701B "Jog Left High / Left Low / Right Low / Right High"
 JOG_BUTTONS = [("⏪", "jog_left_high"), ("◀", "jog_left_low"), ("▶", "jog_right_low"), ("⏩", "jog_right_high")]
