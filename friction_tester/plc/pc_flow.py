@@ -808,9 +808,9 @@ class PcController:
             return f"{a} drive alarm"
         if snap.st(axis, "axis_error"):
             return f"{a} axis error"
-        limit = "limit_left" if "left" in op else "limit_right"
-        if snap.st(axis, limit):
-            return f"{a} {limit.replace('_', ' ')} reached"
+        side = "left" if "left" in op else "right"
+        if snap.st(axis, pp.JOG_LIMIT[side]):
+            return f"{a} {side} limit reached ({pp.STATUS[axis][pp.JOG_LIMIT[side]][2]})"
         return None
 
     def _cmd_jog(self, axis, op, now):

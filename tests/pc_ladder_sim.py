@@ -18,7 +18,8 @@ mapping, allow_writes) and reproduces, per axis:
 
 * PC jog M07014-M0701B [p17-19]: while a jog bit is held, with servo ON, alarm
   normal, no error, no opposite request and the soft limit of that direction not
-  reached (left: CurPos >= origin + L*100, right: CurPos <= origin - R*100), the axis
+  reached (left jog -> lower positions, stops at CurPos <= origin - R*100 = M00124;
+  right jog -> higher, stops at CurPos >= origin + L*100 = M00123), the axis
   moves (high 5000 / low 500 counts/s); status M0801C-F shows the limits
 
 Faults: connected=False (reads/writes raise), fail_next_write, stuck[axis]
@@ -321,13 +322,13 @@ class PcLadderSim:
         bit = lambda op: bool((self.D[4100 + JOG[axis][op][0]] >> JOG[axis][op][1]) & 1)
         left = bit("jog_left_high") or bit("jog_left_low")
         right = bit("jog_right_low") or bit("jog_right_high")
-        at_left, at_right = self._limits(a)
+        m00123, m00124 = self._limits(a)          # Jog Left runs into M00124 (machine, 2026-11-20)
         ok = self._ready(a) and not (left and right)
-        a.jogging = "left" if ok and left and not at_left else ("right" if ok and right and not at_right else None)
+        a.jogging = "left" if ok and left and not m00124 else ("right" if ok and right and not m00123 else None)
         if a.jogging:
             high = bit("jog_left_high") or bit("jog_right_high")
             step = int((5000 if high else 500) * dt)
-            a.pos += step if a.jogging == "left" else -step
+            a.pos += -step if a.jogging == "left" else step
 
     def _update_status(self):
         words = [0, 0, 0]
