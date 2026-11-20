@@ -91,3 +91,12 @@ def test_val_is_the_mean_of_pull_and_push():
     from friction_tester.ui.test_console import evaluate
     assert evaluate([1.0, 2.0, 3.0], [4.0, 5.0, 6.0], 0, 10)["mean"] == 3.5
     assert evaluate([], [], 0, 10)["mean"] == 0.0
+
+
+def test_report_val_is_the_mean_of_the_stored_pull_and_push():
+    from decimal import Decimal
+    from friction_tester.ui import report_page as rp
+    row = {"TR_CH1_FWD_1": Decimal("1"), "TR_CH1_FWD_2": Decimal("2"), "TR_CH1_FWD_3": None,
+           "TR_CH1_RET_1": Decimal("3"), "TR_CH1_RET_2": Decimal("6")}
+    assert rp._val(row) == 3.0 and rp._val({}) is None
+    assert "VAL" in [c for c, *_ in rp.LIST_COLS] and rp._csv_value(3.0) == "3"

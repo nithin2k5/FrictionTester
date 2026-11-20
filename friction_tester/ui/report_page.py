@@ -32,7 +32,8 @@ PERIODS = {"Today": 0, "Last 7 days": 6, "Last 30 days": 29, "Custom": None}   #
 STAGES = ["All", "SELECT", "SHIFT"]
 VERDICT_COLOR = {"OK": T.L_OK, "NG": T.L_NG, "INCOMPLETE": T.L_WARN, "ABORTED": T.L_TEXT_3}
 
-# Values of a cable: PULL 1-3 = CH1 FWD 1-3, PUSH 1-3 = CH1 RET 1-3, Max = CH1 FINAL (db._pc_result_rows)
+# Values of a cable: PULL 1-3 = CH1 FWD 1-3, PUSH 1-3 = CH1 RET 1-3, Max = CH1 FINAL (db._pc_result_rows);
+# Val = the mean of the PULL and PUSH values, worked out here (not a stored column), as on the Test Console
 PULL_COLS = [f"TR_CH1_FWD_{i}" for i in (1, 2, 3)]
 PUSH_COLS = [f"TR_CH1_RET_{i}" for i in (1, 2, 3)]
 CH2_COLS = [f"TR_CH2_{d}_{i}" for d in ("FWD", "RET") for i in (1, 2, 3)] + ["TR_CH2_FINAL"]
@@ -43,13 +44,13 @@ LIST_COLS = ([("TR_DATETIME", "Date / time", 140, "w"), ("TR_STAGE", "Cable", 70
               ("TR_LOT_RESULT", "Part", 118, "center")]
              + [(c, f"PULL {i}", 68, "e") for i, c in enumerate(PULL_COLS, 1)]
              + [(c, f"PUSH {i}", 68, "e") for i, c in enumerate(PUSH_COLS, 1)]
-             + [("TR_CH1_FINAL", "Max", 64, "e"), ("TR_MODEL", "Model", 130, "w")])
-NUMERIC_COLS = set(PULL_COLS + PUSH_COLS + CH2_COLS + ["TR_CH1_FINAL"])
+             + [("TR_CH1_FINAL", "Max", 64, "e"), ("VAL", "Val", 64, "e"), ("TR_MODEL", "Model", 130, "w")])
+NUMERIC_COLS = set(PULL_COLS + PUSH_COLS + CH2_COLS + ["TR_CH1_FINAL", "VAL"])
 
 # CSV headings for the stored columns
 CSV_HEADINGS = {"ID": "ID", "TR_PART_UID": "Part UID", "TR_DATETIME": "Date / time", "TR_MODEL": "Model",
                 "TR_MODEL_TYPE": "Type", "TR_PART_NUMBER": "Part number", "TR_STAGE": "Cable",
-                "TR_LABEL": "Label", "TR_STAGE_RESULT": "Cable result", "TR_CH1_FINAL": "Max",
+                "TR_LABEL": "Label", "TR_STAGE_RESULT": "Cable result", "TR_CH1_FINAL": "Max", "VAL": "Val",
                 "TR_CH2_FINAL": "CH2 final", "TR_CH1_LIMIT_NG": "NG flag", "TR_CH2_LIMIT_NG": "CH2 NG flag",
                 "TR_LOT_VALUE": "Lot", "TR_LOT_RESULT": "Part result", "TR_SOURCE": "Source"}
 CSV_HEADINGS.update({c: f"PULL {i}" for i, c in enumerate(PULL_COLS, 1)})
@@ -73,7 +74,15 @@ def _csv_value(v):
         return ""
     if isinstance(v, Decimal):
         return f"{float(v):g}"
+    if isinstance(v, float):
+        return f"{round(v, 4):g}"          # Val, worked out from the stored values
     return _fmt(v)
+
+
+def _val(row):
+    """Val of a result row: the mean of its PULL and PUSH values (None when it has none)."""
+    vals = [float(row[c]) for c in PULL_COLS + PUSH_COLS if row.get(c) is not None]
+    return sum(vals) / len(vals) if vals else None
 
 
 def _num(v):
@@ -409,7 +418,7 @@ class ReportPage(tk.Frame):
         self.after(100, collect)
 
     def _show_rows(self, rows):
-        self.rows = list(rows)
+        self.rows = [dict(r, VAL=_val(r)) for r in rows]
         self._apply_sort()
         self._fill_tree()
         parts = {}
@@ -495,7 +504,7 @@ class ReportPage(tk.Frame):
         for widgets in self._ch2_rows:
             for w in widgets:
                 (w.grid if has_ch2 else w.grid_remove)()
-        self.lbl_max.config(text=f"Max {_fmt(r.get('TR_CH1_FINAL'))} kgf")
+        self.lbl_max.config(text=f"Max {_fmt(r.get('TR_CH1_FINAL'))} kgf    Val {_fmt(r.get('VAL'))} kgf")
         self.lbl_limits.config(text="Limits …")
         self.lbl_positions.config(text="")
         self._set_problems([], None)
@@ -606,6 +615,8 @@ class ReportPage(tk.Frame):
         if not path:
             return
         cols = ["ID"] + [c for c in db.RESULT_COLUMNS if c not in db.BULK_COLUMNS]
+        if "TR_CH1_FINAL" in cols:
+            cols.insert(cols.index("TR_CH1_FINAL") + 1, "VAL")
         if not any(r.get(c) is not None for r in self.rows for c in CH2_COLS + ["TR_CH2_LIMIT_NG"]):
             cols = [c for c in cols if c not in CH2_COLS and c != "TR_CH2_LIMIT_NG"]   # unused channel
         try:
