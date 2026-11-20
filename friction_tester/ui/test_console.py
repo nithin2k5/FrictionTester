@@ -1929,6 +1929,29 @@ class TestConsolePage(tk.Frame):
                 self.target.insert(0, str(stored))
             self._set_status("Target not changed: type the number and press Enter to set it", theme.BUSY, hold=5)
 
+    def _model_is_loaded(self, source="RUN"):
+        """A test needs a loaded model. Warn with a pop-up when there is none (one at a time)."""
+        if self.settings["test"]["select"].get("model"):
+            return True
+        self._set_status(f"{source}: load a model first (Model Change)", theme.FAIL, hold=6)
+        if not getattr(self, "_no_model_popup", False):
+            self._no_model_popup = True
+            try:
+                messagebox.showwarning("No model loaded",
+                                       "No model is loaded.\n\n"
+                                       "Load a model with Model Change before starting the test.", parent=self)
+            finally:
+                self._no_model_popup = False
+        return False
+
+    def _check_start_button(self, common):
+        """The machine's Start (test) button, read with the machine lamps: warn on a press
+        when no model is loaded."""
+        pressed = common.get("Start")
+        was, self._start_was = getattr(self, "_start_was", None), pressed
+        if pressed and was is False and self._flow == "idle":
+            self.after_idle(lambda: self._model_is_loaded("Start button"))
+
     def _target_is_set(self):
         """RUN needs a production target. Warn with a pop-up when it is missing."""
         if self.counters.get("target", 0) > 0:
@@ -1942,7 +1965,7 @@ class TestConsolePage(tk.Frame):
 
     def start_flow(self):
         """RUN: arm the flow for the loaded model's type."""
-        if self._flow == "idle" and not self._target_is_set():
+        if self._flow == "idle" and not (self._model_is_loaded() and self._target_is_set()):
             return
         if self._flow == "idle":
             try:                             # typed (manual) conditions must be in range too
@@ -2468,6 +2491,8 @@ class TestConsolePage(tk.Frame):
                 cv.itemconfig(dot, fill=LAMP_ON if side["lamps"].get(name) else LAMP_OFF)
         for name, (cv, dot) in getattr(self, "machine_lamps", {}).items():
             cv.itemconfig(dot, fill=LAMP_ON if snap.get("common", {}).get(name) else LAMP_OFF)
+        if snap.get("common"):
+            self._check_start_button(snap["common"])
         if self.manual_shown():
             latest = getattr(self.sampler, "latest", None) or {}
             strokes = {k: v[1] for k, v in latest.items() if isinstance(v, (tuple, list)) and len(v) > 1}

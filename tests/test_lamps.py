@@ -100,3 +100,30 @@ def test_report_val_is_the_mean_of_the_stored_pull_and_push():
            "TR_CH1_RET_1": Decimal("3"), "TR_CH1_RET_2": Decimal("6")}
     assert rp._val(row) == 3.0 and rp._val({}) is None
     assert "VAL" in [c for c, *_ in rp.LIST_COLS] and rp._csv_value(3.0) == "3"
+
+
+def test_no_model_popup_on_run_and_on_the_start_button(monkeypatch):
+    """RUN, or a press of the machine's Start button, with no model loaded shows a pop-up."""
+    from friction_tester.ui import test_console as tc
+    shown = []
+    monkeypatch.setattr(tc.messagebox, "showwarning", lambda title, *a, **k: shown.append(title))
+
+    class Page:
+        _flow = "idle"
+        settings = {"test": {"select": {"model": ""}}}
+        _set_status = lambda self, *a, **k: None
+        after_idle = lambda self, fn: fn()
+        _model_is_loaded = tc.TestConsolePage._model_is_loaded
+        _check_start_button = tc.TestConsolePage._check_start_button
+
+    page = Page()
+    assert page._model_is_loaded() is False and shown == ["No model loaded"]
+    for start in (False, True, True, False):          # one press = one pop-up
+        page._check_start_button({"Start": start})
+    assert shown == ["No model loaded"] * 2
+    fresh = Page()
+    fresh._check_start_button({"Start": True})         # button already held when the page opens: no pop-up
+    assert len(shown) == 2
+    page.settings["test"]["select"]["model"] = "M1"
+    page._check_start_button({"Start": False}); page._check_start_button({"Start": True})
+    assert page._model_is_loaded() is True and len(shown) == 2
