@@ -1,5 +1,5 @@
 {
-  "settings_version": 9,
+  "settings_version": 8,
   "plc": {
     "port": "COM13",
     "baudrate": 115200,
