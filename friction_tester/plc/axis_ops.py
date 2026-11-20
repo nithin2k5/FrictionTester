@@ -457,7 +457,18 @@ class AlarmResetOp(AxisOp):
         return {}
 
 
+class OriginMoveOp(MeasStartOp):
+    """The measurement-start positioning, run while the cable routine has set that axis'
+    Measurement start to 0, so its target D02018 / D02118 is the origin D02000 / D02100:
+    the axis goes straight back to origin, without the driver's origin search."""
+
+    @property
+    def name(self):
+        return f"{pp.AXIS_NAME[self.axis]} TO-ORIGIN"
+
+
 def make_op(axis, kind, **kw):
     if kind in ("pull", "push"):
         return StrokeOp(axis, kind, **kw)
-    return {"home": HomeOp, "meas_start": MeasStartOp, "alarm_reset": AlarmResetOp}[kind](axis, **kw)
+    return {"home": HomeOp, "meas_start": MeasStartOp, "to_origin": OriginMoveOp,
+            "alarm_reset": AlarmResetOp}[kind](axis, **kw)

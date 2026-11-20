@@ -263,8 +263,30 @@ def test_at_part_order_and_one_result():
     assert len(parts) == 1 and parts[0]["verdict"] == "OK" and parts[0]["counted"]
     assert [s["stage"] for s in parts[0]["stages"]] == ["select", "shift"]
     for axis in pp.AXES:
-        assert r.sim.starts[axis] == {"home": 1, "pull": 1, "push": 1, "meas": 1}   # ends back at home
+        # back to origin by positioning (Measurement start 0), not by the HOME origin search
+        assert r.sim.starts[axis] == {"home": 0, "pull": 1, "push": 1, "meas": 2}
+        assert r.sim.axes[axis].pos == 1_000_000
+        assert r.sim.axes[axis].params["meas_start"] == 100          # real value written back
+    assert r.ctl.params["state"] == "confirmed" and not r.ctl.origin_zeroed
     assert r.requests_clear()
+
+
+def test_stop_while_going_to_origin_rewrites_the_parameters():
+    """STOP between the Measurement-start-0 write and its restore: the model's real
+    parameters are written again, and RUN waits for them to be confirmed."""
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "SEL-1")
+    r.until(lambda: r.ctl.origin_zeroed == {"select"})
+    assert r.sim.axes["select"].params["meas_start"] == 0
+    r.ctl.submit("stop")
+    r.step()
+    assert r.ctl.params["state"] in ("pending", "writing", "settling")
+    r.until(lambda: r.ctl.params["state"] == "confirmed")
+    assert not r.ctl.origin_zeroed and r.sim.axes["select"].params["meas_start"] == 100
+    assert r.sim.starts["select"]["home"] == 0
 
 
 def test_part_is_logged_two_seconds_after_shift():

@@ -7,8 +7,16 @@ The Tk thread only submits commands and reads `events`.
 
 Cable routine: fixture checks (configured) -> home if needed (configured) ->
 verified measurement-start positioning -> PULL / PUSH strokes (acquisition
-armed before each request, window closed at completion) -> home -> evaluation.
-On the model's positions: HOME (P2) -> P1 -> P3 -> P1 -> HOME (P2).
+armed before each request, window closed at completion) -> back to origin ->
+evaluation. On the model's positions: HOME (P2) -> P1 -> P3 -> P1 -> HOME (P2).
+
+Back to origin: the PLC's HOME request is a driver origin search (the axis runs
+to the far end to find the home sensor), and the program has no PC command to
+position on the origin. So the routine sets that axis' Measurement start to 0
+(D02018 / D02118 = origin D02000 / D02100), runs the measurement-start
+positioning (straight to origin) and writes the real value back, each write
+confirmed by the echo + params_settle. A routine that ends before the restore
+leaves the parameters "pending": they are written again once both axes are idle.
 
 Part flow (application requirement - the PDF does not define barcodes):
   AT: RUN -> SELECT label -> SELECT routine -> SHIFT label -> SHIFT routine -> one part
@@ -351,8 +359,11 @@ class CableRoutine:
         else:
             plan.append("meas_start")
         n = max(1, int(self.mcfg.get("strokes_per_test", 1)))
-        # HOME (P2) -> P1 (measurement start) -> P3 (PULL) -> P1 (PUSH) -> HOME (P2)
-        self.plan = plan + ["pull", "push"] * n + ["home"]
+        # HOME (P2) -> P1 (measurement start) -> P3 (PULL) -> P1 (PUSH) -> HOME (P2).
+        # Back to origin by positioning, not by HOME (an origin search) - see the module doc.
+        # With Measurement start 0, P1 is the origin already.
+        back = [] if self.ctl.start_value(self.axis) == 0 else ["zero_start", "to_origin", "restore_start"]
+        self.plan = plan + ["pull", "push"] * n + back
 
     def close_capture(self):
         if self.capture is None:
@@ -405,6 +416,10 @@ class PcController:
         # finished: the UI blocks the console between the "open_home" start and end events.
         self.open_homing, self._open_home_done = set(), []
         self.params = {"state": "not_confirmed", "values": None, "model": None, "message": "no model loaded"}
+        # Back to origin (module doc): axes whose Measurement start is 0 in the PLC right now,
+        # and the write of such a change still waiting for its echo (None = none).
+        self.origin_zeroed = set()
+        self.swap = None
         self._seq = 0
         self._stop = threading.Event()
         self._thread = None
@@ -471,6 +486,7 @@ class PcController:
             self._home_on_open(now)
         self._check_jogs(now)
         self._check_params(snap, now)
+        self._check_swap(snap, now)
         for axis, op in list(self.manual.items()):
             self._apply(op.observe(snap, now), op)
             if op.result:
@@ -626,7 +642,8 @@ class PcController:
                                                     "formulas, not read back)")
                 self.log.log("PARAMS", "confirmed", model=p["model"])
                 self._msg(f"PLC parameters for {p['model']} confirmed by readback", "pass")
-        elif p["state"] == "confirmed" and snap.param_echo != p["values"]:
+        elif (p["state"] == "confirmed" and self.swap is None
+              and snap.param_echo != self._start_values(self.origin_zeroed)):
             p.update(state="not_confirmed", message="parameter echo changed in the PLC")
             self.log.log("PARAMS", p["message"], echo=snap.param_echo)
             self._msg("PLC parameters changed in the PLC - not confirmed any more", "fail")
@@ -640,7 +657,96 @@ class PcController:
             self.log.log("PARAMS", p["message"])
             self._msg(f"PLC parameters not confirmed: {exc}", "fail")
             return
+        self.origin_zeroed = set()             # the full set holds every real Measurement start
         p.update(state="writing", t=now, message="written, waiting for the echo")
+
+    # ------------------------------------------------------------ back to origin
+    def start_value(self, axis):
+        """The model's Measurement start of the axis (the words the part runs with)."""
+        return self.params["values"][pp.param_index(axis, "meas_start")]
+
+    def _start_values(self, zeroed):
+        """The model's parameter words with the Measurement start of the `zeroed` axes set to 0."""
+        values = list(self.params["values"] or [])
+        for axis in zeroed:
+            values[pp.param_index(axis, "meas_start")] = 0
+        return values
+
+    def _swap_step(self, r, kind, snap, now):
+        """zero_start / restore_start of a cable routine: write the changed Measurement start."""
+        zeroed = (self.origin_zeroed | {r.axis}) if kind == "zero_start" else (self.origin_zeroed - {r.axis})
+        if zeroed == self.origin_zeroed:
+            r.step += 1
+            return
+        if self.swap is not None or self.params["state"] != "confirmed" or snap is None:
+            return                              # wait (another write in flight); the stage timeout applies
+        # D04200-D04213 is one write: only while no other axis is moving and both are idle.
+        if any(o is not r and o.op is not None for o in self.routines.values()):
+            return
+        if any(not snap.axis_idle(a) for a in pp.AXES if a == r.axis or a in self.routines):
+            return                              # still settling / the other routine is between steps
+        busy = [pp.AXIS_NAME[a] for a in pp.AXES if not snap.axis_idle(a)]
+        if busy:                                # an axis no routine owns any more (it failed) is not idle
+            note = (f"back to origin skipped: {' and '.join(busy)} not idle - the parameter words cannot be "
+                    "written" + ("" if kind == "zero_start" else "; they are rewritten once both axes are idle"))
+            r.evidence.append(note)
+            self._msg(f"{pp.AXIS_NAME[r.axis]} {note}", "busy")
+            r.step = len(r.plan)
+            return
+        what =(f"{pp.AXIS_NAME[r.axis]} Measurement start 0 (target = origin)" if kind == "zero_start"
+                else f"{pp.AXIS_NAME[r.axis]} Measurement start restored")
+        why = self._can_move()
+        values = self._start_values(zeroed)
+        if not why:
+            try:
+                self.link.write_params(values)
+            except Exception as exc:
+                why = f"write failed: {exc}"
+        if why:
+            self._swap_failed(r, f"{what} not written: {why}")
+            return
+        self.swap = {"routine": r, "what": what, "values": values, "zeroed": zeroed, "state": "writing", "t": now}
+        r.state = "swapping"
+
+    def _check_swap(self, snap, now):
+        s = self.swap
+        if s is None:
+            owners = {r.axis for r in self.routines.values()}
+            if self.origin_zeroed - owners and self.params["state"] == "confirmed":
+                # A routine ended (failure / STOP) between TO-ORIGIN and the restore.
+                self._params_restore("a routine ended with Measurement start 0 in the PLC")
+            return
+        r = s["routine"]
+        if r is not None and self.routines.get(r.axis) is not r:
+            s["routine"] = r = None             # routine gone: finish this write, the restore follows
+        if snap is None:
+            self._swap_failed(r, f"{s['what']}: connection lost - not confirmed")
+        elif s["state"] == "writing":
+            if snap.param_echo == s["values"]:
+                s.update(state="settling", t=now)
+            elif now - s["t"] > float(self.timeouts.get("params", 3.0)):
+                self._swap_failed(r, f"{s['what']}: readback D04007-D04020 did not match in time")
+        elif snap.param_echo != s["values"]:
+            self._swap_failed(r, f"{s['what']}: echo changed while settling")
+        elif now - s["t"] >= float(self.timeouts.get("params_settle", 0.5)):
+            self.swap = None
+            self.origin_zeroed = s["zeroed"]
+            self.log.log("PARAMS", s["what"], zeroed=",".join(sorted(s["zeroed"])) or "-")
+            if r is not None:
+                r.evidence.append(f"{s['what']} (echo verified)")
+                r.step += 1
+                r.state = "ready"
+
+    def _swap_failed(self, r, message):
+        self.swap = None
+        self._params_restore(message)
+        if r is not None:
+            self._fail_routine(r, message)
+
+    def _params_restore(self, why):
+        """Write the model's full parameter set again once both axes are idle (_check_params)."""
+        self.params.update(state="pending", message=f"rewriting the model's parameters ({why})")
+        self.log.log("PARAMS", "restore requested", why=why)
 
     def _request_params(self, model, values):
         problems = validate_params(values)
@@ -1010,6 +1116,8 @@ class PcController:
                 r.state = "done"
                 self.log.log("EVALUATE", f"{pp.AXIS_NAME[r.axis]}: {r.result['verdict']}", test=r.test_id,
                              problems="; ".join(r.result["problems"]) or "-")
+            elif r.state == "ready" and r.plan[r.step] in ("zero_start", "restore_start"):
+                self._swap_step(r, r.plan[r.step], snap, now)
             elif r.state == "ready":
                 kind = r.plan[r.step]
                 op = make_op(r.axis, kind, test_id=r.test_id, timeouts=self.timeouts, log=self.log,

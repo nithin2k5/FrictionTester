@@ -217,7 +217,18 @@ sensor confirmations are commissioning items; `fixture_checks` can require statu
 
 Cable routine: fixture checks → home if `home_before_test` requires it (`if_not_referenced` by
 default: origin feedback OFF) → measurement-start positioning → `strokes_per_test` × (PULL, PUSH)
-with acquisition → evaluation. No extra return-to-home and no fixture release are added.
+with acquisition → back to origin → evaluation. No fixture release is added.
+
+**Back to origin** (2026-11-20): HOME (M07009 / M0700D) is a driver origin search — the axis runs
+to the far −ve end for the home sensor and back — and the program has no PC command to position on
+the origin. So after the last PUSH the routine writes the parameter set with that axis' Measurement
+start = 0 (D02018 / D02118 = D02000 / D02100, the origin), runs the measurement-start positioning
+(straight to origin) and writes the real value back; each write waits for the echo + `params_settle`
+and only while no other axis moves. A model with Measurement start 0 skips it (P1 is the origin). If
+the routine ends between the two writes (failure, STOP), the parameters go back to "pending" and are
+rewritten when both axes are idle; RUN waits for them. If the other axis is stuck (not idle, no
+routine), the return is skipped and the axis stays at P1. **To verify on the machine**: the PLC
+recalculates D02018 after the write (the simulator does; otherwise the axis would stay at P1).
 
 * AT: RUN → SELECT label (SELECT field only) → SELECT routine → SHIFT label → SHIFT routine → one part.
   A SELECT INCOMPLETE ends the part; OK/NG continue to SHIFT.
