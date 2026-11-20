@@ -85,3 +85,9 @@ def test_saved_settings_get_the_current_drive_lamps():
         for key in ("origin_input", "servo_input", "drive_ok_input"):
             assert s["test"][cable][key] == DEFAULTS["test"][cable][key], (cable, key)
     assert any("origin_input" in n for n in s["migrated"])
+
+
+def test_val_is_the_mean_of_pull_and_push():
+    from friction_tester.ui.test_console import evaluate
+    assert evaluate([1.0, 2.0, 3.0], [4.0, 5.0, 6.0], 0, 10)["mean"] == 3.5
+    assert evaluate([], [], 0, 10)["mean"] == 0.0

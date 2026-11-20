@@ -61,8 +61,10 @@ def evaluate(pulls, pushes, load_min, load_max):
     values = [abs(v) for v in list(pulls) + list(pushes)]
     pull_mean = sum(pulls) / len(pulls) if pulls else 0.0
     push_mean = sum(pushes) / len(pushes) if pushes else 0.0
+    readings = list(pulls) + list(pushes)
     ok = bool(values) and all(load_min <= v <= load_max for v in values)
     return {"pull_mean": pull_mean, "push_mean": push_mean,
+            "mean": sum(readings) / len(readings) if readings else 0.0,
             "max": max(values) if values else 0.0, "ok": ok}
 
 
@@ -126,6 +128,12 @@ class CablePanel(tk.Frame):
         self.res["max"].pack(side="left")
         self.max_unit = tk.Label(top, text="kgf", bg=theme.PANEL, fg=T.L_TEXT, font=_font(8))
         self.max_unit.pack(side="left", padx=(2, 0))
+        # Val: the test's value, the mean of all PULL and PUSH readings
+        tk.Label(top, text="Val", bg=theme.PANEL, fg=T.L_TEXT, font=_font(9, True)).pack(side="left", padx=(12, 3))
+        self.res["val"] = self._value(top, NO_DATA)
+        self.res["val"].pack(side="left")
+        self.val_unit = tk.Label(top, text="kgf", bg=theme.PANEL, fg=T.L_TEXT, font=_font(8))
+        self.val_unit.pack(side="left", padx=(2, 0))
         tk.Button(top, text="Screen Save", command=self.save_screen, bg=T.L_NEUTRAL_BTN, fg="white",
                   activebackground="#4b5560", activeforeground="white", bd=0, padx=8, pady=2,
                   font=_font(8, True), cursor="hand2").pack(side="right")
@@ -325,6 +333,7 @@ class CablePanel(tk.Frame):
         self.res["pull_mean"].config(text=f"{r['pull_mean']:.2f}")
         self.res["push_mean"].config(text=f"{r['push_mean']:.2f}")
         self.res["max"].config(text=f"{r['max']:.2f}")
+        self.res["val"].config(text=f"{r['mean']:.2f}")
         self.judge.config(text="OK" if r["ok"] else "NG", fg=theme.PASS if r["ok"] else theme.FAIL)
         self.last_ok = r["ok"]
         return r
@@ -475,6 +484,7 @@ class CablePanel(tk.Frame):
             lbl.config(text=unit)
         self.max_lbl.config(text=final_label)
         self.max_unit.config(text=unit)
+        self.val_unit.config(text=unit)
 
     def show_plc_channel(self, channel, meas, verdict, mapped, shared_cfg):
         """Show one PLC channel's stored samples, final value and the overall verdict.
@@ -508,6 +518,11 @@ class CablePanel(tk.Frame):
         self.res["push_mean"].config(text=NO_DATA)
         final = (meas or {}).get("finals", {}).get(channel)
         self.res["max"].config(text=fmt(final))
+        both = [v for d in (first_dir, second_dir) for i in range(1, 4)
+                if (v := samples.get(d, {}).get(f"P{i}")) is not None]
+        mean = sum(both) / len(both) if both else None   # raw counts: a mean is not whole
+        self.res["val"].config(text=NO_DATA if mean is None else
+                               f"{mean * scale:.2f}" if scale else f"{mean:.1f}")
         self.judge.config(text=verdict, fg=theme.PASS if verdict == "OK" else theme.FAIL)
         self.last_ok = None              # counted per part by the flow, not per panel
         ch_ng = (meas or {}).get("channel_ng", {}).get(channel)
@@ -529,13 +544,16 @@ class CablePanel(tk.Frame):
         def fmt(v):
             return NO_DATA if v is None else f"{v:.2f}"
 
+        both = []
         for d in ("pull", "push"):
             vals = list(res.get(d) or [])
             for i in range(3):
                 self.res[f"{d}{i + 1}"].config(text=fmt(vals[i]) if i < len(vals) else NO_DATA)
             present = [v for v in vals if v is not None]
+            both += present
             self.res[f"{d}_mean"].config(text=fmt(sum(present) / len(present)) if present else NO_DATA)
         self.res["max"].config(text=fmt(res.get("max")))
+        self.res["val"].config(text=fmt(sum(both) / len(both)) if both else NO_DATA)
         verdict = res.get("verdict") or ("OK" if res.get("ok") else "NG")
         self.judge.config(text=verdict if verdict != "INCOMPLETE" else "INCMP",
                           fg={"OK": theme.PASS, "NG": theme.FAIL}.get(verdict, theme.BUSY))
