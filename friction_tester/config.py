@@ -10,7 +10,8 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # (plc.pdf, PC word interface) is this machine's integration.
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
 # 7 = NI card load cells scaled 10 kgf/V (measured on the machine against the serial indicator).
-SETTINGS_VERSION = 8
+# 9 = drive lamps (Servo / Drive OK / Origin) re-read from the drive that moves each cable.
+SETTINGS_VERSION = 9
 
 LOADCELL_KGF_PER_V = 10.0      # indicator analogue output on the NI card: ~0.197 V at 1.97 kgf
 LVDT_MM_PER_V = 10.0           # LVDT output on the NI card: 10 V over 100 mm
@@ -365,6 +366,23 @@ def migrate(loaded):
         if scaled:
             notes.append(f"daq {', '.join(scaled)}: scale 1 -> {LVDT_MM_PER_V:g} mm/V (LVDT 10 V over 100 mm)")
         loaded["settings_version"] = 8
+        version = 8
+    if version < 9:
+        # A saved settings.json holds the drive lamp addresses of the version that saved it,
+        # which would hide the corrected defaults: these are wiring, so reset them.
+        for cable in ("select", "shift"):
+            cfg = (loaded.get("test") or {}).get(cable)
+            if not isinstance(cfg, dict):
+                continue
+            changed = []
+            for key in ("servo_input", "drive_ok_input", "origin_input"):
+                new = DEFAULT_SETTINGS["test"][cable][key]
+                if key in cfg and cfg[key] != new:
+                    changed.append(f"{key} {cfg[key]} -> {new}")
+                    cfg[key] = new
+            if changed:
+                notes.append(f"test.{cable}: " + ", ".join(changed) + " (drive that moves the cable)")
+        loaded["settings_version"] = 9
     if notes:
         loaded["migrated"] = notes
     return loaded

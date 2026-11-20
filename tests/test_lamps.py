@@ -67,3 +67,21 @@ def test_servo_out_lamps_follow_the_drive_that_moves_the_cable():
     lamps = DEFAULTS["test"]["machine_lamps"]
     assert lamps["SL servo out"] == TestConsolePage.SERVO_OUT["select"]
     assert lamps["SH servo out"] == TestConsolePage.SERVO_OUT["shift"]
+
+
+def test_saved_settings_get_the_current_drive_lamps():
+    """A settings.json saved by an older version keeps no stale Origin / Servo / Drive OK address."""
+    from friction_tester.config import load_settings
+    import json, tempfile, os
+    old = {"settings_version": 8, "test": {
+        "select": {"origin_input": "P00016", "servo_input": "P00010", "drive_ok_input": "P00013"},
+        "shift": {"origin_input": "P00012", "servo_input": "P00014", "drive_ok_input": "P00017"}}}
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "settings.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(old, f)
+        s = load_settings(path)
+    for cable in ("select", "shift"):
+        for key in ("origin_input", "servo_input", "drive_ok_input"):
+            assert s["test"][cable][key] == DEFAULTS["test"][cable][key], (cable, key)
+    assert any("origin_input" in n for n in s["migrated"])
