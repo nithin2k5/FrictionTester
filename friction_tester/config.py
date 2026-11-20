@@ -46,16 +46,19 @@ DEFAULT_SETTINGS = {
                    "forward_sensor": "P00007", "backward_sensor": "P00006", "part_sensor": "P000A",
                    # SELECT axis inputs, PRINTING PROGRAM OLD (plc.pdf; docs/plc_pc_interface.md).
                    # Drive inputs by cable (pc_profile.DRIVE_OF, machine 2026-11-12): the SELECT
-                   # cable is moved by the ladder's SHIFT drive -> P00013 / P00010 / P00012.
+                   # cable is moved by the ladder's SHIFT drive -> P00013 / P00010. Origin is the
+                   # exception: the lamp read the other cable that way (machine, 2026-11-20), so it
+                   # stays as printed for the SELECT axis -> P00016.
                    "clamp_on_sensor": "P00009", "clamp_off_sensor": "P00008",
-                   "drive_ok_input": "P00013", "servo_input": "P00010", "origin_input": "P00012"},
+                   "drive_ok_input": "P00013", "servo_input": "P00010", "origin_input": "P00016"},
         "shift": {"model": "", "speed": None, "delay": None, "stroke": None, "positions": [None, None, None],
                   "load_min": None, "load_max": None, "clamp_count": 0,
                   "forward_sensor": "P0001", "backward_sensor": "P0000", "part_sensor": "P000B",
                   # SHIFT axis inputs, PRINTING PROGRAM OLD (plc.pdf). Drive inputs by cable: the
-                  # SHIFT cable is moved by the ladder's SELECT drive -> P00017 / P00014 / P00016.
+                  # SHIFT cable is moved by the ladder's SELECT drive -> P00017 / P00014; origin as
+                  # printed for the SHIFT axis -> P00012.
                   "clamp_on_sensor": "P00003", "clamp_off_sensor": "P00002",
-                  "drive_ok_input": "P00017", "servo_input": "P00014", "origin_input": "P00016"},
+                  "drive_ok_input": "P00017", "servo_input": "P00014", "origin_input": "P00012"},
         # Machine-wide lamps under the two cable panels: label -> P address (bit_read area,
         # FC02). Emergency inputs are ON = healthy (permission in plc.pdf); P00030 / P00034
         # are the ladder's SH / SL "Servo ON Output" (PLC backup 2026-11-08), named here by the
