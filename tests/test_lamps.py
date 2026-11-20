@@ -52,15 +52,14 @@ def test_machine_scan_lights_the_expected_lamps_in_one_request():
 
 
 def test_drive_lamps_follow_the_drive_that_moves_the_cable():
-    """Servo / Drive OK lamps read the inputs of the drive that moves each cable
-    (pc_profile.DRIVE_OF, drives exchanged on the machine) - the same ones the jog/test checks use.
-    The Origin lamp showed the other cable that way (machine, 2026-11-20): it stays as printed."""
+    """Servo / Drive OK / Origin lamps read the inputs of the drive that moves each cable
+    (pc_profile.DRIVE_OF, drives exchanged on the machine) - the same ones the jog/test checks use."""
     from friction_tester.plc import pc_profile as pp
     for cable in pp.AXES:
         cfg = DEFAULTS["test"][cable]
-        for setting, status in (("servo_input", "servo_on"), ("drive_ok_input", "alarm_normal")):
+        for setting, status in (("servo_input", "servo_on"), ("drive_ok_input", "alarm_normal"),
+                                ("origin_input", "origin_complete")):
             assert cfg[setting] == pp.STATUS[cable][status][2], (cable, setting)
-        assert cfg["origin_input"] == pp.STATUS[pp.DRIVE_OF[cable]]["origin_complete"][2], cable
 
 
 def test_servo_out_lamps_follow_the_drive_that_moves_the_cable():
