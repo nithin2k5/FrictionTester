@@ -58,9 +58,11 @@ DEFAULT_SETTINGS = {
                   "drive_ok_input": "P00017", "servo_input": "P00014", "origin_input": "P00016"},
         # Machine-wide lamps under the two cable panels: label -> P address (bit_read area,
         # FC02). Emergency inputs are ON = healthy (permission in plc.pdf); P00030 / P00034
-        # are the SH / SL "Servo ON Output" (PLC backup 2026-11-08); P0001A is the NG box input.
+        # are the ladder's SH / SL "Servo ON Output" (PLC backup 2026-11-08), named here by the
+        # cable that drive moves (pc_profile.DRIVE_OF): P00030 -> SELECT, P00034 -> SHIFT,
+        # SELECT first as on screen (left panel). P0001A is the NG box input.
         "machine_lamps": {"E-stop top": "P0000F", "E-stop bottom": "P0000D", "Start": "P0000E",
-                          "SH servo out": "P00030", "SL servo out": "P00034", "NG box": "P0001A"},
+                          "SL servo out": "P00030", "SH servo out": "P00034", "NG box": "P0001A"},
         # Sensor lamps: cylinder forward/backward and part presence per cable,
         # from the machine I/O list (also P000E START, P000F emergency stop).
         # Read through machine_profile.mapping (bit_read area, FC02 for P inputs).

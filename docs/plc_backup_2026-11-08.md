@@ -33,7 +33,7 @@ cleanly; page 1 was checked by eye.
 | `plc/pc_profile.py` | jog commands M07014–M0701B; status names from the comment table (product detection SL / SH, measurement start switch, emergency stop top / bottom); stop / watchdog facts in `UNRESOLVED` |
 | `plc/pc_flow.py` | hold-to-jog: `("jog", axis, op)` repeated while held, `None` to release; dead-man `timeouts.jog_hold` (0.6 s); released on STOP, on closing, and on reconnection after a lost link; refused without the write gate, servo, alarm-normal, with an axis error or at the soft limit |
 | Manual view | jog buttons ⏪ ◀ ▶ ⏩ = left high, left low, right low, right high; press to jog, release to stop |
-| Lamps | SELECT Forward / Backward were swapped: Forward = P00007 "SL Extension SOL End", Backward = P00006 "Home" (SHIFT already P00001 / P00000); Machine lamps renamed: SH / SL servo out (P00030 / P00034), plus NG box P0001A |
+| Lamps | SELECT Forward / Backward were swapped: Forward = P00007 "SL Extension SOL End", Backward = P00006 "Home" (SHIFT already P00001 / P00000); Machine lamps renamed: SH / SL servo out (P00030 / P00034; since 2026-11-20 named by cable: SL = P00030, SH = P00034, see pc_profile.DRIVE_OF), plus NG box P0001A |
 
 ## Device names (selection)
 
