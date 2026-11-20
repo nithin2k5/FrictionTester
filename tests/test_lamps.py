@@ -49,3 +49,14 @@ def test_machine_scan_lights_the_expected_lamps_in_one_request():
     assert shift["Clamp ON"] and shift["Drive OK"] and shift["Backward"] and not shift["Origin"]
     assert common == {"E-stop top": True, "E-stop bottom": True, "Start": False,
                       "SH servo out": True, "SL servo out": True, "NG box": False}
+
+
+def test_drive_lamps_follow_the_drive_that_moves_the_cable():
+    """Servo / Drive OK / Origin lamps read the inputs of the drive that moves each cable
+    (pc_profile.DRIVE_OF, drives exchanged on the machine) - the same ones the jog/test checks use."""
+    from friction_tester.plc import pc_profile as pp
+    for cable in pp.AXES:
+        cfg = DEFAULTS["test"][cable]
+        for setting, status in (("servo_input", "servo_on"), ("drive_ok_input", "alarm_normal"),
+                                ("origin_input", "origin_complete")):
+            assert cfg[setting] == pp.STATUS[cable][status][2], (cable, setting)
