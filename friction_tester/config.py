@@ -211,6 +211,10 @@ DEFAULT_SETTINGS = {
                 "loadcell": {"select": 1, "shift": 2},
                 "daq_force": {"select": "Loadcell 1", "shift": "Loadcell 2"},
                 "stroke": {"select": "", "shift": ""},   # DAQ sensor name of the LVDT, "" = none
+                # Auto zero: before a test's first stroke the load now (result and NI graph) becomes
+                # zero for that test. A reading beyond auto_zero_max (load units) is not zeroed.
+                "auto_zero": True,
+                "auto_zero_max": 1.0,
                 "calibration": {
                     "select": {"scale": 1.0, "offset": 0.0, "unit": "", "verified": False},
                     "shift": {"scale": 1.0, "offset": 0.0, "unit": "", "verified": False},

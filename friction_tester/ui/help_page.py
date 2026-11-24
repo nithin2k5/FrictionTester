@@ -101,6 +101,8 @@ CHAPTERS = [
         ("LIVE", "Reads all four rows continuously (volts and value) until pressed again."),
         ("ZERO", "Nothing on the sensor: press ZERO. The voltage now becomes zero (sets Offset)."),
         ("CAL", "Put a known load on, type it in Known (kgf / mm), press CAL. Sets Scale; the zero stays."),
+        ("Auto zero", "Before each test's first stroke the load now becomes zero for that test (result "
+                      "loadcell and NI graph; never the LVDT). Over 1 kgf it is not zeroed and the log says so."),
     ]),
     ("warn", "Calibrate all four NI rows (ZERO, then CAL with a known weight) and Save before "
              "trusting the graph. Check with a second weight: it should read within a few grams."),

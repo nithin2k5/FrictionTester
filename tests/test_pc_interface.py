@@ -893,7 +893,7 @@ def test_sampler_records_why_loadcell_reads_fail():
                 raise TimeoutError(self.err)
             return None, "ID001,+0001.00", 1.0
 
-    settings = {"test": {"machine_profile": {"measurement": {"force_source": "serial",
+    settings = {"test": {"machine_profile": {"measurement": {"force_source": "serial", "auto_zero": False,
                                                              "loadcell": {"select": 1, "shift": 2}}}}}
     s = Sampler([Lc(True), Lc(False)], None, settings, period=0.005)
     for axis, expect in (("select", None), ("shift", "loadcell L2 is not connected")):
@@ -983,7 +983,7 @@ def _sampler_settings(force_source="serial", stroke=None, graph_force="result"):
                                 {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": 5.0,
                                  "offset": -5.0, "unit": "mm"}]},
             "test": {"machine_profile": {"measurement": {
-                "force_source": force_source, "graph_force": graph_force,
+                "force_source": force_source, "graph_force": graph_force, "auto_zero": False,
                 "loadcell": {"select": 1, "shift": 2},
                 "daq_force": {"select": "Loadcell 1", "shift": ""},
                 "stroke": stroke if stroke is not None else {"select": "LVDT 1", "shift": ""}}}}}
@@ -1590,3 +1590,34 @@ def test_console_clears_after_both_cables_are_logged():
         assert "ready for the next 0705CAJ00511N part" in page.status["text"]
     finally:
         root.destroy()
+
+
+def test_auto_zero_subtracts_the_load_at_the_start_of_each_test_not_the_lvdt():
+    from friction_tester.plc.pc_measure import Sampler
+
+    class Lc:
+        is_open = True
+        value = 0.5
+
+        def read(self):
+            return None, "raw", self.value
+
+    lc = Lc()
+    daq = FakeDaq({"ai0": 0.25, "ai2": 3.0})                 # NI load 0.5 kgf, LVDT 10 mm
+    settings = _sampler_settings("serial", graph_force="daq")
+    settings["test"]["machine_profile"]["measurement"]["auto_zero"] = True
+    settings["test"]["machine_profile"]["measurement"]["auto_zero_max"] = 1.0
+    s = Sampler([lc, lc], daq, settings)
+    z = s.auto_zero("select", "T1")
+    assert z == {"zero": {"result": 0.5, "graph": 0.5}, "notes": []}
+    lc.value = 2.5
+    g = {}
+    load, stroke = s.read_once("select", g)[:2]
+    assert (load, stroke, g["load"], g["stroke"]) == (2.0, 10.0, 0.0, 10.0)   # stroke untouched
+    assert s.auto_zero("select", "T1") is None                                # once per test
+    lc.value = 1.7                                                            # next test: 1.7 is too much
+    z = s.auto_zero("select", "T2")
+    assert z["zero"]["result"] == 0.0 and "beyond +/-1" in z["notes"][0]
+    assert s.read_once("select")[0] == 1.7                                    # calibrated zero kept
+    settings["test"]["machine_profile"]["measurement"]["auto_zero"] = False
+    assert s.auto_zero("select", "T3") is None and s.read_once("select")[0] == 1.7

@@ -1124,6 +1124,11 @@ class PcController:
                              completion=self._completion())
                 if kind in ("pull", "push"):              # acquisition armed before the request
                     r.capture = self.sampler.start(r.axis, kind, r.test_id, len(r.strokes) + (kind == "pull"))
+                    z = getattr(r.capture, "zero", None)
+                    if z:
+                        self.log.log("ZERO", f"{pp.AXIS_NAME[r.axis]}: "
+                                     + ", ".join(f"{k} {v:+.3f}" for k, v in z["zero"].items()),
+                                     test=r.test_id, notes="; ".join(z["notes"]) or "-")
                 why = self._start_op(op, now)
                 if why:
                     self._fail_routine(r, f"{op.name} not started: {why}")

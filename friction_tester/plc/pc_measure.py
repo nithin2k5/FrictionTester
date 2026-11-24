@@ -22,6 +22,12 @@ SHIFT = Loadcell 02) and must be confirmed on the machine.
 start() begins a capture on its own thread before the stroke request is
 written; stop() ends it and returns [(t, load, stroke, raw_load, raw_stroke), ...].
 A failed read records None (invalid) - no other sensor is substituted.
+
+    auto_zero / auto_zero_max: before the first stroke of each test the load now (the
+    result load, and the NI graph load when graph_force = "daq") is read and subtracted
+    for the rest of that test. A reading beyond +/- auto_zero_max is not zeroed (something
+    rests on the loadcell) and the calibrated zero is kept; Capture.zero says what was done.
+    The LVDT stroke is never zeroed.
 """
 
 import threading
@@ -42,6 +48,7 @@ class Capture:
         self.last_error = None         # text of the last failed read (why samples are invalid)
         self.stop_event = threading.Event()
         self.thread = None
+        self.zero = None               # auto zero done when this capture started (first stroke of a test)
 
 
 class Sampler:
@@ -68,6 +75,8 @@ class Sampler:
         self._ni_live = None           # its latest block as {channel: mean volts} ({} = read failed)
         self._prep_thread = None       # prepare(): opens the NI card ahead of the first stroke
         self._ni_started = 0.0         # when the reader thread started
+        self._tare = {}                # axis -> {"result": load, "graph": load} subtracted this test
+        self._tare_test = {}           # axis -> test_id the tare was taken for
 
     @property
     def mcfg(self):
@@ -194,7 +203,8 @@ class Sampler:
         dt = 1.0 / float((self._daq_cfg or {}).get("sample_rate") or 1000.0)
 
         n = len(loads)
-        cap.graph.extend([(t - (n - 1 - i) * dt, daq_value(lo, v),
+        z = (self._tare.get(cap.axis) or {}).get("graph", 0.0)
+        cap.graph.extend([(t - (n - 1 - i) * dt, daq_value(lo, v) - z,
                            daq_value(st, strokes[i]) if i < len(strokes) else None)
                           for i, v in enumerate(loads)])
 
@@ -228,7 +238,39 @@ class Sampler:
                                 "unit": cal.get("unit", ""), "verified": bool(cal.get("verified"))},
                 "period_s": self.period}
 
-    def read_once(self, axis, graph=None):
+    def auto_zero(self, axis, test_id):
+        """Take the zero of `axis` for test `test_id` (once per test, before its first stroke).
+        Returns {"zero": {...}, "notes": [...]} when a zero was taken, else None."""
+        m = self.mcfg
+        if not m.get("auto_zero", True):
+            self._tare.pop(axis, None)
+            return None
+        if self._tare_test.get(axis) == test_id:
+            return None
+        self._tare_test[axis] = test_id
+        limit = float(m.get("auto_zero_max", 1.0) or 0.0)
+        g, notes = {}, []
+        try:
+            load = self.read_once(axis, g, tare=False)[0]
+        except Exception as exc:
+            load = None
+            notes.append(f"result: {exc}")
+        graph = g.get("load") if m.get("graph_force") == "daq" and not g.get("note") else None
+        zero = {"result": 0.0, "graph": 0.0}
+        for key, v in (("result", load), ("graph", graph)):
+            if key == "graph" and m.get("graph_force") != "daq":
+                continue
+            if v is None:
+                if not any(n.startswith(key) for n in notes):
+                    notes.append(f"{key}: no reading - not zeroed")
+            elif limit and abs(v) > limit:
+                notes.append(f"{key}: {v:.3f} is beyond +/-{limit:g} - not zeroed (load on the loadcell?)")
+            else:
+                zero[key] = v
+        self._tare[axis] = zero
+        return {"zero": zero, "notes": notes}
+
+    def read_once(self, axis, graph=None, tare=True):
         """(load, stroke, raw_load, raw_stroke) for the result. With graph_force = "daq"
         the graph load is the NI card's daq_force row (the result load stays the serial
         loadcell); `graph`, a dict, receives {"load", "stroke"} even if the result read fails,
@@ -283,6 +325,8 @@ class Sampler:
             if graph_daq:
                 row = (m.get("daq_force") or {}).get(axis, "")
                 graph["load"] = self._daq_value(row, block)[0]
+                if graph["load"] is not None and tare:
+                    graph["load"] -= (self._tare.get(axis) or {}).get("graph", 0.0)
                 if graph["load"] is None:      # why the NI card gave no graph load (shown on the graph)
                     graph["note"] = "NI card: " + (self.daq_error or (
                         "not ready yet (still opening)" if pending else
@@ -298,6 +342,8 @@ class Sampler:
             _sent, raw_load, value = lc.read()
         cal = (m.get("calibration") or {}).get(axis) or {}
         load = None if value is None else value * float(cal.get("scale", 1.0)) + float(cal.get("offset", 0.0))
+        if load is not None and tare:
+            load -= (self._tare.get(axis) or {}).get("result", 0.0)
         if graph is not None and graph["load"] is None:
             graph["load"] = load       # graph_force "result", or the NI card gave nothing: the result load
             if graph_daq and load is not None:
@@ -306,8 +352,9 @@ class Sampler:
 
     def start(self, axis, kind, test_id, stroke_no):
         cap = Capture(axis, kind, test_id, stroke_no)
-        self.captures[axis] = cap
         self.daq_error = None          # try the NI card again for this stroke
+        cap.zero = self.auto_zero(axis, test_id)     # before the reader starts and before the stroke
+        self.captures[axis] = cap
         cap.ni = self.daq is not None and bool(self._daq_names())
         if cap.ni:
             with self._ni_guard:
