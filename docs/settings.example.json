@@ -72,11 +72,10 @@
       "start_shift": "",
       "done_shift": ""
     },
-    "skip_scan": true,
-    "label_rule": {
-      "mode": "contains_part_number",
-      "select": "",
-      "shift": ""
+    "skip_scan": false,
+    "scan": {
+      "formats": ["{ALC}{MODEL}{TRACE}", "{ALC}{TRACE}", "{MODEL}{TRACE}"],
+      "unique_trace": true
     },
     "model_type": "",
     "part_number": "",

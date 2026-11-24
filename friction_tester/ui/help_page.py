@@ -46,10 +46,13 @@ CHAPTERS = [
                       "Loadcell 2 = SHIFT. Their readings are the test results."),
         ("NI card", "NI USB-6210. Loadcell and LVDT signals for the graph "
                     "(load against stroke)."),
+        ("Barcode scanner", "Types the cable label into the Scan Result box (ends with Enter). "
+                            "A test starts only from a scanned label."),
         ("Label printer", "Windows printer named FTM_PRINTER. Prints the model's PRN label "
-                          "for every OK part."),
-        ("Database", "MySQL: the models (TBL_MODEL_MASTER), every test result (TBL_TEST_RESULTS) "
-                     "and the user accounts (TBL_ADMIN, TBL_LOGIN_HISTORY)."),
+                          "for every OK part (AT: one per cable, MT: one)."),
+        ("Database", "MySQL: the models (TBL_MODEL_MASTER), every test result (TBL_TEST_RESULTS), "
+                     "every scanned traceability code (TBL_SCANS) and the user accounts (TBL_ADMIN, "
+                     "TBL_LOGIN_HISTORY)."),
     ]),
     ("h", "Pages"),
     ("kv", [
@@ -116,8 +119,9 @@ CHAPTERS = [
     ("kv", [
         ("Model", "The model name - the key of the model; it cannot be changed once saved."),
         ("Type", "AT (SELECT, then SHIFT) or MT (both cables together)."),
-        ("Part Number", "Scanned labels must contain it."),
-        ("Customer / ALC Code", "Part details; they can also be printed on the label."),
+        ("Part Number", "Printed on the label; it can also be part of the label format."),
+        ("Customer / ALC Code", "Part details for the label. A scanned label's ALC code must be "
+                                "this one."),
         ("PRN Template", "The label printed for every OK part. The list shows the .prn files in "
                          "the prn_templates folder; leave it blank for no label."),
     ]),
@@ -154,10 +158,12 @@ CHAPTERS = [
         "Set the production target if it is empty.",
         "Press RUN. If an axis is not at origin it is homed first - the message says "
         "\"Waiting for … to reach origin\" and the test starts by itself when both are home.",
-        "AT: the SELECT cable is tested. The step strip then says \"press RUN for the SHIFT "
-        "routine\" - press RUN again for the SHIFT cable.",
-        "When both cables are done the part is judged OK or NG, saved and counted. An OK part "
-        "prints its label on FTM_PRINTER (see Label Printing).",
+        "Scan the label (see Scanning Labels). AT: scan the SELECT cable's label - the SELECT "
+        "cable is tested. Then scan the SHIFT cable's label - the SHIFT cable is tested. If both "
+        "are OK, the SELECT and SHIFT labels print; if either fails, no label prints.",
+        "MT: scan the one label of the two cables - both are tested together, and when both are OK "
+        "one label prints for the part.",
+        "When both cables are done the part is judged OK or NG, saved and counted.",
         "Once the part is saved the results, graphs and labels clear by themselves - the console "
         "is ready for the next part of the same model. INCMP parts stay on screen so the reason "
         "can be read.",
@@ -201,8 +207,8 @@ CHAPTERS = [
                               "Stroke 22."),
         ("Mean", "The average of the three PULL / three PUSH values."),
         ("Max", "The largest of all six."),
-        ("OK", "All six values inside LOAD min-max (limits included)."),
-        ("NG", "At least one value outside the limits."),
+        ("OK", "Val (the mean of PULL 1-3 and PUSH 1-3) inside LOAD min-max (limits included)."),
+        ("NG", "Val outside the limits. A single value outside does not make NG on its own."),
         ("INCMP", "INCOMPLETE - no judgement: too few valid readings, a failed step, or a missing "
                   "limit. The reason is shown under the panel. Not counted."),
     ]),
@@ -240,10 +246,37 @@ CHAPTERS = [
     ]),
 ]),
 
+("Scanning Labels", [
+    ("p", "A test starts only from a scanned label. The label must belong to the loaded model, and "
+          "its traceability code must never have been tested before."),
+    ("kv", [
+        ("Label contents", "The model's ALC code and/or model number, then the traceability code. "
+                           "Labels with ALC code + model number, ALC code only, or model number only "
+                           "are all accepted."),
+        ("Wrong label", "The ALC code / model number on the label is not the loaded model's - the "
+                        "test does not start. Load the right model or scan the right cable."),
+        ("Label already tested", "The traceability code was scanned for a test before (OK, NG or "
+                                 "incomplete) - the test does not start. Every code is tested once."),
+        ("AT", "Two labels: the SELECT cable's and the SHIFT cable's, each with its own code."),
+        ("MT", "One label for both cables: one scan starts both."),
+        ("STOP", "A label scanned for a cable that never started testing is forgotten, so it can "
+                 "be scanned again."),
+    ]),
+    ("p", "Every accepted scan is stored in TBL_SCANS with the label, model, cable and the result. "
+          "Without the database a label cannot be checked, so the test does not start."),
+    ("h", "Label formats"),
+    ("p", "settings.json, test.scan.formats - the label layouts, tried in order: "
+          "{ALC}{MODEL}{TRACE}, {ALC}{TRACE}, {MODEL}{TRACE}. {ALC}, {MODEL} and {PART} must match "
+          "the loaded model; {TRACE} is the traceability code. A separator (space - _ ; : , | /) "
+          "between the parts is allowed. Other text in a format must be on the label as written, "
+          "e.g. {ALC}-{TRACE}. Put the longer formats first."),
+]),
+
 ("Label Printing", [
-    ("p", "When a part is judged OK, the PRN Template of the loaded model is sent to the Windows "
-          "printer FTM_PRINTER. NG and INCMP parts print nothing. Printing runs in the background "
-          "and never holds up the next part."),
+    ("p", "Labels print only when the whole part is OK - if either cable fails, no label prints. "
+          "AT: once SHIFT is done, two labels (SELECT, then SHIFT, each with its own traceability "
+          "code). MT: one label for the part. Nothing prints for NG or INCMP. The model's PRN Template is sent to the Windows printer "
+          "FTM_PRINTER in the background and never holds up the next test."),
     ("steps", [
         "Install the label printer in Windows and name it exactly FTM_PRINTER (another name can "
         "be set in settings.json, test.printer_name).",
@@ -259,6 +292,8 @@ CHAPTERS = [
         ("{PART_NUMBER}", "The model's part number."),
         ("{CUSTOMER} {ALC_CODE}", "From Model Information."),
         ("{LABEL} {LABEL_SELECT} {LABEL_SHIFT}", "The scanned label(s)."),
+        ("{TRACE} {TRACE_SELECT} {TRACE_SHIFT}", "The traceability code(s) from the scanned label."),
+        ("{CABLE}", "SELECT or SHIFT (AT), BOTH (MT)."),
         ("{VERDICT}", "OK."),
         ("{DATE} {TIME} {DATETIME}", "2026-11-12 / 14:05:09 / both."),
         ("{YYYYMMDD} {HHMMSS}", "20261112 / 140509."),
@@ -311,6 +346,9 @@ CHAPTERS = [
                                                "name, and the PRN file is in prn_templates."),
         ("no label printed: the model has no PRN Template", "Set the PRN Template in Model "
                                                              "Settings, then MODEL CHANGE."),
+        ("Wrong label", "The label is not the loaded model's - check the cable / the model."),
+        ("Label already tested", "This traceability code was tested before - use a new cable."),
+        ("the traceability check needs the database", "Check MySQL is running, then scan again."),
     ]),
 ]),
 ]

@@ -215,6 +215,7 @@ def init_database():
         _migrate_results(cur)
         cur.execute(ADMIN_SCHEMA)
         cur.execute(LOGIN_HISTORY_SCHEMA)
+        cur.execute(SCANS_SCHEMA)
 
 
 # ------------------------------------------------------------- test results
@@ -411,6 +412,76 @@ def insert_test_results(rows):
             if r.get("GRAPH"):
                 cur.execute(graph_sql, (cur.lastrowid, r["TR_PART_UID"], r.get("TR_STAGE"), r["GRAPH"]))
         return len(rows)
+
+
+# ------------------------------------------------------------- scanned labels
+# One row per traceability code ever scanned for a test. TS_TRACE is unique: a code
+# that is in the table was tested before (OK, NG or incomplete) and is refused. A row
+# is written when the scan is accepted (TS_RESULT "TESTING"), and its result when the
+# part ends; a scan whose cable never started testing (STOP first) is removed again.
+SCANS_TABLE = "TBL_SCANS"
+
+SCANS_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS {SCANS_TABLE} (
+        ID INT AUTO_INCREMENT PRIMARY KEY,
+        TS_TRACE VARCHAR(191) NOT NULL,
+        TS_LABEL VARCHAR(255) NOT NULL,
+        TS_MODEL VARCHAR(100),
+        TS_MODEL_TYPE VARCHAR(10),
+        TS_CABLE VARCHAR(10),
+        TS_ALC_CODE VARCHAR(100),
+        TS_PART_UID VARCHAR(40),
+        TS_RESULT VARCHAR(12) NOT NULL DEFAULT 'TESTING',
+        TS_SCANNED DATETIME NOT NULL,
+        TS_UPDATED TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_ts_trace (TS_TRACE),
+        KEY idx_ts_scanned (TS_SCANNED)
+    )
+"""
+
+
+class DuplicateTrace(Exception):
+    """The traceability code was scanned for a test before; .row is that scan."""
+
+    def __init__(self, trace, row):
+        self.trace, self.row = trace, row or {}
+        when = self.row.get("TS_SCANNED")
+        super().__init__(f"traceability code {trace} was already tested"
+                         + (f" on {when:%Y-%m-%d %H:%M}" if hasattr(when, "strftime") else "")
+                         + (f" ({self.row.get('TS_CABLE', '').upper()} {self.row.get('TS_RESULT')})"
+                            if self.row.get("TS_RESULT") else ""))
+
+
+def claim_trace(trace, label, model="", model_type="", cable="", alc=""):
+    """Record a scanned traceability code; raises DuplicateTrace if it is already there.
+    The unique key makes the check and the insert one step."""
+    import datetime
+    with cursor(commit=True, dictionary=True) as cur:
+        try:
+            cur.execute(f"INSERT INTO {SCANS_TABLE} (TS_TRACE, TS_LABEL, TS_MODEL, TS_MODEL_TYPE, TS_CABLE, "
+                        f"TS_ALC_CODE, TS_SCANNED) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (trace, label, model, model_type, cable, alc, datetime.datetime.now()))
+        except mysql.connector.IntegrityError:
+            cur.execute(f"SELECT * FROM {SCANS_TABLE} WHERE TS_TRACE = %s", (trace,))
+            raise DuplicateTrace(trace, cur.fetchone())
+
+
+def finish_trace(trace, part_uid, result):
+    with cursor(commit=True) as cur:
+        cur.execute(f"UPDATE {SCANS_TABLE} SET TS_PART_UID = %s, TS_RESULT = %s WHERE TS_TRACE = %s",
+                    (part_uid, result, trace))
+
+
+def release_trace(trace):
+    """Remove a scan whose cable was never tested (STOP before it started)."""
+    with cursor(commit=True) as cur:
+        cur.execute(f"DELETE FROM {SCANS_TABLE} WHERE TS_TRACE = %s AND TS_RESULT = 'TESTING'", (trace,))
+
+
+def list_scans(limit=500):
+    with cursor(dictionary=True) as cur:
+        cur.execute(f"SELECT * FROM {SCANS_TABLE} ORDER BY ID DESC LIMIT %s", (int(limit),))
+        return cur.fetchall()
 
 
 def _migrate_results(cur):

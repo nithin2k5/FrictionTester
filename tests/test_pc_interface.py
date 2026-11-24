@@ -700,7 +700,7 @@ def test_evaluation_rules_are_explicit():
     assert ok["verdict"] == "OK" and ok["pull"] == [6.0]
     signed = evaluate_axis(s, COND, dict(RULES, force_sign="signed"))
     assert signed["verdict"] == "NG" and signed["pull"] == [-6.0]
-    edge = [{"pull": [(i, 10.0, None) for i in range(3)], "push": [(i, 3.0, None) for i in range(3)]}]
+    edge = [{"pull": [(i, 10.0, None) for i in range(3)], "push": [(i, 10.0, None) for i in range(3)]}]   # Val 10
     assert evaluate_axis(edge, COND, RULES)["verdict"] == "OK"
     assert evaluate_axis(edge, COND, dict(RULES, limit_bounds="exclusive"))["verdict"] == "NG"
     pos = [{"pull": [(0, 2.0, 0.0), (1, 4.0, 10.0), (2, 6.0, 20.0)],
@@ -1653,3 +1653,41 @@ def test_graph_reaches_both_ends_of_the_stroke():
     assert curve["pull"][-1] == [11.0, 0.4]
     measured = curve["push"][2:-1]                     # without the joins at +11 and the closing point
     assert measured[-1] == [-11.0, -0.2] and measured[-2][0] > -11.0
+
+
+def test_the_verdict_judges_val_the_mean_of_pull_and_push_not_each_value():
+    def stroke(pull, push):
+        return [{"pull": [(i, pull, None) for i in range(3)], "push": [(i, push, None) for i in range(3)]}]
+    one_out = evaluate_axis(stroke(12.0, 4.0), COND, RULES)        # PULL 12 > 10, but Val 8
+    assert one_out["verdict"] == "OK" and one_out["val"] == 8.0 and one_out["max"] == 12.0
+    low = evaluate_axis(stroke(1.2, 0.4), COND, RULES)            # both near the minimum, Val 0.8 < 1
+    assert low["verdict"] == "NG" and low["problems"] == ["Val 0.800 outside 1.0..10.0 (inclusive)"]
+    high = evaluate_axis(stroke(11.0, 10.0), COND, RULES)         # Val 10.5 > 10
+    assert high["verdict"] == "NG" and "Val 10.500" in high["problems"][0]
+
+
+def test_scanned_traceability_codes_go_into_the_part_and_select_is_announced_for_its_label():
+    """AT: SELECT's label prints when SELECT ends (stage_done), before SHIFT is scanned;
+    each cable keeps its own traceability code. MT: one code for both cables."""
+    r = Rig()
+    r.confirm_params()
+    r.ctl.submit("run", dict(INFO, type="AT"))
+    r.step()
+    r.ctl.submit("scan", "select", "AB12TR-S1", "TR-S1")
+    r.until(lambda: r.ctl.flow == "at_scan_shift")
+    stage = [e[1] for e in r.events if e[0] == "stage_done"]
+    assert len(stage) == 1 and stage[0]["stage"] == "select" and stage[0]["verdict"] == "OK"
+    assert stage[0]["trace_select"] == "TR-S1" and stage[0]["label_select"] == "AB12TR-S1"
+    assert not r.parts()
+    r.ctl.submit("scan", "shift", "AB12TR-H1", "TR-H1")
+    r.until(lambda: r.ctl.flow == "idle")
+    part = r.parts()[0]
+    assert (part["trace_select"], part["trace_shift"]) == ("TR-S1", "TR-H1")
+    assert (part["label_select"], part["label_shift"]) == ("AB12TR-S1", "AB12TR-H1")
+    r.ctl.submit("run", dict(INFO, type="MT"))
+    r.step()
+    r.ctl.submit("scan", "select", "AB12TR-M1", "TR-M1")
+    r.until(lambda: len(r.parts()) == 2)
+    mt = r.parts()[1]
+    assert mt["trace_select"] == mt["trace_shift"] == "TR-M1"
+    assert len([e for e in r.events if e[0] == "stage_done"]) == 1          # MT: no SELECT-only label

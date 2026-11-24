@@ -74,7 +74,8 @@ MT needs `mt_parallel_verified`; results stay INCOMPLETE until `measurement.judg
 - **Next part**: once an OK / NG part is confirmed saved, the panels, graphs and scan boxes clear
   and the status asks for the next part of the same model; INCOMPLETE / ABORTED parts stay on
   screen so their reasons can be read.
-- **Labels**: `test.label_rule` = `contains_part_number` (default), `regex` per field, or `none`.
+- **Labels**: `test.scan.formats` (`{ALC}{MODEL}{TRACE}`, `{ALC}{TRACE}`, `{MODEL}{TRACE}`); the
+  traceability code must be new (`TBL_SCANS`, `test.scan.unique_trace`).
 - Log: `<Saved to>/plc_events_YYYYMMDD.log`.
 
 Settings from earlier versions are migrated on load (kept; changes listed under `"migrated"`).
@@ -165,11 +166,13 @@ Load a model with **Model Change** (its Type, MT or AT, comes from Model Setting
 - **MT** — scan **one** label → SELECT and SHIFT CABLE tests run **at the same time** → part
   complete when both finish (the label is recorded in both boxes).
 
-**Temporary — scanning is skipped** (`test.skip_scan = true`, the default for now): RUN starts the
-test straight away, with no label and no part-number check. MT: RUN → one cycle for both cables →
-part complete. AT: RUN → SELECT stage, then RUN again → SHIFT stage → part complete. The next part
-always waits for RUN; nothing starts by itself. Results are saved with an empty label. Set
-`"skip_scan": false` in `settings.json` (`test`) to bring the scan flow below back.
+A label is accepted only if it belongs to the loaded model (its ALC code and/or model number,
+`test.scan.formats`) and its **traceability code** was never tested before (`TBL_SCANS`; refused
+whatever the earlier result was). Labels print only when both cables are OK: AT prints two (SELECT,
+SHIFT - each cable has its own label and code) after the SHIFT test; MT one label for both cables.
+
+Bench use only: `test.skip_scan = true` starts tests from RUN with no label (MT: RUN → both; AT:
+RUN → SELECT, RUN again → SHIFT); results are saved with an empty label.
 
 After a part completes the flow waits for the next part's first scan. Scans in the wrong box or
 while a test is running are refused with a message. **STOP** cancels the flow (and pulses

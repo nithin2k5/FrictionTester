@@ -235,8 +235,11 @@ recalculates D02018 after the write (the simulator does; otherwise the axis woul
 * MT: RUN → one label (copied to both fields) → both routines together, each tracked on its own →
   one part. **Refused unless `mt_parallel_verified`** (never silently made sequential).
 * Refused: wrong field, scans while testing or before RUN, invalid type, RUN while active, model change
-  during a part. Label check `test.label_rule`: `contains_part_number` (existing), `regex` per field, or
-  `none` (status says no rule is defined).
+  during a part. Label check (`friction_tester/label_scan.py`, `test.scan.formats`): the label must hold
+  the loaded model's ALC code and/or model number plus a traceability code; the code must not be in
+  `TBL_SCANS` (claimed with a unique key before the stage starts, result stored when the part ends,
+  removed again if its cable never started). Labels print at `part_done` only for an OK part:
+  AT two (SELECT, SHIFT), MT one. If either cable fails, nothing prints.
 
 ## 7. Measurement and results — implemented, simulated with deterministic data
 

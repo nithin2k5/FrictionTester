@@ -214,7 +214,7 @@ def test_only_home_and_move_bits_are_writable():
 
 def test_settings_migrate_pc_interface_to_kd():
     new = migrate({"settings_version": 4, "test": {"integration": {"mode": "pc_interface"}}})
-    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 10
+    assert new["test"]["integration"]["mode"] == "kd" and new["settings_version"] == 11
     other = migrate({"settings_version": 4, "test": {"integration": {"mode": "shared_cycle"}}})
     assert other["test"]["integration"]["mode"] == "shared_cycle"
 
@@ -294,7 +294,7 @@ def test_migration_scales_the_ni_load_cells_10_kgf_per_volt():
         {"name": "LVDT 1", "scale": 1.0}]}}
     new = migrate(old)
     assert [s["scale"] for s in new["daq"]["sensors"]] == [10.0, 4.9, 10.0]   # a set scale is kept
-    assert new["settings_version"] == 10 and "Loadcell 1" in new["migrated"][0] and "LVDT 1" in new["migrated"][1]
+    assert new["settings_version"] == 11 and "Loadcell 1" in new["migrated"][0] and "LVDT 1" in new["migrated"][1]
 
 
 def test_migration_scales_the_lvdts_10_mm_per_volt():
@@ -303,7 +303,7 @@ def test_migration_scales_the_lvdts_10_mm_per_volt():
         {"name": "Loadcell 1", "scale": 1.0}, {"name": "LVDT 1", "scale": 1.0}, {"name": "LVDT 2", "scale": 12.5}]}}
     new = migrate(old)
     assert [s["scale"] for s in new["daq"]["sensors"]] == [1.0, 10.0, 12.5]   # loadcell and a set LVDT scale kept
-    assert new["settings_version"] == 10 and new["migrated"] == ["daq LVDT 1: scale 1 -> 10 mm/V (LVDT 10 V over 100 mm)"]
+    assert new["settings_version"] == 11 and new["migrated"] == ["daq LVDT 1: scale 1 -> 10 mm/V (LVDT 10 V over 100 mm)"]
     fresh = {s["name"]: s["scale"] for s in load_settings(path="does-not-exist.json")["daq"]["sensors"]}
     assert fresh["LVDT 1"] == fresh["LVDT 2"] == 10.0
 
@@ -317,4 +317,4 @@ def test_ni_offset_moves_from_volts_to_the_row_unit_with_the_same_reading():
     lc, lv = new["daq"]["sensors"]
     assert "offset_v" not in lc and lc["offset"] == round(4.9944 * 40.4, 6) and lv["offset"] == 0.0
     assert abs(daq_value(lc, 4.9944)) < 1e-9 and abs(daq_value(lc, 4.8955) - 3.99556) < 1e-4
-    assert new["settings_version"] == 10 and new["migrated"] == ["daq offset now in the row's unit: Loadcell 1 4.9944 V -> 201.774 kgf"]
+    assert new["settings_version"] == 11 and new["migrated"] == ["daq offset now in the row's unit: Loadcell 1 4.9944 V -> 201.774 kgf"]

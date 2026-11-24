@@ -11,7 +11,8 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
 # 7 = NI card load cells scaled 10 kgf/V (measured on the machine against the serial indicator).
 # 9 = drive lamps (Servo / Drive OK / Origin) re-read from the drive that moves each cable.
-SETTINGS_VERSION = 10
+# 11 = a test starts only from a scanned label (skip_scan off), traceability codes unique.
+SETTINGS_VERSION = 11
 
 LOADCELL_KGF_PER_V = 10.0      # indicator analogue output on the NI card: ~0.197 V at 1.97 kgf
 LVDT_MM_PER_V = 10.0           # LVDT output on the NI card: 10 V over 100 mm
@@ -82,15 +83,17 @@ DEFAULT_SETTINGS = {
             "start_select": "", "done_select": "",
             "start_shift": "", "done_shift": "",
         },
-        # TEMPORARY: true = RUN starts the test without scanning labels (no
-        # label / part-number check; AT: press RUN again for the SHIFT stage).
-        # Set false to bring back the scan flow.
-        "skip_scan": True,
-        # Scanned-label check: "contains_part_number" (label must contain the model's part
-        # number), "regex" (per-field patterns below) or "none" (no format rule defined).
-        "label_rule": {"mode": "contains_part_number", "select": "", "shift": ""},
+        # true = RUN starts the test without scanning labels (bench use only: no label
+        # check, no traceability; AT: press RUN again for the SHIFT stage).
+        "skip_scan": False,
+        # Scanned labels (friction_tester/label_scan.py). formats: the label layouts, tried in
+        # order - {ALC} / {MODEL} / {PART} must match the loaded model, {TRACE} is the
+        # traceability code, which must never have been tested before (TBL_SCANS).
+        # unique_trace false = skip that check (no database needed for it).
+        "scan": {"formats": ["{ALC}{MODEL}{TRACE}", "{ALC}{TRACE}", "{MODEL}{TRACE}"],
+                 "unique_trace": True},
         "model_type": "",          # MT or AT of the loaded model (set by Model Change)
-        "part_number": "",         # part number of the loaded model; scanned labels must contain it
+        "part_number": "",         # part number of the loaded model ({PART} in a label format)
         # Label printing: an OK part prints the loaded model's PRN Template (Model Settings)
         # as a RAW job on this Windows printer. Blank template = no label.
         "printer_name": "FTM_PRINTER",
@@ -406,6 +409,14 @@ def migrate(loaded):
         if moved:
             notes.append("daq offset now in the row's unit: " + ", ".join(moved))
         loaded["settings_version"] = 10
+    if version < 11:
+        t = loaded.get("test")
+        if isinstance(t, dict):
+            if t.get("skip_scan"):
+                notes.append("test.skip_scan turned off: a test now starts only from a scanned label")
+            t["skip_scan"] = False
+            t.pop("label_rule", None)        # replaced by test.scan.formats
+        loaded["settings_version"] = 11
     if notes:
         loaded["migrated"] = notes
     return loaded

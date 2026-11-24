@@ -57,14 +57,13 @@ SCREENSHOT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os
 
 
 def evaluate(pulls, pushes, load_min, load_max):
-    """Means and the OK/NG judgement: every |reading| must lie in [min, max]."""
+    """Means and the OK/NG judgement: Val, the mean of all |readings|, must lie in [min, max]."""
     values = [abs(v) for v in list(pulls) + list(pushes)]
     pull_mean = sum(pulls) / len(pulls) if pulls else 0.0
     push_mean = sum(pushes) / len(pushes) if pushes else 0.0
-    readings = list(pulls) + list(pushes)
-    ok = bool(values) and all(load_min <= v <= load_max for v in values)
-    return {"pull_mean": pull_mean, "push_mean": push_mean,
-            "mean": sum(readings) / len(readings) if readings else 0.0,
+    mean = sum(values) / len(values) if values else 0.0
+    ok = bool(values) and load_min <= mean <= load_max
+    return {"pull_mean": pull_mean, "push_mean": push_mean, "mean": mean,
             "max": max(values) if values else 0.0, "ok": ok}
 
 
@@ -571,7 +570,8 @@ class CablePanel(tk.Frame):
             both += present
             self.res[f"{d}_mean"].config(text=fmt(sum(present) / len(present)) if present else NO_DATA)
         self.res["max"].config(text=fmt(res.get("max")))
-        self.res["val"].config(text=fmt(sum(both) / len(both)) if both else NO_DATA)
+        val = res.get("val", sum(both) / len(both) if both else None)   # the value the verdict judged
+        self.res["val"].config(text=fmt(val))
         verdict = res.get("verdict") or ("OK" if res.get("ok") else "NG")
         self.judge.config(text=verdict if verdict != "INCOMPLETE" else "INCMP",
                           fg={"OK": theme.PASS, "NG": theme.FAIL}.get(verdict, theme.BUSY))
@@ -646,6 +646,8 @@ class TestConsolePage(tk.Frame):
         self.counters = settings["test"]["counters"]
         self._roll_day()
         # Test flow state (see start_flow / on_scan)
+        self._claims = {}            # cable ("select" / "shift" / "both") -> traceability code in TBL_SCANS
+        self._scan_busy = False      # a label's traceability code is being checked
         self._flow = "idle"
         self._pending = set()            # cables whose test is still running
         self._stop_event = threading.Event()
@@ -1028,8 +1030,21 @@ class TestConsolePage(tk.Frame):
                          theme.PASS if record["verdict"] == "OK" else theme.FAIL, 8)
 
     def _pc_part_done(self, record):
-        """A finalized part: one CSV line, then the database (counters follow the confirmed save)."""
-        self._print_label(record)
+        """A finalized part: its label(s), one CSV line, then the database (counters follow
+        the confirmed save). Labels only for an OK part - if either cable fails, none.
+        AT: one label per cable (SELECT, then SHIFT); MT: one label for both cables."""
+        self._finish_scans(record)
+        if record.get("type") == "AT":
+            if record.get("verdict") == "OK":
+                for cable in ("select", "shift"):
+                    self._print_label({"part_id": record["part_id"], "verdict": "OK", "cable": cable.upper(),
+                                       "model": record["model"], "type": record["type"],
+                                       "part_number": record.get("part_number", ""),
+                                       f"label_{cable}": record.get(f"label_{cable}", ""),
+                                       f"trace_{cable}": record.get(f"trace_{cable}", "")},
+                                      what=f"Part OK ({cable.upper()} label)")
+        else:
+            self._print_label(dict(record, cable="BOTH"))
         try:
             self._append_result_row(record)
         except Exception as exc:
@@ -1148,6 +1163,7 @@ class TestConsolePage(tk.Frame):
 
     def record_part(self, record):
         """One confirmed part: production counters once, and one row in the Saved-to folder."""
+        self._finish_scans(record)
         self._print_label(record)
         self._count_part(record)
         try:
@@ -1156,8 +1172,9 @@ class TestConsolePage(tk.Frame):
             self._set_status(f"Part counted, but the result file could not be written: {exc}", theme.FAIL, 10)
         self._save_result_rows(record)
 
-    def _print_label(self, record):
-        """An OK part: print the loaded model's PRN template on the label printer (worker thread)."""
+    def _print_label(self, record, what="Part OK"):
+        """An OK part / cable: print the loaded model's PRN template on the label printer
+        (worker thread). `what` names it in the status line."""
         if record.get("verdict") != "OK":
             return
         from .. import label_printer
@@ -1166,7 +1183,7 @@ class TestConsolePage(tk.Frame):
         template = (t.get("prn_template") or "").strip()
         printer = (t.get("printer_name") or "").strip() or label_printer.DEFAULT_PRINTER
         if not template:
-            self._set_status("Part OK - no label printed: the model has no PRN Template (Model Settings)",
+            self._set_status(f"{what} - no label printed: the model has no PRN Template (Model Settings)",
                              theme.FAIL, 10)
             return
         record, info = copy.deepcopy(record), dict(t.get("model_info") or {})
@@ -1183,11 +1200,13 @@ class TestConsolePage(tk.Frame):
         def done(err):
             log = getattr(self, "pc_log", None)
             if log is not None:
-                log.log("LABEL", record.get("part_id", "-"), printer=printer, template=template,
+                log.log("LABEL", record.get("part_id", "-"), cable=record.get("cable", "-"),
+                        trace=record.get("trace_select") or record.get("trace_shift") or "-",
+                        printer=printer, template=template,
                         result="printed" if err is None else f"failed: {err}")
             self._label_error = None if err is None else f"label NOT printed on {printer}: {err}"
             if err is not None:
-                self._set_status(f"Part OK - {self._label_error}", theme.FAIL, 15)
+                self._set_status(f"{what} - {self._label_error}", theme.FAIL, 15)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1863,28 +1882,119 @@ class TestConsolePage(tk.Frame):
         if model:
             self.model_entry.insert(0, model)
 
-    def _label_matches_part(self, label, key="select"):
-        """Scanned-label check per test.label_rule:
-        contains_part_number - the label contains the model's part number (spaces/hyphens ignored)
-        regex                - the label matches the pattern set for that field
-        none                 - no format rule defined (accepted, and the status says so)"""
-        import re
-        rule = self.settings["test"].get("label_rule") or {"mode": "contains_part_number"}
-        mode = rule.get("mode", "contains_part_number")
-        if mode == "none":
-            self._set_status("No label format rule defined (test.label_rule) - label accepted unchecked",
-                             theme.BUSY, 4)
-            return True
-        if mode == "regex":
-            pattern = (rule.get(key) or "").strip()
-            if not pattern:
-                self._set_status(f"No label pattern defined for {key.upper()} (test.label_rule.{key})",
-                                 theme.BUSY, 4)
-                return True
-            return re.fullmatch(pattern, label) is not None
-        norm = lambda x: "".join(ch for ch in x.upper() if ch.isalnum())
-        part = self.settings["test"].get("part_number", "")
-        return bool(part) and norm(part) in norm(label)
+    def _parse_label(self, label):
+        """Split a scanned label per test.scan.formats against the loaded model.
+        Returns label_scan.parse's dict; raises label_scan.ScanError."""
+        from .. import label_scan
+        t = self.settings["test"]
+        info = t.get("model_info") or {}
+        formats = (t.get("scan") or {}).get("formats") or label_scan.DEFAULT_FORMATS
+        return label_scan.parse(label, formats, alc=info.get("MM_ALC_CODE", ""),
+                                model=t["select"].get("model") or info.get("MM_MODEL", ""),
+                                part=t.get("part_number", ""))
+
+    def _claim_scan(self, key, label, parsed):
+        """Record the traceability code in TBL_SCANS (worker thread); the test starts only
+        once the database confirms it was never tested before."""
+        from .. import db
+        t = self.settings["test"]
+        cable = "both" if self._flow == "mt_scan" else key
+        trace, flow_at_scan = parsed["trace"], self._flow
+        args = (trace, label, t["select"].get("model") or "", t.get("model_type", ""), cable,
+                parsed.get("alc", ""))
+        result = {}
+
+        def worker():
+            try:
+                if not getattr(self, "_scan_db_ready", False):
+                    db.init_database()
+                    self._scan_db_ready = True
+                db.claim_trace(*args)
+                result["error"] = None
+            except Exception as exc:
+                result["error"] = exc
+
+        def collect():
+            if not self._alive:
+                return
+            if "error" not in result:
+                self.after(50, collect)
+                return
+            self._scan_busy = False
+            err = result["error"]
+            if err is None:
+                if self._flow != flow_at_scan:       # STOP while the database was asked
+                    self._release_scans({cable: trace})
+                    self.scan_entries[key].delete(0, "end")
+                    return
+                self._claims[cable] = trace
+                self._log_scan(key, label, trace, "accepted")
+                self._dispatch_scan(key, label, trace)
+                return
+            self.scan_entries[key].delete(0, "end")
+            if isinstance(err, db.DuplicateTrace):
+                self._log_scan(key, label, trace, "duplicate")
+                messagebox.showerror("Label already tested",
+                                     "This label's traceability code was tested before - the test is "
+                                     f"not started.\n\nTraceability code: {trace}\n{err}", parent=self)
+                self._set_status(f"Label refused: {err}", theme.FAIL, 8)
+            else:
+                self._log_scan(key, label, trace, f"not checked: {err}")
+                self._set_status(f"Label not accepted: the traceability check needs the database ({err})",
+                                 theme.FAIL, 10)
+
+        self._scan_busy = True
+        self._set_status(f"Checking traceability code {trace}…", theme.UPDATE)
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(50, collect)
+
+    def _log_scan(self, key, label, trace, result):
+        log = getattr(self, "pc_log", None)
+        if log is not None:
+            log.log("SCAN", key.upper(), label=label, trace=trace, result=result)
+
+    def _finish_scans(self, record):
+        """The part ended: store each scanned code's result; remove the codes of cables that
+        never started testing (they were not tested, so they may be scanned again)."""
+        claims, self._claims = dict(self._claims), {}
+        if not claims:
+            return
+        stages = {st["stage"]: st["verdict"] for st in record.get("stages", [])}
+        done, unused = [], {}
+        for cable, trace in claims.items():
+            if cable == "both" and stages:
+                done.append((trace, record["verdict"]))
+            elif cable in stages:
+                done.append((trace, stages[cable]))
+            else:
+                unused[cable] = trace
+        part_uid = record.get("part_id", "")
+
+        def worker():
+            from .. import db
+            for trace, verdict in done:
+                try:
+                    db.finish_trace(trace, part_uid, verdict)
+                except Exception:
+                    _ui.exception(f"scan result for {trace} not stored")
+
+        if done:
+            threading.Thread(target=worker, daemon=True).start()
+        self._release_scans(unused)
+
+    def _release_scans(self, claims):
+        if not claims:
+            return
+
+        def worker():
+            from .. import db
+            for trace in claims.values():
+                try:
+                    db.release_trace(trace)
+                except Exception:
+                    _ui.exception(f"untested scan {trace} not removed")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ------------------------------------------------------- test flow
     # AT: scan SELECT label -> SELECT test -> scan SHIFT label -> SHIFT test.
@@ -1993,10 +2103,6 @@ class TestConsolePage(tk.Frame):
                 messagebox.showerror("Test Condition", str(exc), parent=self)
                 self._set_status(f"RUN blocked: {exc}", theme.FAIL, hold=6)
                 return
-        if self._flow == "idle" and not self._skip_scan() and not self.settings["test"].get("part_number"):
-            messagebox.showwarning("Part not set", "The loaded model has no Part Number.\n\n"
-                                   "Set it in Model Settings, then load the model again.", parent=self)
-            return
         if self.shared:
             t = self.settings["test"]
             if self.flow.run(t["select"].get("model"), t.get("model_type", ""), t.get("part_number", "")):
@@ -2073,27 +2179,46 @@ class TestConsolePage(tk.Frame):
             self.plc_pulse("test_stop", "Test stop")
 
     def on_scan(self, key):
-        """A label was scanned (or typed + Enter) into the SELECT or SHIFT box."""
+        """A label was scanned (or typed + Enter) into the SELECT or SHIFT box. The test
+        starts only from a label that fits the loaded model (test.scan.formats) and whose
+        traceability code was never tested before (TBL_SCANS)."""
+        from ..label_scan import ScanError
         label = self.scan_entries[key].get().strip()
         if not label:
             return
         _ui.info(f"scan {key.upper()}: {label!r}")
-        if self._flow in ("at_scan_select", "at_scan_shift", "mt_scan") and not self._label_matches_part(label, key):
-            part = self.settings["test"].get("part_number", "") or "(none set)"
-            messagebox.showerror("Wrong label",
-                                 f"The scanned label does not match the loaded part.\n\n"
-                                 f"Expected part: {part}\nScanned: {label}", parent=self)
-            self.scan_entries[key].delete(0, "end")
-            self._set_status(f"Label rejected: expected part {part}", theme.FAIL, hold=6)
+        expect = {"at_scan_select": "select", "at_scan_shift": "shift", "mt_scan": key}.get(self._flow)
+        if expect != key or self._skip_scan():
+            self._dispatch_scan(key, label, "")      # not expected here: the flow says why
             return
+        if self._scan_busy:
+            self._set_status("Still checking the last label - wait a moment", theme.BUSY)
+            return
+        try:
+            parsed = self._parse_label(label)
+        except ScanError as exc:
+            self._log_scan(key, label, "-", f"rejected: {exc}")
+            messagebox.showerror("Wrong label", "The scanned label is not accepted - the test is not "
+                                 f"started.\n\nScanned: {label}\n{exc}", parent=self)
+            self.scan_entries[key].delete(0, "end")
+            self._set_status(f"Label rejected: {exc}", theme.FAIL, hold=6)
+            return
+        if (self.settings["test"].get("scan") or {}).get("unique_trace", True):
+            self._claim_scan(key, label, parsed)
+        else:
+            self._log_scan(key, label, parsed["trace"], "accepted (uniqueness not checked)")
+            self._dispatch_scan(key, label, parsed["trace"])
+
+    def _dispatch_scan(self, key, label, trace):
+        """Hand a label to the part flow."""
+        if self._flow == "mt_scan":
+            for e in self.scan_entries.values():   # MT: one label for both cables
+                if e.get().strip() != label:
+                    e.delete(0, "end")
+                    e.insert(0, label)
         if self.shared or self.pc:
-            if self._flow == "mt_scan":
-                for e in self.scan_entries.values():
-                    if e.get().strip() != label:
-                        e.delete(0, "end")
-                        e.insert(0, label)
             if self.pc:
-                self.ctl.submit("scan", key, label)
+                self.ctl.submit("scan", key, label, trace)
             else:
                 self.flow.scan(key, label)
             return
@@ -2105,11 +2230,6 @@ class TestConsolePage(tk.Frame):
             self._set_flow("at_run_shift")
             self._start_cable_tests([1])
         elif state == "mt_scan":
-            # MT: one label for the part; it is recorded against both cables.
-            for e in self.scan_entries.values():
-                if e.get().strip() != label:
-                    e.delete(0, "end")
-                    e.insert(0, label)
             self._set_flow("mt_run")
             self._start_cable_tests([0, 1])
         elif state == "idle":

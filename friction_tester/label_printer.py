@@ -6,6 +6,8 @@ placeholders are replaced if the template contains them (others are left as is):
 
     {MODEL} {TYPE} {PART_NUMBER} {CUSTOMER} {ALC_CODE}
     {LABEL} {LABEL_SELECT} {LABEL_SHIFT} {VERDICT}
+    {TRACE} {TRACE_SELECT} {TRACE_SHIFT} (traceability code from the scanned label)
+    {CABLE} (SELECT / SHIFT for an AT cable's label, BOTH for an MT part's one label)
     {DATE} (YYYY-MM-DD) {TIME} (HH:MM:SS) {DATETIME} {YYYYMMDD} {HHMMSS}
 """
 
@@ -25,6 +27,7 @@ def fields(record, model_row=None):
     now = datetime.datetime.now()
     s = lambda v: "" if v is None else str(v).strip()
     label_select, label_shift = s(record.get("label_select")), s(record.get("label_shift"))
+    trace_select, trace_shift = s(record.get("trace_select")), s(record.get("trace_shift"))
     return {
         "MODEL": s(record.get("model") or row.get("MM_MODEL")),
         "TYPE": s(record.get("type") or row.get("MM_TYPE")),
@@ -33,6 +36,9 @@ def fields(record, model_row=None):
         "ALC_CODE": s(row.get("MM_ALC_CODE")),
         "LABEL": label_select or label_shift,
         "LABEL_SELECT": label_select, "LABEL_SHIFT": label_shift,
+        "TRACE": trace_select or trace_shift,
+        "TRACE_SELECT": trace_select, "TRACE_SHIFT": trace_shift,
+        "CABLE": s(record.get("cable")),
         "VERDICT": s(record.get("verdict")),
         "DATE": f"{now:%Y-%m-%d}", "TIME": f"{now:%H:%M:%S}", "DATETIME": f"{now:%Y-%m-%d %H:%M:%S}",
         "YYYYMMDD": f"{now:%Y%m%d}", "HHMMSS": f"{now:%H%M%S}",

@@ -269,8 +269,10 @@ def evaluate_axis(strokes, cond, mcfg):
       force_sign:   "absolute" (compare |load|) or "signed" (compare load as delivered)
       limit_bounds: "inclusive" (min <= v <= max) or "exclusive" (min < v < max)
       min_samples:  valid samples needed per stroke direction
-    Verdict: OK, NG (a value outside the limits), or INCOMPLETE (rule not
-    configured, limits missing, too few or invalid samples, position not covered).
+    Val = the mean of all PULL and PUSH values (after force_sign). The verdict judges Val
+    alone: OK when Val is within the LOAD limits, NG when it is outside, or INCOMPLETE
+    (rule not configured, limits missing, too few or invalid samples, position not
+    covered - every value is needed for Val).
     """
     judge, sign, bounds = mcfg.get("judge") or "", mcfg.get("force_sign") or "", mcfg.get("limit_bounds") or ""
     min_n = int(mcfg.get("min_samples", 3) or 1)
@@ -334,15 +336,15 @@ def evaluate_axis(strokes, cond, mcfg):
     for d in values:
         for i, v in enumerate(values[d]):
             tag = f"{d.upper()}{i + 1 if len(values[d]) > 1 else ''}"
-            if v is None:
-                if not incomplete:
-                    incomplete.append(f"{tag}: no value")
-            elif lo is not None and hi is not None and bounds:
-                inside = lo <= v <= hi if bounds == "inclusive" else lo < v < hi
-                if not inside:
-                    ng.append(f"{tag} {v:.3f} outside {lo}..{hi} ({bounds})")
-    verdict = "INCOMPLETE" if incomplete else ("NG" if ng else "OK")
+            if v is None and not incomplete:
+                incomplete.append(f"{tag}: no value")
     all_vals = [v for d in values for v in values[d] if v is not None]
+    val = sum(all_vals) / len(all_vals) if all_vals else None
+    if not incomplete and val is not None and lo is not None and hi is not None and bounds:
+        inside = lo <= val <= hi if bounds == "inclusive" else lo < val < hi
+        if not inside:
+            ng.append(f"Val {val:.3f} outside {lo}..{hi} ({bounds})")
+    verdict = "INCOMPLETE" if incomplete else ("NG" if ng else "OK")
     graph = {}
     for d in ("pull", "push"):
         pts = valid(strokes[-1].get(d)) if strokes else []
@@ -354,6 +356,7 @@ def evaluate_axis(strokes, cond, mcfg):
         "judge": judge, "positions": positions, "stroke_source": stroke_source, "force_sign": sign, "limit_bounds": bounds, "min_samples": min_n,
         "pull": values["pull"], "push": values["push"],
         "max": max(all_vals, key=abs, default=None),
+        "val": val,                    # mean of the PULL and PUSH values: what the verdict judges
         "sample_counts": {d: sum(len(valid(s.get(d))) for s in strokes) for d in ("pull", "push")},
         "invalid_counts": {d: sum(len(s.get(d) or []) - len(valid(s.get(d))) for s in strokes)
                            for d in ("pull", "push")},
@@ -838,7 +841,7 @@ class PcController:
         elif kind == "run":
             self._cmd_run(cmd[1], now)
         elif kind == "scan":
-            self._cmd_scan(cmd[1], cmd[2], now)
+            self._cmd_scan(cmd[1], cmd[2], now, cmd[3] if len(cmd) > 3 else "")
         elif kind == "stop":
             self._cmd_stop(now)
         elif kind in ("home", "alarm_reset"):
@@ -1101,7 +1104,7 @@ class PcController:
         self._seq += 1
         frozen = dict(info, params=list(self.params["values"]), measurement=dict(self.cfg.get("measurement") or {}))
         self.part = {"id": f"P{self._seq:05d}-{datetime.datetime.now():%Y%m%d%H%M%S}", "info": frozen,
-                     "labels": {}, "results": {}, "failed": {}, "evidence": {}, "acq": {},
+                     "labels": {}, "traces": {}, "results": {}, "failed": {}, "evidence": {}, "acq": {},
                      "t0": now, "started": datetime.datetime.now().isoformat(timespec="seconds")}
         self.stop_state = ""
         self.log.log("PART", "armed", part=self.part["id"], model=info["model"], type=info["type"])
@@ -1115,16 +1118,18 @@ class PcController:
             self._msg(f"{info['model']} ({info['type']}): scan the "
                       f"{'label' if info['type'] == 'MT' else 'SELECT label'}", "pass")
 
-    def _cmd_scan(self, box, label, now):
+    def _cmd_scan(self, box, label, now, trace=""):
+        """A checked label (the UI parsed it and made sure its traceability code is new)."""
         s = self.flow
         if s == "at_scan_select" and box == "select":
-            self.part["labels"]["select"] = label
+            self.part["labels"]["select"], self.part["traces"]["select"] = label, trace
             self._start_stage(["select"], "at_run_select", now)
         elif s == "at_scan_shift" and box == "shift":
-            self.part["labels"]["shift"] = label
+            self.part["labels"]["shift"], self.part["traces"]["shift"] = label, trace
             self._start_stage(["shift"], "at_run_shift", now)
-        elif s == "mt_scan":
+        elif s == "mt_scan":                   # MT: one label for both cables
             self.part["labels"] = {"select": label, "shift": label}
+            self.part["traces"] = {"select": trace, "shift": trace}
             self._start_stage(["select", "shift"], "mt_run", now)
         elif s == "idle":
             self._msg("Scan refused: press RUN first", "busy")
@@ -1263,6 +1268,7 @@ class PcController:
             if res["verdict"] == "INCOMPLETE":
                 self._finalize("INCOMPLETE", [f"SELECT: {p}" for p in res["problems"]])
                 return
+            self._emit("stage_done", self._stage_record("select", res))
             self._set_flow("at_scan_shift")
             nxt = "press RUN for the SHIFT routine" if self.skip_scan else "scan the SHIFT label"
             self._msg(f"SELECT {res['verdict']} - {nxt}", "pass" if res["ok"] else "fail")
@@ -1289,6 +1295,14 @@ class PcController:
         self._msg(f"Part {verdict} - logging and resetting for the next test in {hold:g} s",
                   "pass" if verdict == "OK" else "fail")
 
+    def _stage_record(self, cable, res):
+        """One finished AT cable (SELECT), announced before the SHIFT scan. Its label is not
+        printed yet: an AT part's labels print only when both cables are OK."""
+        part, info = self.part, self.part["info"]
+        return {"part_id": part["id"], "stage": cable, "verdict": res["verdict"],
+                "model": info["model"], "type": info["type"], "part_number": info.get("part_number", ""),
+                f"label_{cable}": part["labels"].get(cable, ""), f"trace_{cable}": part["traces"].get(cable, "")}
+
     def _finalize(self, verdict, reasons):
         """End the active part exactly once."""
         part, self.part = self.part, None
@@ -1308,6 +1322,8 @@ class PcController:
             "time": datetime.datetime.now().isoformat(timespec="seconds"), "started": part["started"],
             "model": info["model"], "type": info["type"], "part_number": info.get("part_number", ""),
             "label_select": part["labels"].get("select", ""), "label_shift": part["labels"].get("shift", ""),
+            "trace_select": part.get("traces", {}).get("select", ""),
+            "trace_shift": part.get("traces", {}).get("shift", ""),
             "verdict": verdict, "counted": counted, "reasons": reasons,
             "verdict_basis": "app judgement of measured loads per cable (machine_profile.measurement)",
             "stages": stages, "cables": [s["stage"] for s in stages if s["verdict"] in ("OK", "NG")],
