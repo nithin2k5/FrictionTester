@@ -1240,7 +1240,7 @@ def test_graph_centres_the_lvdt_stroke_on_the_stroke_condition(monkeypatch):
         push = Capture("select", "push", "t", 1)
         push.graph += [(11.0, -0.3, 62.0), (11.2, -0.3, 40.0)]
         panel.draw_capture(push)
-        assert panel.plot.series["PUSH"]["x"] == [11.0, -11.0]
+        assert panel.plot.series["PUSH"]["x"] == [11.0, 11.0, -11.0]          # starts at the PULL end
         pull2 = Capture("select", "pull", "t", 2)                    # LVDT wired the other way round
         pull2.graph += [(20.0, 0.0, 62.0), (20.2, 0.4, 51.0)]
         panel.draw_capture(pull2)
@@ -1434,9 +1434,10 @@ def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
     pull = [(i * 0.01, 0.40, 40.0 + i * 0.01) for i in range(2200)]
     push = [(i * 0.01, -0.20, 62.0 - i * 0.01) for i in range(2200)]
     curve = graph_curve(pull, push, 22.0)
-    assert 32 <= len(curve["pull"]) <= 35 and 32 <= len(curve["push"]) <= 35
+    assert 32 <= len(curve["pull"]) <= 35 and 32 <= len(curve["push"]) <= 36
     assert abs(curve["pull"][0][0] + 11) < 1 and abs(curve["pull"][-1][0] - 11) < 1
-    assert abs(curve["push"][0][0] - 11) < 1 and all(p[1] == -0.2 for p in curve["push"])
+    assert curve["pull"][-1] == [11.0, 0.4] and curve["push"][:2] == [[11.0, 0.4], [11.0, -0.2]]
+    assert all(p[1] == -0.2 for p in curve["push"][1:])                        # joined at the turn
     assert graph_curve([(0, 0.4, None)] * 5, [], 22.0) == {"pull": [], "push": []}   # no LVDT, no graph
 
     cond = dict(COND, load_min=0.0, load_max=1.0, stroke=22.0)
@@ -1621,3 +1622,11 @@ def test_auto_zero_subtracts_the_load_at_the_start_of_each_test_not_the_lvdt():
     assert s.read_once("select")[0] == 1.7                                    # calibrated zero kept
     settings["test"]["machine_profile"]["measurement"]["auto_zero"] = False
     assert s.auto_zero("select", "T3") is None and s.read_once("select")[0] == 1.7
+
+
+def test_pull_and_push_join_at_the_turn():
+    from friction_tester.plc.pc_flow import join_at_turn
+    pull, push = ([-11.0, 0.0, 10.3], [0.0, 0.3, 0.48]), ([10.5, 0.0, -10.0], [0.15, -0.1, -0.23])
+    assert join_at_turn(pull, push, 11.0) == (([-11.0, 0.0, 10.3, 11.0], [0.0, 0.3, 0.48, 0.48]),
+                                              ([11.0, 11.0, 10.5, 0.0, -10.0], [0.48, 0.15, 0.15, -0.1, -0.23]))
+    assert join_at_turn(pull, ([], []), 11.0) == (pull, ([], []))               # PULL still running: as read

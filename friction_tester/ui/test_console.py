@@ -437,16 +437,17 @@ class CablePanel(tk.Frame):
         """LVDT readings -> the graph's stroke axis: the PULL start is -stroke/2 and the
         pull direction is positive, whatever the LVDT's zero and polarity. A PUSH drawn
         without its PULL starts at +stroke/2 and runs negative. Only the Stroke is shown
-        (within_stroke): the PLC's extra 1 mm (D00490) past +stroke/2 is left off the graph.
+        (within_stroke): the PLC's extra 1 mm (D00490) past +stroke/2 is left off the graph,
+        and the PUSH joins the PULL at +stroke/2 (join_at_turn).
         Without a Stroke condition the readings are drawn as read."""
-        from ..plc.pc_flow import centre_lvdt, within_stroke
+        from ..plc.pc_flow import centre_lvdt, join_at_turn, within_stroke
         names = ("PULL", "PUSH")
         if self._glen:
             half = self._glen / 2
             xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], half)
-            for name, x in zip(names, xs):
-                self.plot.series[name]["x"], self.plot.series[name]["y"] = within_stroke(
-                    x, self._gload[name], half)
+            cut = [within_stroke(x, self._gload[name], half) for name, x in zip(names, xs)]
+            for name, (x, y) in zip(names, join_at_turn(*cut, half)):     # PULL and PUSH meet at +half
+                self.plot.series[name]["x"], self.plot.series[name]["y"] = x, y
         else:
             for name in names:
                 self.plot.series[name]["x"] = list(self._graw[name])
