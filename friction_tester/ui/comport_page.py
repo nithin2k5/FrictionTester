@@ -661,6 +661,16 @@ class ComPortPage(tk.Frame):
                 continue
             w["reading"].set("ok", f"{value:.3f} {unit}   ({v:+.4f} V)")
 
+    def _free_card(self):
+        """The Test Console opens the card ahead of its first stroke and leaves it open. It is
+        shut down whenever this page is shown, so an open task here is its leftover: close it
+        (the Test Console reopens the card itself)."""
+        if self.daq.is_open:
+            try:
+                self.daq.disconnect()
+            except Exception as exc:
+                self.log(f"NI DAQ: closing the Test Console's card task: {exc}")
+
     def toggle_live(self):
         """LIVE: read all four rows continuously until pressed again (or the page closes)."""
         if self._live:
@@ -671,9 +681,7 @@ class ComPortPage(tk.Frame):
         except ValueError as exc:
             self.log(f"NI DAQ: {exc}")
             return
-        if self.daq.is_open:
-            self.log("NI DAQ: the card is in use (a test is running) — LIVE not started")
-            return
+        self._free_card()
         ranges = {}
         for s in cfg["sensors"]:
             ranges.setdefault(s["channel"], s["range"])
@@ -720,9 +728,7 @@ class ComPortPage(tk.Frame):
         except ValueError as exc:
             self.log(f"NI DAQ: {exc}")
             return
-        if self.daq.is_open:
-            self.log("NI DAQ: the card is in use (a test is running)")
-            return
+        self._free_card()
         task_cfg = dict(cfg, channels=[{"channel": ch, "range": w["range"].get()}])
         for b in (w["zero"], w["cal"]):
             b.config(state="disabled")
