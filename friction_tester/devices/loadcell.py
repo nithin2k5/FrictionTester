@@ -34,6 +34,7 @@ except ImportError:  # pragma: no cover - reported in the UI
 MODEL = "KOMEIN AM-50LW"
 BAUD_RATES = [2400, 4800, 9600, 19200, 38400, 57600]
 STREAM_ID = 0
+STREAM_TRIES = 4      # stream mode: lines read for one whole frame (cut-off lines are skipped)
 
 CMD_READ, CMD_ZERO, CMD_HOLD, CMD_RELEASE = "P", "Z", "H", "R"
 
@@ -230,14 +231,28 @@ class Loadcell:
         with self._lock:
             self._require_open()                  # may have been closed while waiting
             if self.stream_mode:
-                # Drop whatever is buffered (possibly half a line), then take
-                # the next complete frame.
+                # Drop whatever is buffered, then take the next complete frame. A cut-off
+                # line still gets through on some USB-serial ports (the machine's L2 gave
+                # 'T,-0000.20', the tail of 'ST,NT,-0000.20'), so lines that are not a
+                # whole frame are skipped - an error frame (ST,ER) still raises.
                 self._ser.reset_input_buffer()
-                self._ser.readline()
+                raw, partial = "", None
+                for _ in range(STREAM_TRIES):
+                    raw = self._ser.readline().decode("ascii", errors="replace").strip()
+                    if not raw:
+                        break
+                    try:
+                        return None, raw, parse_frame(raw)
+                    except IndicatorError as exc:
+                        if not str(exc).startswith(("Unrecognised frame", "Bad data field")):
+                            raise
+                        partial = exc
+                if raw and partial:
+                    raise partial
                 sent = None
             else:
                 sent = self._command(CMD_READ)
-            raw = self._ser.readline().decode("ascii", errors="replace").strip()
+                raw = self._ser.readline().decode("ascii", errors="replace").strip()
         if not raw:
             raise TimeoutError("No response received — check port, baud rate and indicator ID (F-40)")
         return sent, raw, parse_frame(raw, None if self.stream_mode else self.device_id)

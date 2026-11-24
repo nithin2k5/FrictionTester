@@ -70,3 +70,33 @@ def test_given_id_is_used_without_probing():
     import pytest
     with pytest.raises(ValueError):
         lcmod.parse_id(150)
+
+
+class _StreamPort:
+    is_open = True
+
+    def __init__(self, lines):
+        self.lines = list(lines)
+
+    def reset_input_buffer(self):
+        pass
+
+    def readline(self):
+        return (self.lines.pop(0) + "\r\n").encode() if self.lines else b""
+
+
+def _stream_cell(lines):
+    from friction_tester.devices import loadcell as lcmod
+    lc = lcmod.Loadcell(2)
+    lc._ser, lc.device_id = _StreamPort(lines), 0
+    return lc
+
+
+def test_stream_read_skips_a_cut_off_line():
+    """The machine's L2 gave 'T,-0000.20' (the tail of 'ST,NT,-0000.20'): skip it, use the next."""
+    lc = _stream_cell(["T,-0000.20", "ST,NT,-0000.30"])
+    assert lc.read() == (None, "ST,NT,-0000.30", -0.3)
+    with pytest.raises(IndicatorError, match="error"):
+        _stream_cell(["0.20", "ST,ER,+0000.00"]).read()           # an error frame is not skipped
+    with pytest.raises(IndicatorError, match="Unrecognised"):
+        _stream_cell(["T,1", "T,2", "T,3", "T,4", "ST,NT,+0000.10"]).read()   # never a whole frame
