@@ -97,11 +97,13 @@ CHAPTERS = [
         ("Device", "The NI USB-6210 (Rescan Ports lists it). Without a device the graph stays empty."),
         ("Wiring", "Differential: channel n uses AIn+ and AI(n+8)-."),
         ("Sensor rows", "Loadcell 1 ai0, Loadcell 2 ai1, LVDT 1 ai2, LVDT 2 ai3. "
-                        "Value = (volts - offset_v) x scale, in the row's unit."),
-        ("TEST", "Reads the row's pin once and shows volts and the scaled value."),
+                        "Value = volts x scale + offset, in the row's unit (offset in kgf / mm, not volts)."),
+        ("LIVE", "Reads all four rows continuously (volts and value) until pressed again."),
+        ("ZERO", "Nothing on the sensor: press ZERO. The voltage now becomes zero (sets Offset)."),
+        ("CAL", "Put a known load on, type it in Known (kgf / mm), press CAL. Sets Scale; the zero stays."),
     ]),
-    ("warn", "Set scale and offset_v of all four NI rows before trusting the graph. With scale "
-             "1.0 the graph shows volts, not kgf and mm."),
+    ("warn", "Calibrate all four NI rows (ZERO, then CAL with a known weight) and Save before "
+             "trusting the graph. Check with a second weight: it should read within a few grams."),
 ]),
 
 ("Model Settings", [

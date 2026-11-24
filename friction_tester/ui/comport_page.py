@@ -12,12 +12,13 @@ the right. Every device row has the same columns:
 """
 
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk
 
 from . import theme as T
 from .theme import light as theme      # light industrial theme
-from ..config import save_settings
+from ..config import daq_value, save_settings
 from ..devices import loadcell, ni_daq, plc_xgb
 
 CABLE_OF = {"1": "Select", "2": "Shift"}      # device / sensor number -> the cable it measures
@@ -529,7 +530,7 @@ class ComPortPage(tk.Frame):
         self._label(top, "Samples", fg=theme.HEADER_FG, size=9, bold=True).pack(side="left", padx=(16, 6))
         self.ent_daq_samples = self._entry(top, cfg["samples_per_channel"], width=5, justify="center")
         self.ent_daq_samples.pack(side="left")
-        self.btn_daq_all = self._button(top, "TEST ALL", self.test_all_sensors, "info", width=9)
+        self.btn_daq_all = self._button(top, "LIVE", self.toggle_live, "info", width=9)
         self.btn_daq_all.pack(side="right", padx=(0, 4))
 
         # Result of TEST DEVICE
@@ -541,8 +542,8 @@ class ComPortPage(tk.Frame):
         self.daq_dev_status.set("idle", "Not tested")
 
         # One row per sensor
-        cols = (("Sensor", 150), ("Channel", 70), ("Pins", 112), ("Range", 78), ("Scale /V", 66),
-                ("Offset V", 66), ("Unit", 52), ("", 64), ("Reading", 0))
+        cols = (("Sensor", 150), ("Channel", 70), ("Pins", 112), ("Range", 78), ("Unit", 52),
+                ("Scale /V", 70), ("Offset", 70), ("", 60), ("Known", 62), ("", 56), ("Reading", 0))
         self._table_header(body, cols)
         terminal = cfg["terminal_config"]
         self.sensor_rows = []
@@ -550,26 +551,33 @@ class ComPortPage(tk.Frame):
             row = tk.Frame(body, bg=ROW_BG)
             row.pack(fill="x", pady=2)
             self._cols(row, cols)
-            w = {"name": s["name"]}
+            w = {"name": s["name"], "zero_v": None}
             self._label(row, _with_cable(s["name"]), bold=True, anchor="w").grid(row=0, column=0, sticky="w", padx=(8, 0), pady=5)
             w["channel"] = self._combo(row, ni_daq.channels_for(terminal), s["channel"], width=4)
             w["channel"].bind("<<ComboboxSelected>>", lambda _e, n=i: self._update_pins(n))
             w["pins"] = self._label(row, "", fg=T.L_PRIMARY, anchor="w")
             w["range"] = self._combo(row, list(ni_daq.VOLTAGE_RANGES), s["range"], width=6)
-            w["scale"] = self._entry(row, f"{s['scale']:g}", width=6, justify="center")
-            w["offset"] = self._entry(row, f"{s['offset_v']:g}", width=6, justify="center")
             w["unit"] = self._entry(row, s["unit"], width=4, justify="center")
-            w["test"] = self._button(row, "TEST", lambda n=i: self.test_sensors([n]), width=6)
+            w["scale"] = self._entry(row, f"{s['scale']:.6g}", width=8, justify="center")
+            w["offset"] = self._entry(row, f"{s['offset']:.6g}", width=8, justify="center")
+            w["zero"] = self._button(row, "ZERO", lambda n=i: self.zero_sensor(n), "muted", width=6)
+            w["known"] = self._entry(row, "", width=6, justify="center")
+            w["cal"] = self._button(row, "CAL", lambda n=i: self.cal_sensor(n), "muted", width=5)
             w["reading"] = StatusPill(row)
             w["reading"].set("idle", "—")
-            for col, key in enumerate(("channel", "pins", "range", "scale", "offset", "unit", "test", "reading"),
-                                      start=1):
+            for col, key in enumerate(("channel", "pins", "range", "unit", "scale", "offset",
+                                       "zero", "known", "cal", "reading"), start=1):
                 w[key].grid(row=0, column=col, sticky="w", padx=(8, 0), pady=3)
             self.sensor_rows.append(w)
             self._update_pins(i)
 
-        self._label(body, "Reading = (volts − offset) × scale.  Differential: ai0 uses pins AI0+ / AI8−, "
-                          "ai1 → AI1 / AI9, …", fg=theme.MUTED, size=9).pack(anchor="w", padx=8, pady=(6, 0))
+        self._label(body, "Calibrate: nothing on the sensor → ZERO.  Put a known load on, type it in Known → CAL.  "
+                          "Then Save.", fg=theme.MUTED, size=9).pack(anchor="w", padx=8, pady=(6, 0))
+        self._label(body, "Reading = volts × scale + offset (offset in the row's unit).  Differential: ai0 uses "
+                          "pins AI0+ / AI8−, ai1 → AI1 / AI9, …", fg=theme.MUTED, size=9).pack(anchor="w", padx=8)
+        self._live = False
+        self._volts = {}                       # newest {channel: mean volts} from LIVE or a one-shot read
+        self.bind("<Destroy>", lambda e: setattr(self, "_live", False) if e.widget is self else None, add="+")
 
     def _update_pins(self, i):
         w = self.sensor_rows[i]
@@ -600,7 +608,7 @@ class ComPortPage(tk.Frame):
             except ValueError:
                 raise ValueError(f"{w['name']}: scale and offset must be numbers")
             sensors.append({"name": w["name"], "channel": w["channel"].get(), "range": w["range"].get(),
-                            "scale": scale, "offset_v": offset, "unit": w["unit"].get().strip()})
+                            "scale": scale, "offset": offset, "unit": w["unit"].get().strip()})
         return {
             "device": self.cb_daq_dev.get().strip(),
             "terminal_config": self.cb_daq_term.get(),
@@ -608,6 +616,13 @@ class ComPortPage(tk.Frame):
             "samples_per_channel": samples,
             "sensors": sensors,
         }
+
+    def _safe_ui(self, fn, *args, **kw):
+        """_ui from a worker thread that may outlive the page."""
+        try:
+            self._ui(fn, *args, **kw)
+        except (tk.TclError, RuntimeError):
+            pass
 
     def test_daq_device(self):
         """NI-DAQmx self-test of the selected device alone — no sensors involved."""
@@ -621,59 +636,178 @@ class ComPortPage(tk.Frame):
                 info = ni_daq.NIDaq.test_device(name)
             except Exception as exc:
                 self.log(f"NI DAQ device FAIL: {exc}")
-                self._ui(self.daq_dev_status.set, "error", f"FAIL · {exc}")
+                self._safe_ui(self.daq_dev_status.set, "error", f"FAIL · {exc}")
             else:
                 text = (f"PASS · {info['product']} · S/N {info['serial']} · "
                         f"{info['ai_channels']} AI channels")
                 self.log(f"NI DAQ device {info['name']}: {text}")
-                self._ui(self.daq_dev_status.set, "ok", text)
-            self._ui(self.btn_daq_dev_test.config, text="TEST DEVICE", state="normal")
+                self._safe_ui(self.daq_dev_status.set, "ok", text)
+            self._safe_ui(self.btn_daq_dev_test.config, text="TEST DEVICE", state="normal")
 
         threading.Thread(target=run, daemon=True).start()
 
-    def test_all_sensors(self):
-        self.test_sensors(list(range(len(self.sensor_rows))))
+    # ---------------------------------------------------- readings
+    def _show_readings(self):
+        """Show every row's value from the newest volts, with the scale / offset as typed now."""
+        for w in self.sensor_rows:
+            v = self._volts.get(w["channel"].get())
+            if v is None:
+                continue
+            unit = w["unit"].get().strip()
+            try:
+                value = daq_value({"scale": float(w["scale"].get()), "offset": float(w["offset"].get())}, v)
+            except ValueError:
+                w["reading"].set("error", f"scale / offset not a number   ({v:+.4f} V)")
+                continue
+            w["reading"].set("ok", f"{value:.3f} {unit}   ({v:+.4f} V)")
 
-    def test_sensors(self, indices):
-        """Read the selected sensors' pins in one acquisition and show the results."""
+    def toggle_live(self):
+        """LIVE: read all four rows continuously until pressed again (or the page closes)."""
+        if self._live:
+            self._live = False
+            return
         try:
             cfg = self._daq_config()
         except ValueError as exc:
             self.log(f"NI DAQ: {exc}")
             return
-        chosen = [cfg["sensors"][i] for i in indices]
-        task_cfg = dict(cfg, channels=[{"channel": s["channel"], "range": s["range"]} for s in chosen])
-        buttons = [self.sensor_rows[i]["test"] for i in indices] + [self.btn_daq_all]
-        for b in buttons:
-            b.config(state="disabled")
-        for i in indices:
-            self.sensor_rows[i]["reading"].set("busy", "Reading…")
+        if self.daq.is_open:
+            self.log("NI DAQ: the card is in use (a test is running) — LIVE not started")
+            return
+        ranges = {}
+        for s in cfg["sensors"]:
+            ranges.setdefault(s["channel"], s["range"])
+        task_cfg = dict(cfg, channels=[{"channel": ch, "range": r} for ch, r in ranges.items()])
+        self._live = True
+        self.btn_daq_all.config(text="STOP LIVE")
+        for w in self.sensor_rows:
+            w["reading"].set("busy", "Reading…")
 
         def run():
-            names = ", ".join(f"{s['name']} ({ni_daq.pins_for(s['channel'], cfg['terminal_config'])})"
-                              for s in chosen)
-            self.log(f"NI DAQ: reading {names} on {cfg['device'] or '(no device)'}…")
+            self.log(f"NI DAQ: LIVE on {cfg['device'] or '(no device)'} ({', '.join(ranges)})")
             try:
                 self.daq.connect(task_cfg)
                 try:
-                    volts = self.daq.read_average()
+                    while self._live:
+                        self._volts = self.daq.read_average()
+                        self._safe_ui(self._show_readings)
+                        time.sleep(0.2)
                 finally:
                     self.daq.disconnect()
             except Exception as exc:
                 self.log(f"NI DAQ error: {exc}")
-                for i in indices:
-                    self._ui(self.sensor_rows[i]["reading"].set, "error", "FAIL")
-            else:
-                for i, s in zip(indices, chosen):
-                    v = volts[s["channel"]]
-                    value = (v - s["offset_v"]) * s["scale"]
-                    self.log(f"  {s['name']}: {v:+.4f} V → {value:.3f} {s['unit']}")
-                    self._ui(self.sensor_rows[i]["reading"].set, "ok",
-                             f"{value:.3f} {s['unit']}   ({v:+.4f} V)")
-            for b in buttons:
-                self._ui(b.config, state="normal")
+                for w in self.sensor_rows:
+                    self._safe_ui(w["reading"].set, "error", "FAIL")
+            self._live = False
+            self._safe_ui(self.btn_daq_all.config, text="LIVE")
+            self.log("NI DAQ: LIVE stopped")
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _with_volts(self, i, then):
+        """Call then(volts) on the UI thread with row i's voltage: the LIVE value if LIVE runs,
+        otherwise one fresh averaged read of that channel."""
+        w = self.sensor_rows[i]
+        ch = w["channel"].get()
+        if self._live:
+            if ch in self._volts:
+                then(self._volts[ch])
+            else:
+                self.log(f"{w['name']}: {ch} is not in the running LIVE read — stop and restart LIVE")
+            return
+        try:
+            cfg = self._daq_config()
+        except ValueError as exc:
+            self.log(f"NI DAQ: {exc}")
+            return
+        if self.daq.is_open:
+            self.log("NI DAQ: the card is in use (a test is running)")
+            return
+        task_cfg = dict(cfg, channels=[{"channel": ch, "range": w["range"].get()}])
+        for b in (w["zero"], w["cal"]):
+            b.config(state="disabled")
+        w["reading"].set("busy", "Reading…")
+
+        def run():
+            try:
+                self.daq.connect(task_cfg)
+                try:
+                    v = self.daq.read_average()[ch]
+                finally:
+                    self.daq.disconnect()
+            except Exception as exc:
+                self.log(f"NI DAQ error: {exc}")
+                self._safe_ui(w["reading"].set, "error", "FAIL")
+            else:
+                self._volts[ch] = v
+                self._safe_ui(then, v)
+                self._safe_ui(self._show_readings)
+            for b in (w["zero"], w["cal"]):
+                self._safe_ui(b.config, state="normal")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    @staticmethod
+    def _set_entry(entry, value):
+        entry.delete(0, "end")
+        entry.insert(0, f"{value:.6g}")
+
+    def zero_sensor(self, i):
+        """ZERO: the voltage now (nothing on the sensor) becomes the zero of the row."""
+        w = self.sensor_rows[i]
+        try:
+            scale = float(w["scale"].get())
+        except ValueError:
+            self.log(f"{w['name']}: scale is not a number")
+            return
+
+        def apply(v):
+            w["zero_v"] = v
+            self._set_entry(w["offset"], round(-v * scale, 6) + 0.0)
+            self._show_readings()
+            self.log(f"{w['name']}: zero at {v:+.4f} V → offset {w['offset'].get()} {w['unit'].get().strip()}"
+                     "  (Save to keep it)")
+
+        self._with_volts(i, apply)
+
+    def cal_sensor(self, i):
+        """CAL: the known load now on the sensor sets the scale; the zero stays where it is."""
+        w = self.sensor_rows[i]
+        unit = w["unit"].get().strip()
+        try:
+            known = float(w["known"].get())
+        except ValueError:
+            self.log(f"{w['name']}: type the load now on the sensor in Known (in {unit or 'the row unit'}), "
+                     "then press CAL")
+            return
+        if known == 0:
+            self.log(f"{w['name']}: Known must not be 0 — for zero press ZERO")
+            return
+        zero_v = w["zero_v"]
+        if zero_v is None:                      # no ZERO this session: the zero the saved offset implies
+            try:
+                scale, offset = float(w["scale"].get()), float(w["offset"].get())
+            except ValueError:
+                self.log(f"{w['name']}: scale / offset not a number — press ZERO first")
+                return
+            if scale == 0:
+                self.log(f"{w['name']}: press ZERO first (with nothing on the sensor)")
+                return
+            zero_v = -offset / scale
+
+        def apply(v):
+            if abs(v - zero_v) < 0.0005:
+                self.log(f"{w['name']}: {v:+.4f} V is the same as zero ({zero_v:+.4f} V) — "
+                         "is the load on, and is the sensor wired to this channel?")
+                return
+            scale = known / (v - zero_v)
+            self._set_entry(w["scale"], scale)
+            self._set_entry(w["offset"], round(-zero_v * scale, 6) + 0.0)
+            self._show_readings()
+            self.log(f"{w['name']}: zero {zero_v:+.4f} V, {known:g} {unit} at {v:+.4f} V → "
+                     f"scale {w['scale'].get()} {unit}/V, offset {w['offset'].get()} {unit}  (Save to keep it)")
+
+        self._with_volts(i, apply)
 
     # ================================================================ log
     def _build_log_card(self, parent):

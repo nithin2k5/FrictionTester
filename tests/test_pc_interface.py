@@ -979,9 +979,9 @@ def _sampler_settings(force_source="serial", stroke=None, graph_force="result"):
     return {"daq": {"device": "Dev1", "terminal_config": "Differential", "sample_rate": 1000.0,
                     "samples_per_channel": 100,
                     "sensors": [{"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": 2.0,
-                                 "offset_v": 0.0, "unit": "kgf"},
+                                 "offset": 0.0, "unit": "kgf"},
                                 {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": 5.0,
-                                 "offset_v": 1.0, "unit": "mm"}]},
+                                 "offset": -5.0, "unit": "mm"}]},
             "test": {"machine_profile": {"measurement": {
                 "force_source": force_source, "graph_force": graph_force,
                 "loadcell": {"select": 1, "shift": 2},

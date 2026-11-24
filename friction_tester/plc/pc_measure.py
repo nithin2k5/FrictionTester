@@ -27,6 +27,8 @@ A failed read records None (invalid) - no other sensor is substituted.
 import threading
 import time
 
+from ..config import daq_value
+
 
 class Capture:
     def __init__(self, axis, kind, test_id, stroke_no):
@@ -191,12 +193,9 @@ class Sampler:
         strokes = (raw.get(st["channel"]) if st else None) or []
         dt = 1.0 / float((self._daq_cfg or {}).get("sample_rate") or 1000.0)
 
-        def value(sensor, volts):
-            return (volts - float(sensor.get("offset_v", 0.0))) * float(sensor.get("scale", 1.0))
-
         n = len(loads)
-        cap.graph.extend([(t - (n - 1 - i) * dt, value(lo, v),
-                           value(st, strokes[i]) if i < len(strokes) else None)
+        cap.graph.extend([(t - (n - 1 - i) * dt, daq_value(lo, v),
+                           daq_value(st, strokes[i]) if i < len(strokes) else None)
                           for i, v in enumerate(loads)])
 
     def _daq_value(self, name, block=None):
@@ -208,7 +207,7 @@ class Sampler:
         volts = (block if block is not None else self.daq.read_average()).get(s["channel"])
         if volts is None:
             return None, None
-        return (volts - float(s.get("offset_v", 0.0))) * float(s.get("scale", 1.0)), volts
+        return daq_value(s, volts), volts
 
     def describe(self, axis):
         """Source, channel, units and calibration status recorded with each result."""

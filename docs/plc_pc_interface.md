@@ -255,7 +255,7 @@ page) for the rows named by `stroke` / `daq_force`, with a ~10 ms averaging bloc
 come from the same acquisition. If the card cannot be opened the stroke is missing but a serial force
 sample still counts (retried each stroke). This machine (settings.json): results use the serial loadcells (`force_source` = `serial`); the
 graph uses the NI card (`graph_force` = `daq`) — SELECT `Loadcell 1` (ai0) + `LVDT 1` (ai2), SHIFT
-`Loadcell 2` (ai1) + `LVDT 2` (ai3). NI load = (V − offset_v) × scale of the sensor row. Each sample
+`Loadcell 2` (ai1) + `LVDT 2` (ai3). NI load = V × scale + offset of the sensor row (offset in kgf / mm). Each sample
 stores the result tuple and a separate graph point (`Capture.graph`), so a failed serial read still
 plots. A failed NI open is retried every 5 s.
 

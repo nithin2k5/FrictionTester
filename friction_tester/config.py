@@ -11,7 +11,7 @@ SETTINGS_FILE = Path(__file__).resolve().parent.parent / "settings.json"
 # 3 = profile v2: measurement rules, stroke completion, MT gate, commissioning status.
 # 7 = NI card load cells scaled 10 kgf/V (measured on the machine against the serial indicator).
 # 9 = drive lamps (Servo / Drive OK / Origin) re-read from the drive that moves each cable.
-SETTINGS_VERSION = 9
+SETTINGS_VERSION = 10
 
 LOADCELL_KGF_PER_V = 10.0      # indicator analogue output on the NI card: ~0.197 V at 1.97 kgf
 LVDT_MM_PER_V = 10.0           # LVDT output on the NI card: 10 V over 100 mm
@@ -232,20 +232,25 @@ DEFAULT_SETTINGS = {
     },
     # NI USB-6210: one entry per analog sensor. In Differential mode channel
     # aiN uses pins AIN (+) and AI(N+8) (-), e.g. Loadcell 1 on AI0 / AI8.
-    # value = (volts - offset_v) * scale  -> shown in `unit`.
+    # value = volts * scale + offset  -> shown in `unit` (offset is in `unit`, not volts).
     "daq": {
         "device": "",
         "terminal_config": "Differential",
         "sample_rate": 1000.0,
         "samples_per_channel": 100,
         "sensors": [
-            {"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset_v": 0.0, "unit": "kgf"},
-            {"name": "Loadcell 2", "channel": "ai1", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset_v": 0.0, "unit": "kgf"},
-            {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": LVDT_MM_PER_V, "offset_v": 0.0, "unit": "mm"},
-            {"name": "LVDT 2", "channel": "ai3", "range": "±10 V", "scale": LVDT_MM_PER_V, "offset_v": 0.0, "unit": "mm"},
+            {"name": "Loadcell 1", "channel": "ai0", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset": 0.0, "unit": "kgf"},
+            {"name": "Loadcell 2", "channel": "ai1", "range": "±10 V", "scale": LOADCELL_KGF_PER_V, "offset": 0.0, "unit": "kgf"},
+            {"name": "LVDT 1", "channel": "ai2", "range": "±10 V", "scale": LVDT_MM_PER_V, "offset": 0.0, "unit": "mm"},
+            {"name": "LVDT 2", "channel": "ai3", "range": "±10 V", "scale": LVDT_MM_PER_V, "offset": 0.0, "unit": "mm"},
         ],
     },
 }
+
+
+def daq_value(sensor, volts):
+    """Engineering value of an NI sensor row: volts x scale + offset (offset in the row's unit)."""
+    return volts * float(sensor.get("scale", 1.0)) + float(sensor.get("offset", 0.0))
 
 
 def _merge(defaults, loaded):
@@ -383,6 +388,20 @@ def migrate(loaded):
             if changed:
                 notes.append(f"test.{cable}: " + ", ".join(changed) + " (drive that moves the cable)")
         loaded["settings_version"] = 9
+        version = 9
+    if version < 10:
+        # The NI rows' offset was in volts, subtracted before the scale; it is now in the row's
+        # unit, added after it. offset = -offset_v * scale gives the same reading.
+        moved = []
+        for sen in (loaded.get("daq") or {}).get("sensors") or []:
+            if isinstance(sen, dict) and "offset_v" in sen:
+                old = float(sen.pop("offset_v") or 0.0)
+                sen["offset"] = round(-old * float(sen.get("scale", 1.0)), 6) + 0.0
+                if old:
+                    moved.append(f"{sen.get('name', '?')} {old:g} V -> {sen['offset']:g} {sen.get('unit', '')}".rstrip())
+        if moved:
+            notes.append("daq offset now in the row's unit: " + ", ".join(moved))
+        loaded["settings_version"] = 10
     if notes:
         loaded["migrated"] = notes
     return loaded
