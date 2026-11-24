@@ -5,6 +5,8 @@ The indicator's ID Number (F-40) picks the mode:
 
 * ID 000 - stream mode. The indicator sends continuously:
       ST,NT,+01234.5<CR><LF>     (NT = normal, ER = error)
+  The header is ST while the reading is stable and US while it is changing (the
+  machine's L2 sends US,NT,... during a stroke) - both are readings. OL = overload.
 * ID 01-99 - command mode. The PC sends ID<nn><cmd> with no terminator:
       P = send current value   Z = zero   H = hold   R = release hold
   and the indicator answers a P with:
@@ -34,6 +36,7 @@ except ImportError:  # pragma: no cover - reported in the UI
 MODEL = "KOMEIN AM-50LW"
 BAUD_RATES = [2400, 4800, 9600, 19200, 38400, 57600]
 STREAM_ID = 0
+STREAM_HEADS = ("ST", "US")   # stream-frame headers: stable / unstable (changing) reading
 STREAM_TRIES = 4      # stream mode: lines read for one whole frame (cut-off lines are skipped)
 
 CMD_READ, CMD_ZERO, CMD_HOLD, CMD_RELEASE = "P", "Z", "H", "R"
@@ -58,7 +61,9 @@ def parse_frame(line, expected_id=None):
     if len(fields) < 3:
         raise IndicatorError(f"Unrecognised frame: {line!r}")
     head, mid, data = fields[0].upper(), fields[1].upper(), fields[2]
-    if head == "ST":
+    if head == "OL":
+        raise IndicatorError("Indicator reports overload (OL)")
+    if head in STREAM_HEADS:
         if mid == "ER":
             raise IndicatorError("Indicator reports an error (ER) — check overload / sensor")
     elif head == "ID":
@@ -172,7 +177,7 @@ class Loadcell:
             line = self._ser.readline().decode("ascii", errors="replace").strip()
             if not line:
                 return False                       # silent for a read timeout: not streaming
-            if line.upper().startswith("ST,"):
+            if line.upper().startswith(tuple(h + "," for h in STREAM_HEADS)):
                 return True
         return False
 

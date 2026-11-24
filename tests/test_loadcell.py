@@ -129,3 +129,14 @@ def test_a_streaming_indicator_with_a_cut_off_first_line_is_not_taken_for_comman
     assert lc._find_id() == 2 and lc._ser.writes   # a stream frame is no answer to ID02P (falls back)
     lc.device_id = 2                               # even if it ended up in command mode:
     assert lc.read()[1:] == ("ST,NT,-0000.20", -0.2)
+
+
+def test_unstable_frames_are_readings_and_overload_is_an_error():
+    """The machine's L2 sends US,NT,... (unstable) while the load changes during a stroke."""
+    assert parse_frame("US,NT,+0000.30") == 0.3 and parse_frame("US,NT,-0000.40", None) == -0.4
+    with pytest.raises(IndicatorError, match="error"):
+        parse_frame("US,ER,+0000.00")
+    with pytest.raises(IndicatorError, match="overload"):
+        parse_frame("OL,NT,+9999.99")
+    lc = _stream_cell(["US,NT,-0000.40"])
+    assert lc.read()[2] == -0.4
