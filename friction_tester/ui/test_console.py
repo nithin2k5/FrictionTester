@@ -390,6 +390,7 @@ class CablePanel(tk.Frame):
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
                 self._graw[name], self._gload[name], self._gtimes[name], self._gbins[name] = [], [], [], {}
             self._gcap, self._gn, self._gt0, self._gmiss = cap, 0, None, 0
+            self._gclosed = False
             self._gspeed, self._glen = self._condition("speed"), self._condition("stroke")
         new = cap.graph[self._gn:]
         self._gn += len(new)
@@ -415,10 +416,14 @@ class CablePanel(tk.Frame):
                 raw[i] += (stroke - raw[i]) / (n + 1)
                 loads[i] += (load - loads[i]) / (n + 1)
                 times[i] = t - self._gt0
-        if drawn:
-            self._centre_stroke()
         ended = (cap.stop_event.is_set() and not (cap.thread and cap.thread.is_alive())
                  and self._gn == len(cap.graph))
+        closing = ended and name == "PUSH" and not self._gclosed and bool(self._graw["PUSH"])
+        if closing:
+            self._gclosed = True             # the PUSH is over: close the loop at -stroke/2
+            drawn = True
+        if drawn:
+            self._centre_stroke()
         problem = None
         if not self._graw[name]:
             if self._gmiss >= self.LVDT_MISSING or (ended and self._gmiss):
@@ -438,7 +443,7 @@ class CablePanel(tk.Frame):
         pull direction is positive, whatever the LVDT's zero and polarity. A PUSH drawn
         without its PULL starts at +stroke/2 and runs negative. Only the Stroke is shown
         (within_stroke): the PLC's extra 1 mm (D00490) past +stroke/2 is left off the graph,
-        and the PUSH joins the PULL at +stroke/2 (join_at_turn).
+        and the PUSH joins the PULL at +stroke/2, and once it has ended at -stroke/2 (join_at_turn).
         Without a Stroke condition the readings are drawn as read."""
         from ..plc.pc_flow import centre_lvdt, join_at_turn, within_stroke
         names = ("PULL", "PUSH")
@@ -446,7 +451,8 @@ class CablePanel(tk.Frame):
             half = self._glen / 2
             xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], half)
             cut = [within_stroke(x, self._gload[name], half) for name, x in zip(names, xs)]
-            for name, (x, y) in zip(names, join_at_turn(*cut, half)):     # PULL and PUSH meet at +half
+            closed = getattr(self, "_gclosed", False)                      # PUSH ended: close at -half too
+            for name, (x, y) in zip(names, join_at_turn(*cut, half, close=closed)):
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = x, y
         else:
             for name in names:

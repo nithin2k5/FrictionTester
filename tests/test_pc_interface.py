@@ -1434,10 +1434,11 @@ def test_result_stores_the_drawn_graph_and_the_report_page_shows_it():
     pull = [(i * 0.01, 0.40, 40.0 + i * 0.01) for i in range(2200)]
     push = [(i * 0.01, -0.20, 62.0 - i * 0.01) for i in range(2200)]
     curve = graph_curve(pull, push, 22.0)
-    assert 32 <= len(curve["pull"]) <= 35 and 32 <= len(curve["push"]) <= 36
+    assert 32 <= len(curve["pull"]) <= 35 and 32 <= len(curve["push"]) <= 38
     assert abs(curve["pull"][0][0] + 11) < 1 and abs(curve["pull"][-1][0] - 11) < 1
     assert curve["pull"][-1] == [11.0, 0.4] and curve["push"][:2] == [[11.0, 0.4], [11.0, -0.2]]
-    assert all(p[1] == -0.2 for p in curve["push"][1:])                        # joined at the turn
+    assert all(p[1] == -0.2 for p in curve["push"][1:-1])                      # joined at the turn
+    assert curve["push"][-1] == [-11.0, 0.4]                                    # and closed at -11
     assert graph_curve([(0, 0.4, None)] * 5, [], 22.0) == {"pull": [], "push": []}   # no LVDT, no graph
 
     cond = dict(COND, load_min=0.0, load_max=1.0, stroke=22.0)
@@ -1630,3 +1631,5 @@ def test_pull_and_push_join_at_the_turn():
     assert join_at_turn(pull, push, 11.0) == (([-11.0, 0.0, 10.3, 11.0], [0.0, 0.3, 0.48, 0.48]),
                                               ([11.0, 11.0, 10.5, 0.0, -10.0], [0.48, 0.15, 0.15, -0.1, -0.23]))
     assert join_at_turn(pull, ([], []), 11.0) == (pull, ([], []))               # PULL still running: as read
+    _, (qx, qy) = join_at_turn(pull, push, 11.0, close=True)                    # PUSH ended: closed at -11
+    assert qx[-2:] == [-11.0, -11.0] and qy[-2:] == [-0.23, 0.0]

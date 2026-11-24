@@ -126,11 +126,13 @@ def within_stroke(xs, ys, half):
     return [xs[i] for i in keep], [ys[i] for i in keep]
 
 
-def join_at_turn(pull, push, half):
+def join_at_turn(pull, push, half, close=False):
     """Connect a PULL trace to its PUSH at the turn (+half), like one continuous LabVIEW
     trace: the PULL runs on to +half at its last load and the PUSH starts there, from the
-    PULL's end load to its own first load. pull / push are (xs, ys) already cut to the
-    stroke; only joined once the PUSH has points. Returns (pull, push)."""
+    PULL's end load to its own first load. With `close` (the PUSH has ended) the loop is
+    closed at -half too: the PUSH runs on to -half at its last load and ends at the PULL's
+    first load. pull / push are (xs, ys) already cut to the stroke; only joined once the
+    PUSH has points. Returns (pull, push)."""
     (px, py), (qx, qy) = pull, push
     if not (px and py and qx and qy):
         return pull, push
@@ -142,7 +144,15 @@ def join_at_turn(pull, push, half):
     if qx[0] < half:
         head_x.append(half)
         head_y.append(qy[0])
-    return (px, py), (head_x + list(qx), head_y + list(qy))
+    qx, qy = head_x + list(qx), head_y + list(qy)
+    if close:
+        if qx[-1] > -half:
+            qx.append(-half)
+            qy.append(qy[-1])
+        if px[0] <= -half + 1e-6:                     # the PULL starts at -half: end the PUSH on it
+            qx.append(-half)
+            qy.append(py[0])
+    return (px, py), (qx, qy)
 
 
 GRAPH_PER_MM = 1.5       # graph points per mm of stroke: each is the mean of its samples
@@ -179,7 +189,7 @@ def graph_curve(pull, push, stroke, per_mm=GRAPH_PER_MM):
         xs = centre_lvdt([p[0] for p in raw["pull"]], [p[0] for p in raw["push"]], stroke / 2)
         for d, x_d in zip(("pull", "push"), xs):
             out[d] = within_stroke(x_d, [p[1] for p in raw[d]], stroke / 2)
-        out["pull"], out["push"] = join_at_turn(out["pull"], out["push"], stroke / 2)
+        out["pull"], out["push"] = join_at_turn(out["pull"], out["push"], stroke / 2, close=True)
     else:
         out = {d: ([p[0] for p in raw[d]], [p[1] for p in raw[d]]) for d in ("pull", "push")}
     return {d: [[round(x, 3), round(y, 4)] for x, y in zip(*out[d])] for d in ("pull", "push")}
