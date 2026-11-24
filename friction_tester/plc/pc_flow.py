@@ -120,10 +120,24 @@ def within_stroke(xs, ys, half):
     The PLC moves the PULL target D00490 (1 mm) past the Stroke while M0700F is OFF
     (PULL target = start + Stroke x 100 + D00490), so a 30 mm Stroke physically runs
     -15 -> +16. The graph shows the Stroke alone: points past either end are left out,
-    and every point that stays is at its real position. Judging (stroke_points) is not
+    every point that stays is at its real position, and where the trace crosses -half or
+    +half a point is put exactly on it (the load interpolated), so the trace reaches the
+    end instead of stopping at the last point inside. Judging (stroke_points) is not
     cut - it reads the full trace. Returns (xs, ys)."""
-    keep = [i for i, x in enumerate(xs) if -half - 1e-6 <= x <= half + 1e-6]
-    return [xs[i] for i in keep], [ys[i] for i in keep]
+    inside = lambda x: -half - 1e-6 <= x <= half + 1e-6
+    out_x, out_y = [], []
+    for i, (x, y) in enumerate(zip(xs, ys)):
+        if i and inside(x) != inside(xs[i - 1]):
+            x0, y0 = xs[i - 1], ys[i - 1]
+            edge = half if max(x, x0) > half else -half
+            if abs(x0 - edge) > 1e-6 and abs(x - edge) > 1e-6:     # not already a point on the edge
+                f = (edge - x0) / (x - x0)
+                out_x.append(edge)
+                out_y.append(y0 + f * (y - y0))
+        if inside(x):
+            out_x.append(x)
+            out_y.append(y)
+    return out_x, out_y
 
 
 def lvdt_summary(samples, settle_s=0.3):
@@ -176,7 +190,9 @@ GRAPH_PER_MM = 1.5       # graph points per mm of stroke: each is the mean of it
 def bin_samples(samples, per_mm=GRAPH_PER_MM):
     """(lvdt, load) samples -> [(lvdt, load)]: one point per 1/per_mm mm bin of the LVDT
     reading, in the order the bins were first reached, the mean of the bin's samples
-    (the same smoothing the Test Console graph draws)."""
+    (the same smoothing the Test Console graph draws). The list ends at the last
+    sample's position with the last bin's mean load: a bin's mean position lies short
+    of where the stroke really ended, a single sample's load is noise."""
     bins, out = {}, []
     for stroke, load in samples:
         key = math.floor(stroke * per_mm)
@@ -188,7 +204,10 @@ def bin_samples(samples, per_mm=GRAPH_PER_MM):
             p[2] += 1
             p[0] += (stroke - p[0]) / p[2]
             p[1] += (load - p[1]) / p[2]
-    return [(s, l) for s, l, _n in out]
+    points = [(s, l) for s, l, _n in out]
+    if len(samples) > 1 and samples[-1][0] != points[-1][0]:
+        points.append((samples[-1][0], points[-1][1]))
+    return points
 
 
 def graph_curve(pull, push, stroke, per_mm=GRAPH_PER_MM):

@@ -100,3 +100,32 @@ def test_stream_read_skips_a_cut_off_line():
         _stream_cell(["0.20", "ST,ER,+0000.00"]).read()           # an error frame is not skipped
     with pytest.raises(IndicatorError, match="Unrecognised"):
         _stream_cell(["T,1", "T,2", "T,3", "T,4", "ST,NT,+0000.10"]).read()   # never a whole frame
+
+
+class _Streamer:
+    """An AM-50LW that streams ST frames whatever is written to it; the first line after a
+    buffer reset is cut off, as on the machine's L2."""
+    is_open = True
+
+    def __init__(self):
+        self.lines, self.writes = [], []
+
+    def reset_input_buffer(self):
+        self.lines = [".20", "ST,NT,-0000.20", "ST,NT,-0000.30"]
+
+    def write(self, data):
+        self.writes.append(data)
+
+    def readline(self):
+        return (self.lines.pop(0) + "\n").encode() if self.lines else b""
+
+
+def test_a_streaming_indicator_with_a_cut_off_first_line_is_not_taken_for_command_mode():
+    from friction_tester.devices.loadcell import Loadcell
+    lc = Loadcell(2)
+    lc._ser = _Streamer()
+    assert lc._is_streaming()                      # one cut-off line no longer hides the stream
+    lc._ser.lines = ["ST,NT,-0000.20"]
+    assert lc._find_id() == 2 and lc._ser.writes   # a stream frame is no answer to ID02P (falls back)
+    lc.device_id = 2                               # even if it ended up in command mode:
+    assert lc.read()[1:] == ("ST,NT,-0000.20", -0.2)

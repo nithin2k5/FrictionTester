@@ -385,10 +385,12 @@ class CablePanel(tk.Frame):
                 self._gload = {"PULL": [], "PUSH": []}
                 self._gtimes = {"PULL": [], "PUSH": []}
                 self._gbins = {"PULL": {}, "PUSH": {}}
+                self._glast = {"PULL": None, "PUSH": None}
                 self.plot.set_xlabel("Stroke [mm]")
             else:
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = [], []
                 self._graw[name], self._gload[name], self._gtimes[name], self._gbins[name] = [], [], [], {}
+                self._glast[name] = None
             self._gcap, self._gn, self._gt0, self._gmiss = cap, 0, None, 0
             self._gclosed = False
             self._gspeed, self._glen = self._condition("speed"), self._condition("stroke")
@@ -405,6 +407,7 @@ class CablePanel(tk.Frame):
                 self._gmiss += 1
                 continue
             raw, times, drawn = self._graw[name], self._gtimes[name], True
+            self._glast[name] = (stroke, load)      # the newest sample ends the trace (_centre_stroke)
             entry = self._gbins[name].setdefault(math.floor(stroke * self.GRAPH_PER_MM), [len(raw), 0])
             i, n = entry
             entry[1] = n + 1
@@ -447,17 +450,25 @@ class CablePanel(tk.Frame):
         Without a Stroke condition the readings are drawn as read."""
         from ..plc.pc_flow import centre_lvdt, join_at_turn, within_stroke
         names = ("PULL", "PUSH")
+        last = getattr(self, "_glast", {})
+        raw, loads = {}, {}
+        for name in names:                   # bin means, then the newest sample (where the axis is)
+            end = last.get(name) if len(self._graw[name]) > 1 else None
+            if end and end[0] == self._graw[name][-1]:
+                end = None                   # the last bin is that one sample already
+            raw[name] = self._graw[name] + ([end[0]] if end else [])     # at the newest position,
+            loads[name] = self._gload[name] + ([self._gload[name][-1]] if end else [])   # averaged load
         if self._glen:
             half = self._glen / 2
-            xs = centre_lvdt(self._graw["PULL"], self._graw["PUSH"], half)
-            cut = [within_stroke(x, self._gload[name], half) for name, x in zip(names, xs)]
+            xs = centre_lvdt(raw["PULL"], raw["PUSH"], half)
+            cut = [within_stroke(x, loads[name], half) for name, x in zip(names, xs)]
             closed = getattr(self, "_gclosed", False)                      # PUSH ended: close at -half too
             for name, (x, y) in zip(names, join_at_turn(*cut, half, close=closed)):
                 self.plot.series[name]["x"], self.plot.series[name]["y"] = x, y
         else:
             for name in names:
-                self.plot.series[name]["x"] = list(self._graw[name])
-                self.plot.series[name]["y"] = list(self._gload[name])
+                self.plot.series[name]["x"] = list(raw[name])
+                self.plot.series[name]["y"] = list(loads[name])
 
     def _lvdt_stuck(self, name):
         """Why a finished trace's LVDT readings cannot be the stroke (the LVDT did not

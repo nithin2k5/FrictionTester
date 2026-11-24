@@ -164,11 +164,17 @@ class Loadcell:
                 raise
 
     def _is_streaming(self):
-        """True if a stream-mode frame (ST,...) arrives within ~0.5 s."""
+        """True if a stream-mode frame (ST,...) arrives among the next few lines. One line
+        is not enough: the first after the buffer reset may be cut off ('T,-0000.20'),
+        and a streaming indicator taken for command mode fails every read."""
         self._ser.reset_input_buffer()
-        self._ser.readline()                       # skip a possibly partial line
-        line = self._ser.readline().decode("ascii", errors="replace").strip()
-        return line.upper().startswith("ST,")
+        for _ in range(STREAM_TRIES):
+            line = self._ser.readline().decode("ascii", errors="replace").strip()
+            if not line:
+                return False                       # silent for a read timeout: not streaming
+            if line.upper().startswith("ST,"):
+                return True
+        return False
 
     PROBE_IDS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
 
@@ -182,6 +188,8 @@ class Loadcell:
             self._ser.write(f"ID{dev:02d}{CMD_READ}".encode("ascii"))
             raw = self._ser.readline().decode("ascii", errors="replace").strip()
             if not raw:
+                continue
+            if not raw.upper().startswith("ID"):    # a streamed ST frame is no answer to a P
                 continue
             try:
                 parse_frame(raw, dev)
@@ -231,31 +239,30 @@ class Loadcell:
         with self._lock:
             self._require_open()                  # may have been closed while waiting
             if self.stream_mode:
-                # Drop whatever is buffered, then take the next complete frame. A cut-off
-                # line still gets through on some USB-serial ports (the machine's L2 gave
-                # 'T,-0000.20', the tail of 'ST,NT,-0000.20'), so lines that are not a
-                # whole frame are skipped - an error frame (ST,ER) still raises.
-                self._ser.reset_input_buffer()
-                raw, partial = "", None
-                for _ in range(STREAM_TRIES):
-                    raw = self._ser.readline().decode("ascii", errors="replace").strip()
-                    if not raw:
-                        break
-                    try:
-                        return None, raw, parse_frame(raw)
-                    except IndicatorError as exc:
-                        if not str(exc).startswith(("Unrecognised frame", "Bad data field")):
-                            raise
-                        partial = exc
-                if raw and partial:
-                    raise partial
+                self._ser.reset_input_buffer()     # drop what is buffered: take a fresh frame
                 sent = None
             else:
                 sent = self._command(CMD_READ)
+            # Take the first whole frame. A cut-off line gets through after the buffer reset
+            # (the machine's L2 gave 'T,-0000.20', the tail of 'ST,NT,-0000.20'), and an
+            # indicator that streams anyway answers a P with stream frames, so lines that
+            # are not a whole frame are skipped. An error frame (ST,ER) or a reply from
+            # another ID still raises.
+            expect = None if self.stream_mode else self.device_id
+            raw, partial = "", None
+            for _ in range(STREAM_TRIES):
                 raw = self._ser.readline().decode("ascii", errors="replace").strip()
-        if not raw:
-            raise TimeoutError("No response received — check port, baud rate and indicator ID (F-40)")
-        return sent, raw, parse_frame(raw, None if self.stream_mode else self.device_id)
+                if not raw:
+                    break
+                try:
+                    return sent, raw, parse_frame(raw, expect)
+                except IndicatorError as exc:
+                    if not str(exc).startswith(("Unrecognised frame", "Bad data field")):
+                        raise
+                    partial = exc
+        if partial:
+            raise partial
+        raise TimeoutError("No response received — check port, baud rate and indicator ID (F-40)")
 
     def zero(self):
         return self._simple(CMD_ZERO)

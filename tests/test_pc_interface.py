@@ -1281,7 +1281,7 @@ def test_graph_has_three_averaged_points_per_2_mm_of_stroke():
                        for i in range(200)]
         panel.draw_capture(pull)
         xs, ys = panel.plot.series["PULL"]["x"], panel.plot.series["PULL"]["y"]
-        assert len(xs) == 3 and xs == sorted(xs)                     # 1.5 points per mm
+        assert len(xs) == 4 and xs == sorted(xs)                     # 1.5 points per mm + the real end
         assert all(abs(y - 0.30) < 0.002 for y in ys)                # the noise is averaged out
         assert abs(xs[0] - 40.33) < 0.01 and abs(xs[1] - xs[0] - 2 / 3) < 0.01
         pull.graph += [(10.2 + i * 0.001, 0.50, 42.0) for i in range(50)]   # dwell at the stroke end
@@ -1641,3 +1641,15 @@ def test_lvdt_summary_says_how_far_the_lvdt_went_and_if_it_had_settled():
     text = lvdt_summary(samples)
     assert text.startswith("LVDT 61.50 -> 41.50 mm, travel 20.00 mm") and "moved 0.00 mm in the last 0.3 s" in text
     assert lvdt_summary([(0, 0.1, None, None, None)]) is None
+
+
+def test_graph_reaches_both_ends_of_the_stroke():
+    """The machine's SELECT stroke (STROKE log): PULL -11.26 -> 12.38, PUSH 12.35 -> -11.29.
+    The PUSH must reach -11 from its own readings (not only the flat closing piece)."""
+    from friction_tester.plc.pc_flow import graph_curve
+    pull = [(i * 0.01, 0.40, -11.26 + i * 0.01) for i in range(2365)]
+    push = [(i * 0.01, -0.20, 12.35 - i * 0.01) for i in range(2365)]
+    curve = graph_curve(pull, push, 22.0)
+    assert curve["pull"][-1] == [11.0, 0.4]
+    measured = curve["push"][2:-1]                     # without the joins at +11 and the closing point
+    assert measured[-1] == [-11.0, -0.2] and measured[-2][0] > -11.0
