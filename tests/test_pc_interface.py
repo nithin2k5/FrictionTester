@@ -1633,3 +1633,11 @@ def test_pull_and_push_join_at_the_turn():
     assert join_at_turn(pull, ([], []), 11.0) == (pull, ([], []))               # PULL still running: as read
     _, (qx, qy) = join_at_turn(pull, push, 11.0, close=True)                    # PUSH ended: closed at -11
     assert qx[-2:] == [-11.0, -11.0] and qy[-2:] == [-0.23, 0.0]
+
+
+def test_lvdt_summary_says_how_far_the_lvdt_went_and_if_it_had_settled():
+    from friction_tester.plc.pc_flow import lvdt_summary
+    samples = [(i * 0.1, 0.2, 61.5 - min(i, 20) * 1.0, None, None) for i in range(30)]   # 20 mm, then still
+    text = lvdt_summary(samples)
+    assert text.startswith("LVDT 61.50 -> 41.50 mm, travel 20.00 mm") and "moved 0.00 mm in the last 0.3 s" in text
+    assert lvdt_summary([(0, 0.1, None, None, None)]) is None

@@ -126,6 +126,21 @@ def within_stroke(xs, ys, half):
     return [xs[i] for i in keep], [ys[i] for i in keep]
 
 
+def lvdt_summary(samples, settle_s=0.3):
+    """One stroke's LVDT readings for the event log, or None without any: first / last
+    reading, travel, and how far it still moved in the last `settle_s` of the capture
+    (the axis still moving when the capture ended, vs. a settled LVDT that reads short)."""
+    pts = [(s[0], s[2]) for s in samples or [] if len(s) > 2 and s[2] is not None]
+    if not pts:
+        return None
+    t_end = pts[-1][0]
+    tail = [v for t, v in pts if t >= t_end - settle_s]
+    vals = [v for _t, v in pts]
+    return (f"LVDT {pts[0][1]:.2f} -> {pts[-1][1]:.2f} mm, travel {abs(pts[-1][1] - pts[0][1]):.2f} mm "
+            f"(range {max(vals) - min(vals):.2f}), moved {max(tail) - min(tail):.2f} mm in the last "
+            f"{settle_s:g} s, {len(pts)} samples over {t_end - pts[0][0]:.2f} s")
+
+
 def join_at_turn(pull, push, half, close=False):
     """Connect a PULL trace to its PUSH at the turn (+half), like one continuous LabVIEW
     trace: the PULL runs on to +half at its last load and the PUSH starts there, from the
@@ -1170,6 +1185,10 @@ class PcController:
             self._apply(op.observe(snap, now), op)
             if op.measure_end and r.capture is not None and op.kind in ("pull", "push"):
                 samples = r.close_capture()               # window ends at completion, not at the release
+                lv = lvdt_summary(samples)
+                if lv:
+                    self.log.log("STROKE", f"{pp.AXIS_NAME[r.axis]} {op.kind.upper()}: {lv}", test=r.test_id,
+                                 stroke=r.cond.get("stroke"))
                 if op.result in (None, "done"):
                     r.stroke_done(op.kind, samples)
             if op.result:
